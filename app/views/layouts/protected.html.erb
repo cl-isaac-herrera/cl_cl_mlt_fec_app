@@ -18,7 +18,8 @@
     <%# (no se importa) porque debe ser bloqueante; un módulo ES sería     %>
     <%# diferido y pintaría la página antes de ejecutarse.                 %>
     <%# ---------------------------------------------------------------- %>
-    <script>
+    <%# nonce: true — requerido por el script-src de la CSP (config/initializers/content_security_policy.rb) %>
+    <%= javascript_tag nonce: true do %>
       (function () {
         try {
           var raw = window.localStorage.getItem('Session');
@@ -29,7 +30,7 @@
           window.location.replace('/login');
         }
       })();
-    </script>
+    <% end %>
 
     <title>Factura Electrónica</title>
     <% if content_for?(:title) %>

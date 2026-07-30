@@ -27,7 +27,7 @@ module FecApp
     config.generators do |g|
       g.helper        false
       g.assets        false
-      g.test_framework false
+      g.test_framework :rspec
     end
   end
 end

@@ -507,12 +507,15 @@ export default class extends TabulatorController {
     document.body.appendChild(menu);
 
     const close = (ev) => {
-      if (!menu.contains(ev.target)) {
+      if (!ev || !menu.contains(ev.target)) {
         menu.remove();
         this.#hideDropdownTooltip();
         document.removeEventListener('click', close);
       }
     };
+    // Elegir una opción también debe soltar el listener de document — si no,
+    // queda huérfano y se acumula cada vez que se usa el menú sin hacer clic fuera.
+    menu.addEventListener('click', () => close(null));
     setTimeout(() => document.addEventListener('click', close), 0);
 
     const rect = menu.getBoundingClientRect();
