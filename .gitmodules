@@ -1,0 +1,12 @@
+[submodule "vendor/clavisco/structures"]
+	path = vendor/clavisco/structures
+	url = https://github.com/Crisql/cl-core-structures-ruby.git
+[submodule "vendor/clavisco/common"]
+	path = vendor/clavisco/common
+	url = https://github.com/Crisql/cl-core-common-ruby.git
+[submodule "vendor/clavisco/data_access"]
+	path = vendor/clavisco/data_access
+	url = https://github.com/Crisql/cl-data-access-ruby.git
+[submodule "vendor/clavisco/auth"]
+	path = vendor/clavisco/auth
+	url = https://github.com/Crisql/cl-auth-ruby.git
