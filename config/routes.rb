@@ -8,6 +8,12 @@ Rails.application.routes.draw do
   get  '/home',      to: 'home#index',      as: :home
   get  '/not-found', to: 'not_found#index', as: :not_found
 
+  # Login OIDC (Auth0/Keycloak) — base para sesión de servidor, en paralelo al login
+  # actual client-side. Ningún controller existente lo usa todavía.
+  get 'auth/login',    to: 'auth#login',    as: :auth_login
+  get 'auth/callback', to: 'auth#callback', as: :auth_callback
+  get 'auth/logout',   to: 'auth#logout',   as: :auth_logout
+
   # Verificación de cuenta por OTP (página pública, sin menú).
   # Migrado de Angular: ruta /account-verification/:OTPCode → VerificationEmailComponent.
   get 'account-verification/:otp_code', to: 'account_verifications#show',
@@ -63,6 +69,13 @@ Rails.application.routes.draw do
   end
 
   get 'documents-reports',   to: 'documents/reports#index',              as: :documents_reports
+
+  # Rutas exclusivas para especificar el comportamiento de Api::AuthorizedController
+  # (ver spec/requests/api/authorized_controller_spec.rb). No existen fuera de test.
+  if Rails.env.test?
+    get '__test/authorized/checked',   to: 'authorized_controller_test#checked'
+    get '__test/authorized/unchecked', to: 'authorized_controller_test#unchecked'
+  end
 
   root to: 'sessions#new'
 end

@@ -19,7 +19,7 @@ gem 'importmap-rails'
 # Tailwind CSS
 gem 'tailwindcss-rails'
 
-# Base de datos (SQLite para desarrollo — solo tablas de infraestructura)
+# Base de datos
 gem 'sqlite3', '>= 2.1'
 
 # Solid stack (cache, jobs, websockets)
@@ -29,6 +29,12 @@ gem 'solid_cable'
 
 # Proxy HTTP hacia API externo
 gem 'faraday', '~> 2.0'
+
+# Submodules de plataforma (auth OIDC, structures, common, data_access)
+gem 'bcrypt', '~> 3.1.7'
+gem 'httparty'
+gem 'jwt'
+gem 'openid_connect', '~> 2.5'
 
 # Variables de entorno
 gem 'dotenv-rails', groups: [:development, :test]
@@ -46,6 +52,7 @@ gem "sentry-rails"
 group :development, :test do
   gem 'debug', platforms: %i[mri windows], require: 'debug/prelude'
   gem 'brakeman', require: false
+  gem 'factory_bot_rails'
   gem 'rspec-rails'
   gem 'rubocop-rails-omakase', require: false
 end
