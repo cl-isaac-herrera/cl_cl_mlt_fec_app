@@ -4,13 +4,12 @@ class ApplicationController < ActionController::Base
   # Protección CSRF estándar
   protect_from_forgery with: :exception
 
-  # NOTA — convivencia con la autenticación 100% client-side actual:
-  # Las 26 páginas existentes de este proyecto dependen hoy de un token en
-  # localStorage (sin sesión de servidor). `require_session`/`require_view_permission!`
-  # quedan disponibles como base para el login OIDC nuevo, pero NO se activan acá
-  # como before_action global — eso rompería todas las páginas actuales, que todavía
-  # no tienen ningún flujo que popule session[:user_id]. Cada controller nuevo que
-  # migre a sesión de servidor los adopta explícitamente cuando le toque.
+  # Toda página exige sesión de servidor. Reemplaza al gate client-side que leía
+  # localStorage: la decisión se toma antes de renderizar, no después de pintar.
+  # Las excepciones se declaran con `skip_before_action :require_session` en el
+  # controller correspondiente (AuthController, AccountVerificationsController,
+  # ProxyController) y están justificadas caso por caso.
+  before_action :require_session
 
   private
 

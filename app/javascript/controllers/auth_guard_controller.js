@@ -1,5 +1,5 @@
 import { Controller } from '@hotwired/stimulus'
-import { SStore, getApiHeaders, isSessionValid } from 'vendor/clavisco/core'
+import { SStore, getApiHeaders } from 'vendor/clavisco/core'
 import MENU_NODES from 'data/menu'
 
 // Mapa plano ruta → permiso(s) requerido(s), construido una sola vez desde menu.js.
@@ -40,52 +40,25 @@ const ROUTE_COMPANY_FLAG_PATTERNS = [
   { pattern: /^\/documents\/receptions\/[^/]+\/create\/?$/, flag: 'UseFactProv' },
 ]
 
+/**
+ * AuthGuardController — gating de PERMISOS por ruta (no de sesión).
+ *
+ * La autenticación ya no se valida acá: la sesión vive en la cookie httpOnly y
+ * ApplicationController#require_session redirige antes de renderizar. Si este
+ * controller corre, el usuario ya está autenticado por el servidor.
+ *
+ * Responsabilidades restantes:
+ *  - Validar el permiso requerido por la ruta actual (y flags de compañía).
+ *  - Revelar el contenido (`[data-auth-content]` nace `invisible`) una vez validado.
+ */
 export default class extends Controller {
-  static values = {
-    loginPath:   { type: String, default: '/login' },
-    sessionName: { type: String, default: 'Session' }
-  }
-
   connect() {
-    // Si la sesión no es válida, redirigir a login y NO continuar: chequear
-    // permisos revelaría contenido o dispararía fetches innecesarios mientras
-    // el navegador todavía no completó la navegación a /login.
-    if (!this.#checkAuth()) return
     this.#checkRoutePermission()
-  }
-
-  // Logout explícito (llamar desde el menú)
-  logout() {
-    this.#clearSession()
-    this.#redirectToLogin()
   }
 
   // -------------------------------------------------------------------------
   // Private
   // -------------------------------------------------------------------------
-
-  /**
-   * Verifica la sesión almacenada. Si es válida retorna true; si no, limpia la
-   * sesión (cuando expiró), redirige a login y retorna false.
-   * @returns {boolean}
-   */
-  #checkAuth() {
-    const session = this.#getSession()
-
-    if (!session || !session.access_token) {
-      this.#redirectToLogin()
-      return false
-    }
-
-    // isSessionValid centraliza la regla de expiración (expires_at = JWT exp en ms).
-    if (!isSessionValid()) {
-      this.#clearSession()
-      this.#redirectToLogin()
-      return false
-    }
-
-    return true
-  }
 
   async #checkRoutePermission() {
     const path = window.location.pathname
@@ -171,32 +144,4 @@ export default class extends Controller {
     }
   }
 
-  #getSession() {
-    try {
-      const raw = localStorage.getItem(this.sessionNameValue)
-      return raw ? JSON.parse(raw) : null
-    } catch {
-      return null
-    }
-  }
-
-  #clearSession() {
-    // localStorage — datos persistentes
-    const lsKeys = [
-      this.sessionNameValue,
-      'UserAssign', 'DocumentInMemories', 'CurrentSession', 'Ports',
-      'Menu', 'LocalPrinter', 'ReportManager', 'UserInfo', 'Companies',
-      'FavoriteCompany'
-    ]
-    lsKeys.forEach(key => localStorage.removeItem(key))
-
-    // sessionStorage — datos por pestaña
-    sessionStorage.removeItem('CurrentCompany')
-    sessionStorage.removeItem('Permissions')
-    sessionStorage.removeItem('currentFEUser')
-  }
-
-  #redirectToLogin() {
-    window.location.href = this.loginPathValue
-  }
 }

@@ -4,10 +4,11 @@ require 'rails_helper'
 
 # Controller exclusivo de este spec (ver config/routes.rb, montado solo en test).
 # Se define acá para no tener un controller de producción sin uso real todavía.
-# skip_before_action :authenticate_user! — este spec cubre autorización
-# (require_permission!), no autenticación OIDC (eso ya lo prueba cl-auth-ruby).
+# skip_before_action :authenticate_from_session_or_token! — este spec cubre
+# autorización (require_permission!), no autenticación; el dual auth se
+# especifica en spec/requests/api/base_controller_spec.rb.
 class AuthorizedControllerTestController < Api::AuthorizedController
-  skip_before_action :authenticate_user!
+  skip_before_action :authenticate_from_session_or_token!
 
   before_action do
     Current.user = User.find_by(id: params[:as_user_id])

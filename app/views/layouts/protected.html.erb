@@ -5,32 +5,10 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="turbo-cache-control" content="no-cache">
 
-    <%# ---------------------------------------------------------------- %>
-    <%# Auth gate — guard SÍNCRONO, corre durante el parseo del <head>,    %>
-    <%# antes de pintar el <body> y antes de que Stimulus (módulos ES      %>
-    <%# diferidos) conecte. Si no hay sesión válida en localStorage,       %>
-    <%# redirige a /login y la shell protegida NUNCA se renderiza →        %>
-    <%# elimina el flash de menú/home vacío que dejaba un redirect async.  %>
-    <%#                                                                     %>
-    <%# Única fuente de la regla de validez para el cold load. La misma    %>
-    <%# regla vive en isSessionValid() (vendor/clavisco/core), que usa el  %>
-    <%# auth_guard_controller para la navegación Turbo in-app. Se inlinea  %>
-    <%# (no se importa) porque debe ser bloqueante; un módulo ES sería     %>
-    <%# diferido y pintaría la página antes de ejecutarse.                 %>
-    <%# ---------------------------------------------------------------- %>
-    <%# nonce: true — requerido por el script-src de la CSP (config/initializers/content_security_policy.rb) %>
-    <%= javascript_tag nonce: true do %>
-      (function () {
-        try {
-          var raw = window.localStorage.getItem('Session');
-          var s = raw ? JSON.parse(raw) : null;
-          var valid = !!(s && s.access_token && (!s.expires_at || Date.now() < s.expires_at));
-          if (!valid) window.location.replace('/login');
-        } catch (e) {
-          window.location.replace('/login');
-        }
-      })();
-    <% end %>
+    <%# El auth gate client-side que leía localStorage se eliminó: la sesión vive en   %>
+    <%# la cookie httpOnly y ApplicationController#require_session decide ANTES de     %>
+    <%# renderizar (redirige a /login → proveedor OIDC). Cero flash, y el browser ya   %>
+    <%# no puede inspeccionar ni falsear el estado de autenticación.                   %>
 
     <title>Factura Electrónica</title>
     <% if content_for?(:title) %>

@@ -1,15 +1,29 @@
 # frozen_string_literal: true
 
 Rails.application.routes.draw do
+  # API nativa de Rails. Va ANTES del catch-all del proxy: cada endpoint migrado
+  # gana sobre él y deja de reenviarse al .NET. Cuando no quede ninguno, se borran
+  # el catch-all y ProxyController.
+  #
+  # Nombrado REST: el verbo va en el método HTTP, no en el path — `GET /api/companies`
+  # en vez de `GET /api/Companies/GetCompanies`.
+  namespace :api do
+    resources :companies,   only: [:index]
+    resources :permissions, only: [:index]
+
+    put 'session/company', to: 'sessions#update_company'
+  end
+
+  # Todo lo que no migró todavía sigue reenviándose al backend .NET.
   match '/api/*path', to: 'proxy#forward', via: :all
 
-  get  '/login',   to: 'sessions#new',  as: :login
+  # Autenticación: la app no tiene formulario propio — /login redirige al proveedor
+  # OIDC (ver AuthController). `login_path` es además el destino de require_session.
+  get  '/login',   to: 'auth#login', as: :login
   get  '/sign-in', to: redirect('/login')
   get  '/home',      to: 'home#index',      as: :home
   get  '/not-found', to: 'not_found#index', as: :not_found
 
-  # Login OIDC (Auth0/Keycloak) — base para sesión de servidor, en paralelo al login
-  # actual client-side. Ningún controller existente lo usa todavía.
   get 'auth/login',    to: 'auth#login',    as: :auth_login
   get 'auth/callback', to: 'auth#callback', as: :auth_callback
   get 'auth/logout',   to: 'auth#logout',   as: :auth_logout
@@ -70,12 +84,15 @@ Rails.application.routes.draw do
 
   get 'documents-reports',   to: 'documents/reports#index',              as: :documents_reports
 
-  # Rutas exclusivas para especificar el comportamiento de Api::AuthorizedController
-  # (ver spec/requests/api/authorized_controller_spec.rb). No existen fuera de test.
+  # Rutas exclusivas para especificar el comportamiento de Api::BaseController y
+  # Api::AuthorizedController (ver spec/requests/api/). No existen fuera de test.
   if Rails.env.test?
     get '__test/authorized/checked',   to: 'authorized_controller_test#checked'
     get '__test/authorized/unchecked', to: 'authorized_controller_test#unchecked'
+    get '__test/base/whoami',          to: 'base_controller_test#whoami'
+    post '__test/session',             to: 'test_session#create'
   end
 
-  root to: 'sessions#new'
+  # Sin sesión, require_session redirige a /login → proveedor OIDC.
+  root to: 'home#index'
 end

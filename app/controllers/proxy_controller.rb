@@ -2,10 +2,12 @@
 
 # ProxyController — reenvía todas las llamadas /api/* al backend externo.
 #
-# IMPORTANTE: Este proxy es 100% TRANSPARENTE.
-# - Reenvía TODOS los headers del browser tal como llegan
-# - La UI maneja autenticación (OAuth2 token)
-# - La UI incluye cl-company-id header
+# AUTENTICACIÓN (CLAVISCO-PLATFORM-STANDARDS §2.3):
+# - El token vive en la session cookie httpOnly, NO en el browser.
+# - El proxy adjunta `Authorization: Bearer` desde la sesión y DESCARTA cualquier
+#   Authorization que mande el cliente: el browser no puede elegir con qué token
+#   se habla con el backend.
+# - La UI sigue incluyendo cl-company-id header.
 #
 # ENRUTAMIENTO POR HEADER 'API':
 #   El Stimulus controller incluye el header 'API' en cada request para indicar
@@ -22,6 +24,9 @@
 class ProxyController < ApplicationController
   skip_before_action :verify_authenticity_token
   skip_before_action :allow_browser, raise: false
+
+  # Exige sesión como cualquier otro controller (require_session de
+  # ApplicationController): sin cookie válida la solicitud no sale hacia el backend.
 
   def forward
     # El endpoint de token en el sync server vive en /token (sin prefijo /api).
@@ -149,6 +154,13 @@ class ProxyController < ApplicationController
        Sec-Ch-Ua Sec-Ch-Ua-Mobile Sec-Ch-Ua-Platform Connection Pragma Cache-Control Host].each do |h|
       headers.delete(h)
     end
+
+    # El Authorization del cliente se descarta SIEMPRE y se reemplaza por el token de
+    # la sesión: el browser no elige la credencial con la que se habla al backend.
+    # Sin token en sesión no se manda el header (endpoints públicos, ej. OTP).
+    headers.delete('Authorization')
+    token = session[:access_token]
+    headers['Authorization'] = "Bearer #{token}" if token.present?
 
     Rails.logger.info "[Proxy] Headers: #{headers.except('Authorization').inspect}"
     headers

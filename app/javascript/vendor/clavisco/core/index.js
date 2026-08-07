@@ -408,37 +408,28 @@ export const SStore = {
 // SESSION VALIDITY HELPER
 // ============================================================
 
-/**
- * Determina si la sesión almacenada es válida: existe un access_token y,
- * de tener expiración (expires_at = JWT exp en ms), aún no venció.
- *
- * Fuente única de verdad para los guards del layout protegido. El auth-guard
- * la usa para redirigir a login; los controllers hermanos (menu, company-selector)
- * la usan para abortar su connect() y NO renderizar ni hacer fetch cuando el
- * usuario no está autenticado — evita el "menú borroso + loader" que aparece
- * un instante antes de que el navegador navegue a /login.
- *
- * @returns {boolean} true si la sesión es usable, false si falta o expiró.
- */
-export function isSessionValid() {
-  const session = Storage.getSession()
-  if (!session || !session.access_token) return false
-  const expiresAt = session.expires_at ?? null
-  return !(expiresAt && Date.now() >= expiresAt)
-}
+// isSessionValid() se eliminó junto con el login client-side: la sesión vive en una
+// cookie httpOnly, que por definición el JavaScript no puede leer. Quien decide si
+// hay sesión es el servidor (ApplicationController#require_session), antes de
+// renderizar. Cualquier chequeo client-side sería, además de imposible, falseable.
 
 // ============================================================
 // API HEADERS HELPER
 // ============================================================
 
 /**
- * Get standard API headers for requests
+ * Headers estándar para llamar al API a través del proxy.
+ *
+ * NO incluye Authorization a propósito: el token vive en la cookie httpOnly y lo
+ * adjunta ProxyController del lado servidor (§2.3). El browser no tiene —ni debe
+ * tener— acceso al token, y el proxy descarta cualquier Authorization que llegue
+ * del cliente.
+ *
  * @returns {Object} Headers object
  */
 export function getApiHeaders() {
   return {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${Storage.getToken() || ''}`,
     'cl-company-id': String(Storage.getCompanyId())
   }
 }
@@ -478,7 +469,6 @@ export default {
   uriDecode,
   uriEncode,
   Storage,
-  isSessionValid,
   getApiHeaders,
   apiRequest
 }

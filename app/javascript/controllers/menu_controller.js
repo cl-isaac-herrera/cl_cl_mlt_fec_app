@@ -401,7 +401,10 @@ export default class extends Controller {
     // Notificar a las demás pestañas antes de limpiar (flujo B del análisis)
     if (multiple) notifySessionClosed()
 
+    // clearSession solo borra datos de display del browser; la sesión real (y el
+    // token) viven en la cookie httpOnly y los invalida /auth/logout con
+    // reset_session, que además cierra sesión en el proveedor OIDC.
     clearSession()
-    window.location.href = '/login'
+    window.location.href = '/auth/logout'
   }
 }

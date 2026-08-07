@@ -10,12 +10,27 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_03_211402) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_07_160000) do
   create_table "companies", force: :cascade do |t|
+    t.integer "connection_id"
     t.datetime "created_at", null: false
     t.string "created_by"
     t.boolean "is_active", default: true, null: false
     t.string "name", null: false
+    t.string "sap_db_code"
+    t.datetime "updated_at", null: false
+    t.string "updated_by"
+    t.string "uuid"
+    t.index ["uuid"], name: "index_companies_on_uuid", unique: true
+  end
+
+  create_table "connections", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "created_by"
+    t.boolean "is_active", default: true, null: false
+    t.string "name", null: false
+    t.string "service_layer_type"
+    t.string "service_layer_url", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
   end
@@ -71,14 +86,34 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_03_211402) do
     t.string "email", null: false
     t.boolean "is_active", default: true, null: false
     t.string "name"
+    t.string "oidc_sub"
+    t.string "sap_password"
+    t.string "sap_user"
     t.datetime "updated_at", null: false
     t.string "updated_by"
     t.index ["email"], name: "index_users_on_email", unique: true
+    t.index ["oidc_sub"], name: "index_users_on_oidc_sub", unique: true
   end
 
+  create_table "users_by_companies", force: :cascade do |t|
+    t.integer "company_id", null: false
+    t.datetime "created_at", null: false
+    t.string "created_by"
+    t.boolean "is_active", default: true, null: false
+    t.datetime "updated_at", null: false
+    t.string "updated_by"
+    t.integer "user_id", null: false
+    t.index ["company_id"], name: "index_users_by_companies_on_company_id"
+    t.index ["user_id", "company_id"], name: "index_users_by_companies_on_user_id_and_company_id", unique: true
+    t.index ["user_id"], name: "index_users_by_companies_on_user_id"
+  end
+
+  add_foreign_key "companies", "connections"
   add_foreign_key "role_permissions", "permissions"
   add_foreign_key "role_permissions", "roles"
   add_foreign_key "user_roles", "companies"
   add_foreign_key "user_roles", "roles"
   add_foreign_key "user_roles", "users"
+  add_foreign_key "users_by_companies", "companies"
+  add_foreign_key "users_by_companies", "users"
 end

@@ -7,6 +7,10 @@ RSpec.describe 'ProxyController', type: :request do
   let(:sync_url)  { Rails.application.config.api_fe_sync_url }
   let(:cabys_url) { ENV.fetch('API_CABYS_URL', 'https://api.hacienda.go.cr/fe/cabys/') }
 
+  # /api/* exige sesión de servidor salvo los endpoints públicos declarados en
+  # ProxyController::PUBLIC_API_PATHS (ver el describe del gate más abajo).
+  before { sign_in }
+
   describe 'enrutamiento por header API' do
     it 'sin header API enruta al app server (default)' do
       stub_request(:get, "#{app_url}/api/Menu").to_return(status: 200, body: '{"ok":true}',
@@ -75,6 +79,8 @@ RSpec.describe 'ProxyController', type: :request do
   end
 
   describe 'headers que nunca deben llegar al backend' do
+    # Se usa un endpoint público: mandar un header Cookie explícito reemplaza la
+    # cookie de sesión del request spec, y acá lo que se prueba es el stripping de
     it 'no reenvía Cookie, Referer ni Origin del browser' do
       seen_headers = nil
       stub_request(:get, "#{app_url}/api/Users").to_return do |request|
@@ -82,7 +88,11 @@ RSpec.describe 'ProxyController', type: :request do
         { status: 200, body: '{}' }
       end
 
-      get '/api/Users', headers: { 'Cookie' => 'session=abc', 'Referer' => 'http://evil.example', 'Origin' => 'http://evil.example' }
+      # Se agrega una cookie extra al jar en vez de mandar un header Cookie crudo:
+      # eso último reemplazaría la cookie de sesión y el request quedaría sin sesión.
+      cookies['galleta_del_browser'] = 'valor'
+
+      get '/api/Users', headers: { 'Referer' => 'http://evil.example', 'Origin' => 'http://evil.example' }
 
       expect(response).to have_http_status(:ok)
       expect(seen_headers).not_to have_key('Cookie')
@@ -108,6 +118,71 @@ RSpec.describe 'ProxyController', type: :request do
 
       expect(response).to have_http_status(:bad_gateway)
       expect(JSON.parse(response.body)['error']).to include('API request failed')
+    end
+  end
+
+  # El token vive en la session cookie httpOnly, nunca en el browser (§2.3).
+  describe 'autenticación desde la session cookie' do
+    it 'adjunta el Bearer de la sesión al llamar al backend' do
+      stub_request(:get, "#{app_url}/api/Menu")
+        .with(headers: { 'Authorization' => 'Bearer token-de-sesion' })
+        .to_return(status: 200, body: '{}', headers: { 'Content-Type' => 'application/json' })
+
+      sign_in(access_token: 'token-de-sesion')
+
+      get '/api/Menu'
+
+      expect(response).to have_http_status(:ok)
+    end
+
+    it 'descarta el Authorization que manda el cliente y usa el de la sesión' do
+      stub_request(:get, "#{app_url}/api/Menu")
+        .with(headers: { 'Authorization' => 'Bearer token-de-sesion' })
+        .to_return(status: 200, body: '{}', headers: { 'Content-Type' => 'application/json' })
+
+      sign_in(access_token: 'token-de-sesion')
+
+      get '/api/Menu', headers: { 'Authorization' => 'Bearer token-falsificado' }
+
+      expect(response).to have_http_status(:ok)
+      expect(
+        a_request(:get, "#{app_url}/api/Menu")
+          .with(headers: { 'Authorization' => 'Bearer token-falsificado' })
+      ).not_to have_been_made
+    end
+
+    it 'no manda Authorization cuando la sesión no tiene token' do
+      stub_request(:get, "#{app_url}/api/Public").to_return(status: 200, body: '{}')
+
+      get '/api/Public', headers: { 'Authorization' => 'Bearer token-del-browser' }
+
+      expect(
+        a_request(:get, "#{app_url}/api/Public")
+          .with { |req| req.headers.key?('Authorization') }
+      ).not_to have_been_made
+    end
+  end
+
+  # El gate que faltaba: antes /api/* se reenviaba al backend sin validar nada del
+  # lado de Rails. Ahora aplica require_session como en cualquier otro controller,
+  # sin excepciones.
+  describe 'gate de sesión sobre /api/*' do
+    it 'sin sesión NO reenvía la solicitud al backend' do
+      stub_request(:get, "#{app_url}/api/Menu").to_return(status: 200, body: '{}')
+
+      reset_session_cookie
+      get '/api/Menu'
+
+      expect(a_request(:get, "#{app_url}/api/Menu")).not_to have_been_made
+    end
+
+    it 'responde 401 a una llamada de JS sin sesión' do
+      stub_request(:get, "#{app_url}/api/Menu").to_return(status: 200, body: '{}')
+
+      reset_session_cookie
+      get '/api/Menu', headers: { 'Accept' => 'application/json' }
+
+      expect(response).to have_http_status(:unauthorized)
     end
   end
 end

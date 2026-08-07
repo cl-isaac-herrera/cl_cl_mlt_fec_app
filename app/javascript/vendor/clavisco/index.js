@@ -63,4 +63,4 @@ export { showToast, showAlert, success, error, warning, info, confirm } from './
 export { open, close, closeAll, showLoading, hideLoading } from './overlay/index.js'
 
 // Convenience re-exports from Login
-export { login, logout, checkAuth, getUser, getCompany } from './login/index.js'
+export { login, logout, getUser, getCompany } from './login/index.js'

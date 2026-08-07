@@ -1,6 +1,7 @@
 import { Controller } from '@hotwired/stimulus'
 import { TabulatorFull } from 'tabulator-tables'
-import { Storage, SStore, getApiHeaders } from 'vendor/clavisco/core'
+import { SStore, getApiHeaders } from 'vendor/clavisco/core'
+import { showToast } from 'vendor/clavisco/alerts'
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale'
 
 /**
@@ -29,6 +30,9 @@ export default class extends Controller {
   /** @type {Array} Lista completa de empresas cargadas */
   #companies = []
 
+  /** @type {boolean} La última carga de compañías falló */
+  #loadFailed = false
+
   /** @type {object|null} Empresa seleccionada en el UI (pendiente de confirmar) */
   #pendingSelection = null
 
@@ -45,26 +49,10 @@ export default class extends Controller {
   connect() {
     this.#updateToolbarLabel()
 
-    // Abrir automáticamente si no hay empresa seleccionada
-    const company = SStore.get('CurrentCompany')
-    if (!company?.companyId) {
-      const favoriteCompany = Storage.get("FavoriteCompany");
-      if(favoriteCompany)
-      {
-        this.#applyCompanyChange({
-          EmsrNombreComercial: favoriteCompany.companyName, 
-          Id: favoriteCompany.companyId, 
-          CodigoActividad: favoriteCompany.codigoActividad, 
-          GroupId: favoriteCompany.groupId, 
-          UseFactProv: favoriteCompany.UseFactProv,
-          SendReceptAndApInv: favoriteCompany.SendReceptAndApInv
-        });
-      }
-      else
-      {
-        this.open()
-      }
-    }
+    // Sin compañía seleccionada se abre el panel para que elija. Ya no hay
+    // preselección automática: la compañía favorita vivía en
+    // localStorage['FavoriteCompany'] y el esquema nuevo no la modela.
+    if (!SStore.get('CurrentCompany')?.companyId) this.open()
   }
 
   disconnect() {
@@ -103,9 +91,7 @@ export default class extends Controller {
       this.#table.clearFilter()
       return
     }
-    this.#table.setFilter(row =>
-      `${row.EmsrIdeNumero} - ${row.EmsrNombreComercial}`.toLowerCase().includes(query)
-    )
+    this.#table.setFilter(row => (row.Name ?? '').toLowerCase().includes(query))
   }
 
   confirm() {
@@ -225,8 +211,7 @@ export default class extends Controller {
         cellDblClick: (_e, cell) => { this.#selectRow(cell.getRow()); this.confirm() },
       },
       columns: [
-        { title: 'Identificación',   field: 'EmsrIdeNumero',       width: 130 },
-        { title: 'Nombre Comercial', field: 'EmsrNombreComercial', widthGrow: 1 },
+        { title: 'Compañía', field: 'Name', widthGrow: 1 },
       ],
     })
   }
@@ -246,26 +231,41 @@ export default class extends Controller {
     this.#setConfirmDisabled(true)
   }
 
+  /**
+   * GET /api/companies — endpoint nativo de Rails. Devuelve solo las compañías
+   * asignadas al usuario de la sesión, así que no lleva filtros ni estado.
+   * Separado del render porque connect() lo necesita antes de abrir el panel,
+   * para saber si hay una favorita que aplicar sola.
+   * @returns {Promise<Array>}
+   */
+  async #fetchCompanies() {
+    try {
+      const response = await fetch('/api/companies', { headers: getApiHeaders() })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+      const data = await response.json()
+      this.#companies = data?.Data ?? []
+      this.#loadFailed = false
+    } catch (error) {
+      console.error('[CompanySelector] Error cargando compañías:', error)
+      this.#companies  = []
+      this.#loadFailed = true
+    }
+    return this.#companies
+  }
+
   async #loadCompanies() {
     this.#initTable()
     this.#showPanelLoader()
 
     try {
-      const response = await fetch(
-        '/api/Companies/GetCompanies?ComercialName=&LegalName=&Identification=&status=active',
-        { headers: getApiHeaders() }
-      )
+      // Reutiliza lo que connect() ya trajo; solo va a la red si no hay nada.
+      if (!this.#companies.length) await this.#fetchCompanies()
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
-      const data = await response.json()
-      this.#companies = data?.Data ?? []
       await this.#table.setData(this.#companies)
+      if (this.#loadFailed) this.#table?.alert('Error al cargar compañías', 'error')
       // El panel entra con translate-x; forzamos redibujado para que calcule la altura
       requestAnimationFrame(() => this.#table?.redraw(true))
-    } catch (error) {
-      console.error('[CompanySelector] Error cargando empresas:', error)
-      this.#table?.alert('Error al cargar compañías', 'error')
     } finally {
       this.#hidePanelLoader()
       // Una vez cargadas las empresas, enfocar el input de búsqueda
@@ -288,96 +288,68 @@ export default class extends Controller {
     this.#hideModal()
     if (this.hasPageLoaderTarget) this.pageLoaderTarget.classList.remove('hidden')
 
-    // 1. Guardar empresa en localStorage
+    // 1. La compañía activa es estado de SESIÓN: se guarda en el servidor. De ahí la
+    //    leen require_permission! y require_view_permission!, que no miran el browser.
+    const saved = await this.#setCurrentCompany(company.Id)
+    if (!saved) {
+      if (this.hasPageLoaderTarget) this.pageLoaderTarget.classList.add('hidden')
+      return
+    }
+
+    // 2. Copia local solo para DISPLAY (nombre en el toolbar). No es la fuente de
+    //    verdad; el servidor ya sabe cuál compañía está activa.
     SStore.set('CurrentCompany', {
-      companyName:        company.EmsrNombreComercial,
-      companyId:          company.Id,
-      codigoActividad:    company.CodigoActividad,
-      groupId:            company.GroupId,
-      UseFactProv:        company.UseFactProv,
-      SendReceptAndApInv: company.SendReceptAndApInv
+      companyName: company.Name,
+      companyId:   company.Id,
+      companyUuid: company.Uuid,
+      sapDbCode:   company.SapDbCode
     })
 
-    // 2. Limpiar permisos anteriores
+    // 3. Recargar permisos de la nueva compañía
     sessionStorage.removeItem('Permissions')
-
-    // 3. Cargar nuevos permisos y token del servidor FE Sync en paralelo
-    await Promise.all([
-      this.#reloadPermissions(company.Id),
-      this.#reloadFEToken(company.Id),
-    ])
+    await this.#reloadPermissions()
 
     // 4. Recargar página
     window.location.reload()
   }
 
   /**
-   * Obtiene las credenciales FE de la empresa y hace login en el servidor Sync
-   * para obtener el token que se usa en requests ApiFEUrl.
-   * Replica el flujo de UsabilityInformationService.GetFECredentialsObservable() del Angular legacy.
-   * El token se guarda en sessionStorage.currentFEUser.
+   * PUT /api/session/company — fija la compañía activa en la session cookie.
+   * El servidor rechaza con 403 cualquier compañía no asignada al usuario.
+   * @returns {Promise<boolean>} true si quedó guardada.
    */
-  async #reloadFEToken(companyId) {
+  async #setCurrentCompany(companyId) {
     try {
-      const session   = Storage.get('Session') || {}
-      const token     = session.access_token
-      if (!token) return
-
-      // 1. Obtener credenciales FE para esta empresa (App server)
-      const credsResp = await fetch(
-        `/api/Credentials/GetFeCredentials?companyId=${companyId}`,
-        {
-          headers: {
-            'Content-Type':             'application/json',
-            'API':                      'ApiAppUrl',
-            'X-Skip-Error-Interceptor': 'true',
-            'Authorization':            `Bearer ${token}`,
-          },
-        }
-      )
-      if (!credsResp.ok) return
-      const credsData = await credsResp.json()
-      const creds = credsData?.Data?.[0]
-      if (!creds) return
-
-      // 2. Limpiar token FE anterior
-      sessionStorage.removeItem('currentFEUser')
-
-      // 3. Login en el servidor FE Sync (form-encoded, igual que Angular getFEToken)
-      //    El proxy stripea /api/token → /token cuando API: ApiFEUrl
-      const body = new URLSearchParams({
-        grant_type: 'password',
-        username:   creds.UserId,
-        password:   creds.Password,
+      const response = await fetch('/api/session/company', {
+        method:  'PUT',
+        headers: getApiHeaders(),
+        body:    JSON.stringify({ company_id: companyId }),
       })
 
-      const feTokenResp = await fetch('/api/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type':             'application/x-www-form-urlencoded',
-          'API':                      'ApiFEUrl',
-          'X-Skip-Error-Interceptor': 'true',
-        },
-        body: body.toString(),
-      })
-      if (!feTokenResp.ok) return
-      const feToken = await feTokenResp.json()
+      if (response.ok) return true
 
-      // 4. Guardar token FE en sessionStorage (mismo key que Angular legacy)
-      if (feToken?.access_token) {
-        sessionStorage.setItem('currentFEUser', JSON.stringify(feToken))
-      }
-    } catch {
-      // Token FE no crítico para cargar la empresa; se reintentará en el siguiente cambio
+      const body = await response.json().catch(() => ({}))
+      showToast(body?.Message || 'No se pudo seleccionar la compañía.', 'error')
+      return false
+    } catch (error) {
+      showToast(`No se pudo seleccionar la compañía: ${error.message}`, 'error')
+      return false
     }
   }
 
-  async #reloadPermissions(companyId) {
+  // #reloadFEToken se eliminó: pedía credenciales al App server .NET, hacía un
+  // segundo login contra el servidor FE Sync y guardaba ESE token en
+  // sessionStorage.currentFEUser. Eran las dos cosas que este cutover elimina —
+  // un token accesible desde JS (prohibido por §2.3) y una segunda autenticación
+  // paralela, cuando ahora hay una sola sesión creada por el IdP.
+
+  /**
+   * GET /api/permissions — permisos efectivos en la compañía activa.
+   * No recibe companyId: el servidor la toma de la sesión.
+   */
+  async #reloadPermissions() {
     try {
-      const response = await fetch(
-        `/api/Permission/GetPermsByUser?companyId=${companyId}`,
-        { headers: getApiHeaders() }
-      )
+      const response = await fetch('/api/permissions', { headers: getApiHeaders() })
       if (!response.ok) return
       const data = await response.json()
       const perms = (data?.Data ?? []).map(p => p.Name)

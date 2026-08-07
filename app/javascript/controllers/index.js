@@ -1,9 +1,8 @@
 // Registro de Stimulus controllers
-// Convencion: archivo login_controller.js -> data-controller="login"
+// Convencion: archivo home_controller.js -> data-controller="home"
 
 import { application } from 'controllers/application'
 
-import LoginController           from 'controllers/login_controller'
 import AuthGuardController       from 'controllers/auth_guard_controller'
 import HomeController            from 'controllers/home_controller'
 import MenuController            from 'controllers/menu_controller'
@@ -36,7 +35,6 @@ import UdfsController                  from 'controllers/udfs_controller'
 import AccountVerificationController   from 'controllers/account_verification_controller'
 import UserMenuController              from 'controllers/user_menu_controller'
 
-application.register('login',             LoginController)
 application.register('account-verification', AccountVerificationController)
 application.register('auth-guard',        AuthGuardController)
 application.register('home',              HomeController)
