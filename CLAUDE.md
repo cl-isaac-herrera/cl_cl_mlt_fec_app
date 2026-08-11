@@ -1506,3 +1506,86 @@ los archivos sin trackear que se hayan creado.
 Mover el puntero a un commit nuevo (`git -C vendor/clavisco/auth fetch && git checkout <sha>`)
 es legítimo **cuando el cambio ya fue mergeado en el repo del submódulo**. Lo prohibido es
 editar sus archivos desde el producto.
+
+---
+
+## 28. Endpoints migrados a Rails — convención de nombrado REST
+
+El API .NET nombra sus endpoints con el verbo dentro del path y en PascalCase
+(`GET /api/User/GetUserInfo`, `PATCH /api/User/profile-info`,
+`POST /api/Connections/validate-user-credentials`, `GET /api/Permission/GetPermsByUser`).
+**Esos nombres no se copian al migrar.** Cada endpoint que pasa a Rails se renombra a REST;
+el nombre viejo sobrevive únicamente mientras el endpoint siga cayendo en el catch-all del
+proxy (`match '/api/*path', to: 'proxy#forward'`).
+
+### Reglas
+
+1. **El verbo va en el método HTTP, nunca en el path.**
+   `GET /api/companies`, no `GET /api/Companies/GetCompanies`.
+   Si el nombre del path contiene `Get`, `Update`, `Patch`, `Create`, `Delete`, `Validate`,
+   `Search` o `By`, está mal.
+2. **El path nombra un recurso, en `snake_case` y en plural.**
+   `/api/sap_credential_validations`, no `/api/validate-user-credentials`.
+   Ni PascalCase (`/api/User`) ni kebab-case (`/api/profile-info`).
+3. **Recurso singular cuando siempre es uno solo y sale de la sesión** — se declara con
+   `resource` (sin `s`) y **no lleva id**: `resource :profile` → `GET|PATCH /api/profile`.
+   Que el id no viaje es la garantía de que nadie lee ni escribe el registro ajeno.
+4. **Una acción que no es CRUD se modela como el recurso que produce.**
+   Validar credenciales crea una *validación* → `POST /api/sap_credential_validations`
+   (`only: [:create]`). No se inventan actions sueltas tipo `post 'sap/validate'`.
+5. **`companyId` no viaja como parámetro.** La compañía activa vive en la session cookie
+   (§2.4 del estándar) y la lee el servidor: `GET /api/permissions`, no
+   `GET /api/permissions?companyId=3`. **Excepción:** cuando la pantalla deja elegir
+   explícitamente contra qué compañía operar y esa puede no ser la activa — ahí sí va en el
+   cuerpo, y el controller **debe** validar que esté asignada al usuario
+   (`Company.assigned_to(Current.user.id).find_by(id: ...)`), como hacen
+   `Api::SessionsController` y `Api::SapCredentialValidationsController`.
+6. **Los ids ajenos tampoco viajan.** Si el recurso es del usuario en sesión, se resuelve con
+   `Current.user`; un `Id` que llegue en el body se ignora.
+7. **El cuerpo y la respuesta JSON siguen en PascalCase** (`SapUser`, `Data`, `Code`,
+   `Message`). Eso es contrato con el frontend y con `ApiResponse` — lo que se normaliza es
+   la **URL**, no las llaves del JSON.
+8. **La ruta nueva va dentro de `namespace :api`, arriba del catch-all del proxy.** Ese orden
+   es lo que hace que el endpoint migrado le gane al reenvío al .NET.
+
+### Tabla de traducción (endpoints ya migrados)
+
+| API .NET | Rails |
+|---|---|
+| `GET /api/Companies/GetCompanies?ComercialName=&...` | `GET /api/companies` |
+| `GET /api/Permission/GetPermsByUser?companyId=N` | `GET /api/permissions` |
+| `GET /api/User/GetUserInfo` | `GET /api/profile` |
+| `PATCH /api/User/profile-info` | `PATCH /api/profile` |
+| `POST /api/Connections/validate-user-credentials` | `POST /api/sap_credential_validations` |
+| (nuevo — la compañía activa era `sessionStorage`) | `PUT /api/session/company` |
+
+### Patrón
+
+```ruby
+# config/routes.rb — ✅ CORRECTO
+namespace :api do
+  resources :companies, only: [:index]              # GET  /api/companies
+  resource  :profile,   only: %i[show update]       # GET|PATCH /api/profile
+  resources :sap_credential_validations, only: [:create]
+end
+
+# ❌ INCORRECTO — se copió el nombre del .NET
+namespace :api do
+  get  'User/GetUserInfo',                   to: 'users#get_user_info'
+  post 'Connections/validate-user-credentials', to: 'connections#validate'
+end
+```
+
+### Del lado del JS
+
+Al migrar un endpoint hay que **actualizar todos los `fetch` que lo llaman** — si queda uno
+apuntando al nombre viejo, sigue cayendo al proxy y al .NET (que hoy responde 401, ver
+`TODOS.md`) sin ningún error visible.
+
+```bash
+# Antes de dar por migrado un endpoint: no debe quedar ninguna referencia al nombre viejo
+grep -rn "GetUserInfo\|profile-info" app/javascript
+```
+
+Los endpoints nativos usan la session cookie: en su `#apiFetch` **no** se arma header
+`Authorization` — basta `getApiHeaders()` de `vendor/clavisco/core`.

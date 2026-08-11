@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_11_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_11_130000) do
   create_table "companies", force: :cascade do |t|
     t.integer "connection_id"
     t.datetime "created_at", null: false
@@ -84,6 +84,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_11_120000) do
   create_table "users", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "created_by"
+    t.string "doc_number_preference"
     t.string "email", null: false
     t.boolean "is_active", default: true, null: false
     t.string "name"

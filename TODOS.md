@@ -134,6 +134,50 @@ Los endpoints del selector ya son nativos de Rails (`GET /api/companies`,
       `Rol`, `PermissionByRol` y `RolByUser` → `roles`, `role_permissions`, `user_roles`;
       después quitar el rol `Administrador` sembrado.
 
+## Perfil de usuario — endpoints migrados a Rails (`/configurations/user-profile`)
+
+La pantalla ya no toca el .NET: `GET /api/profile`, `PATCH /api/profile`,
+`POST /api/sap_credential_validations` y `GET /api/companies` son nativos. Lo que quedó
+pendiente:
+
+- [ ] **`POST /api/Connections/validate-user-credentials` sigue vivo en
+      `users_controller.js:470`** (pantalla de asignación de usuarios). Es exactamente el
+      mismo llamado con el mismo payload que ya resuelve `POST /api/sap_credential_validations`,
+      pero esa pantalla no entraba en esta migración y su semántica es distinta: valida las
+      credenciales de **otro** usuario, no las propias, así que el `skip_permission_check!`
+      del endpoint nativo no aplica tal cual.
+      **Pendiente:** al migrar la pantalla de usuarios, apuntarla al endpoint nativo y
+      agregarle el permiso que corresponda (`Configurations_Users_*`).
+
+- [ ] **`GET /api/Group/GetGroupsByUser` no se migró: se eliminó de esta pantalla.** El
+      Angular lo pedía y descartaba la respuesta (ningún campo del perfil depende de los
+      grupos), así que no era deuda sino código muerto — criterio de §24. Sigue en uso en
+      `group_controller.js`, `users_controller.js` y `users_register_controller.js`, que sí
+      lo consumen; ahí se migra cuando toque esas pantallas (no existe todavía tabla `groups`
+      en la base propia).
+
+- [ ] **`users.doc_number_preference` no se importó del origen.** La columna la agregó
+      `db/migrate/20260811130000_add_doc_number_preference_to_users.rb` (texto, equivalente a
+      `Users.DocNumberPreference varchar(2)` del .NET) y hoy nace en `NULL` para todos: quien
+      tuviera un "Tipo de OC" configurado lo ve vacío hasta volver a guardarlo.
+      **Pendiente:** incluir la columna en la importación de usuarios desde SQL Server
+      `CLSQL03` / `CL_CL_MLT_FEC_APP_44`, junto con `SapUser` / `SapPass`.
+
+- [ ] **Las contraseñas de SAP importadas vienen cifradas con el AES del .NET.** Rails las
+      guarda con ActiveRecord Encryption (ver `config/application.rb`), que no las puede
+      descifrar. `support_unencrypted_data = true` evita que reviente la lectura, pero el
+      valor que salga va a ser el ciphertext del .NET, no la contraseña: el `/Login` contra
+      SAP fallaría.
+      **Pendiente:** en la tarea de importación, descifrar con la llave del .NET antes de
+      insertar (o dejar el campo vacío y pedir que cada usuario reingrese su contraseña).
+
+- [ ] **La visibilidad del campo "Tipo de OC" sigue con compañías hardcodeadas.**
+      `user_profile_controller.js` mantiene `COMPANIES_WITH_OC = [186, 1206]`, heredado del
+      enum `CompanyWhitOC` del Angular. Son ids de la base del .NET, que no tienen por qué
+      coincidir con `companies.id` de la base propia.
+      **Pendiente:** convertirlo en un dato de la compañía (columna o UDF) y exponerlo en
+      `GET /api/companies`, en vez de una lista de ids en el frontend.
+
 ---
 
 ## Submódulos — cambios que corresponden a `cl-auth-ruby`

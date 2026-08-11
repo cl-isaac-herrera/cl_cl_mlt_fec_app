@@ -11,6 +11,14 @@ Rails.application.routes.draw do
     resources :companies,   only: [:index]
     resources :permissions, only: [:index]
 
+    # Perfil del usuario de la sesión. Singular: no lleva id porque siempre es el
+    # propio. Reemplaza GET /api/User/GetUserInfo y PATCH /api/User/profile-info.
+    resource :profile, only: %i[show update]
+
+    # Prueba de credenciales de SAP contra el Service Layer de una compañía.
+    # Reemplaza POST /api/Connections/validate-user-credentials.
+    resources :sap_credential_validations, only: [:create]
+
     put 'session/company', to: 'sessions#update_company'
   end
 

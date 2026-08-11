@@ -1,5 +1,5 @@
 import { Controller } from '@hotwired/stimulus';
-import { Storage, SStore } from 'vendor/clavisco/core';
+import { SStore, getApiHeaders } from 'vendor/clavisco/core';
 import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
 
 // Compañías con campo OCTypeControl habilitado (CompanyWhitOC enum del legacy Angular)
@@ -9,12 +9,14 @@ const COMPANIES_WITH_OC = [186, 1206];
  * UserProfileController — Actualización de información de perfil del usuario.
  *
  * Replica la funcionalidad del componente Angular UpdateUserInfoComponent:
- * - Carga inicial: GetUserInfo + GetGroupsByUser + GetCompanies (paralelo)
+ * - Carga inicial: GET /api/profile + GET /api/companies (paralelo)
  * - Toggle visibilidad de contraseña
  * - credentialsDirty tracking (SapUser / SapPass changes)
  * - Botón "Probar credenciales" con 3 estados (default / validating / verified)
  * - OCTypeControl condicional según compañía seleccionada
- * - PATCH api/User/profile-info con payload completo del usuario
+ * - PATCH /api/profile con los tres campos editables del perfil
+ *
+ * Todos sus endpoints son nativos de Rails: ya no pasa por el proxy al .NET.
  */
 export default class extends Controller {
   static targets = [
@@ -86,34 +88,37 @@ export default class extends Controller {
     this.#selectedCompanyFromStorage = company?.companyId ?? null;
   }
 
+  /**
+   * GET /api/profile — perfil del usuario de la sesión. No lleva id: el servidor
+   * lo toma de la cookie, así que no hay forma de pedir el perfil de otro.
+   *
+   * La llamada a GetGroupsByUser que hacía el Angular se eliminó: su respuesta se
+   * descartaba (ningún campo de esta pantalla depende de los grupos).
+   */
   async #loadInitialData() {
     try {
-      const companyId = this.#selectedCompanyFromStorage;
+      const res = await this.#get('/api/profile');
 
-      const [userInfoRes, groupsRes] = await Promise.all([
-        this.#get('api/User/GetUserInfo'),
-        this.#get(`api/Group/GetGroupsByUser?companyId=${companyId}`),
-      ]);
-
-      this.#userInfo = userInfoRes.Data?.[0] ?? null;
+      this.#userInfo = res.Data ?? null;
 
       if (this.#userInfo) {
         this.#fillForm(this.#userInfo.SapUser);
-        this.#configureOcTypeVisibility(companyId);
+        this.#configureOcTypeVisibility(this.#selectedCompanyFromStorage);
         this.#setOcTypeValue(this.#userInfo.DocNumberPreference);
       }
-
-      // groupsRes.Data disponible para uso futuro
     } catch (err) {
       showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener la información', message: this.#extractError(err) });
     }
   }
 
+  /**
+   * GET /api/companies — solo las compañías asignadas al usuario. Es el mismo
+   * universo contra el que el servidor acepta probar credenciales, así que el
+   * select no puede ofrecer una que después rechace con 403.
+   */
   async #loadAssignableCompanies() {
     try {
-      const data = await this.#get(
-        'api/Companies/GetCompanies?ComercialName=&LegalName=&Identification=&status=active'
-      );
+      const data = await this.#get('/api/companies');
       const companies = data.Data ?? [];
 
       // Limpiar opciones previas (excepto placeholder)
@@ -124,7 +129,7 @@ export default class extends Controller {
       companies.forEach(c => {
         const option = document.createElement('option');
         option.value = c.Id;
-        option.textContent = c.EmsrNombreComercial || c.EmsrNombre;
+        option.textContent = c.Name;
         this.companySelectTarget.appendChild(option);
       });
 
@@ -234,7 +239,10 @@ export default class extends Controller {
     this.#syncButtonStates();
 
     try {
-      const data = await this.#post('api/Connections/validate-user-credentials', {
+      // POST /api/sap_credential_validations — hace el /Login contra el Service
+      // Layer de esa compañía. Responde 200 con Data true/false; el motivo del
+      // rechazo viene en Message.
+      const data = await this.#post('/api/sap_credential_validations', {
         SapUser: sapUser,
         SapPass: sapPass,
         CompanyId: selectedCompanyId,
@@ -269,8 +277,11 @@ export default class extends Controller {
       ? this.ocTypeSelectTarget.value
       : (this.#userInfo?.DocNumberPreference ?? '');
 
+    // Solo los tres campos editables: el endpoint identifica al usuario por la
+    // sesión, así que reenviarle el resto del perfil no aportaba nada.
+    // SapPass vacío significa "sin cambio" — el formulario siempre carga el campo
+    // en blanco porque el servidor nunca devuelve la contraseña guardada.
     const payload = {
-      ...this.#userInfo,
       SapUser: sapUser,
       SapPass: sapPass,
       DocNumberPreference: String(ocTypeValue),
@@ -279,7 +290,7 @@ export default class extends Controller {
     this.btnUpdateTarget.disabled = true;
 
     try {
-      await this.#patch('api/User/profile-info', payload);
+      await this.#patch('/api/profile', payload);
       showToast('Información actualizada con éxito!!!', 'success');
       this.#onLoad();
     } catch (err) {
@@ -388,41 +399,42 @@ export default class extends Controller {
 
   // ── API helpers ───────────────────────────────────────────────────────────
 
-  async #get(path) {
-    return this.#apiFetch(`/${path}`);
+  async #get(url) {
+    return this.#apiFetch(url);
   }
 
-  async #post(path, body) {
-    return this.#apiFetch(`/${path}`, {
+  async #post(url, body) {
+    return this.#apiFetch(url, {
       method: 'POST',
       body: JSON.stringify(body),
     });
   }
 
-  async #patch(path, body) {
-    return this.#apiFetch(`/${path}`, {
+  async #patch(url, body) {
+    return this.#apiFetch(url, {
       method: 'PATCH',
       body: JSON.stringify(body),
     });
   }
 
+  /**
+   * Endpoints nativos: la sesión va en la cookie httpOnly, así que no se arma
+   * ningún header Authorization — getApiHeaders() aporta lo único que hace falta.
+   * El error lo trae el campo Message del contrato ApiResponse.
+   */
   async #apiFetch(url, options = {}) {
-    const session = Storage.get('Session') || {};
-    const token   = session.access_token;
-
     const res = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type': 'application/json',
         'Accept': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...getApiHeaders(),
         ...(options.headers || {}),
       },
     });
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(text || `HTTP ${res.status}`);
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.Message || `HTTP ${res.status}`);
     }
 
     const contentType = res.headers.get('content-type') || '';
