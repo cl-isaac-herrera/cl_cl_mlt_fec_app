@@ -38,8 +38,10 @@ module SessionHelpers
     config = OidcConfig.new(
       domain: domain, client_id: 'cid', client_secret: 'secret', audience: '',
       provider: provider,
+      issuer: "https://#{domain}/",
       authorization_endpoint: "https://#{domain}/authorize",
-      token_endpoint: "https://#{domain}/oauth/token"
+      token_endpoint: "https://#{domain}/oauth/token",
+      jwks_uri: "https://#{domain}/.well-known/jwks.json"
     )
     allow(Rails.application.config).to receive(:oidc).and_return(config)
     config
