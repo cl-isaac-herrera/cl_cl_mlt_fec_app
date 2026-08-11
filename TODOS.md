@@ -92,8 +92,44 @@ Los endpoints del selector ya son nativos de Rails (`GET /api/companies`,
       `UseFactProv → uses_supplier_invoice`, `SendReceptAndApinv → sends_reception_and_ap_invoice`,
       y `CompanyByUser.{UserId, CompanyId, Favorite, Status}` → `user_companies`.
 
-- [ ] **Los permisos de las pantallas siguen viniendo del .NET.** `menu_controller.js` y
-      `auth_guard_controller.js` todavía llaman `GET /api/Permission/GetPermsByUser?companyId=`
-      vía proxy. El endpoint nativo `GET /api/permissions` ya existe y no recibe companyId.
-      **Pendiente:** apuntar esos dos controllers al endpoint nativo cuando la tabla
-      `permissions` tenga datos.
+- [x] **Los permisos de las pantallas siguen viniendo del .NET** — resuelto: `menu_controller.js`
+      y `auth_guard_controller.js` ahora llaman `GET /api/permissions` (nativo, sin `companyId`:
+      la compañía activa la toma de la session cookie). Ya no queda ninguna llamada a
+      `/api/Permission/GetPermsByUser` en la app.
+
+- [ ] **El catálogo de `permissions` está incompleto.** `db/seeds.rb` siembra 92 permisos en
+      tres secciones: `CATALOG` (54 normales) y `GLOBAL_CATALOG` (25 globales), ambos con su
+      `Id` de origen para que una importación posterior de `PermissionByRol` pueda copiar
+      `PermissionId` tal cual, más `CODE_ONLY` (13 con `Id` desde 1000) que la UI evalúa pero
+      que no vienen en ningún export.
+      Los dos exports son subconjuntos disjuntos de la misma tabla y aun así quedan
+      **11 Id sin cubrir: 22, 24, 26, 34, 37, 44, 45, 46, 48, 55, 69.**
+      Los 13 de `CODE_ONLY` son: `Configurations_Security_Access`,
+      `Configurations_Users_ManageAccess`, los cuatro `Configurations_Numbering_*`,
+      los dos `Configurations_Branches_*`, los tres `Configurations_EmailInbox_*`,
+      `Configurations_MailParser_Create` y `Configurations_MailParser_Update`.
+      **Pendiente:** traer las 11 filas que faltan; si alguna corresponde a un nombre de
+      `CODE_ONLY`, mover esa fila a su `Id` real. Para las que sigan sin existir en el origen,
+      decidir entre crearlas en el .NET o cambiar el permiso que la UI evalúa — ojo que el
+      export trae `Maintenance_EmailInbox_Access` y `Configurations_Permissions_Access`, que
+      se parecen a `Configurations_EmailInbox_Access` y `Configurations_Permissions_GlobalAccess`
+      del código y podrían ser el mismo permiso renombrado por error en la migración.
+
+- [ ] **El campo `permissions.type` todavía no lo usa nadie.** Lo agregó
+      `db/migrate/20260811120000_add_type_to_permissions.rb` (texto, `null: false`,
+      default `'normal'`, valores válidos en `Permission::TYPES`) para poder distinguir
+      permisos por compañía (`normal`) de permisos a nivel de aplicación (`global`).
+      Hoy solo lo puebla el seed: ni `AuthorizationService` ni `GET /api/permissions` lo
+      miran, así que un permiso global se sigue concediendo vía `user_roles` con
+      `company_id` como cualquier otro.
+      **Pendiente:** cuando se implemente la distinción, resolver los `global` sin pasar por
+      la compañía activa y exponer el tipo en la respuesta del endpoint si el cliente lo
+      necesita.
+
+- [ ] **Los roles y sus asignaciones son de desarrollo, no los reales.** `db/seeds.rb` crea un
+      único rol `Administrador` con los 80 permisos y lo asigna a cada fila activa de
+      `users_by_companies`: **todo usuario sembrado queda administrador**. No sirve para
+      producción ni para probar gating por permisos.
+      **Pendiente:** importar de SQL Server `CLSQL03` / `CL_CL_MLT_FEC_APP_44` las tablas
+      `Rol`, `PermissionByRol` y `RolByUser` → `roles`, `role_permissions`, `user_roles`;
+      después quitar el rol `Administrador` sembrado.

@@ -128,21 +128,26 @@ export default class extends Controller {
     const company  = SStore.get('CurrentCompany')
     let permissions = SStore.get('Permissions') // array de strings — sessionStorage (per-tab)
 
-    // Si no hay permisos en caché, cargarlos del API
+    // Si no hay permisos en caché, cargarlos del API. Se sigue exigiendo compañía
+    // seleccionada: sin ella el servidor no tiene con qué resolver los roles y
+    // devolvería una lista vacía que se cachearía como "sin permisos".
     if (!permissions && company?.companyId) {
-      permissions = await this.#fetchPermissions(company.companyId)
+      permissions = await this.#fetchPermissions()
     }
 
     const permSet = new Set(Array.isArray(permissions) ? permissions : [])
     this.#renderMenu(permSet)
   }
 
-  async #fetchPermissions(companyId) {
+  /**
+   * GET /api/permissions — endpoint nativo de Rails, lee de las tablas propias
+   * (user_roles → role_permissions → permissions). No recibe companyId: la
+   * compañía activa vive en la session cookie del servidor (§2.4), así que el
+   * cliente no puede pedir los permisos de otra.
+   */
+  async #fetchPermissions() {
     try {
-      const response = await fetch(
-        `/api/Permission/GetPermsByUser?companyId=${companyId}`,
-        { headers: getApiHeaders() }
-      )
+      const response = await fetch('/api/permissions', { headers: getApiHeaders() })
       if (!response.ok) return []
       const data = await response.json()
       const perms = (data?.Data ?? []).map(p => p.Name)

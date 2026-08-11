@@ -97,7 +97,7 @@ export default class extends Controller {
           this.#revealContent()
           return
         }
-        permissions = await this.#fetchPermissions(company.companyId)
+        permissions = await this.#fetchPermissions()
       }
 
       const permSet = new Set(Array.isArray(permissions) ? permissions : [])
@@ -128,12 +128,14 @@ export default class extends Controller {
     document.title = meta ? meta.content : 'Factura Electrónica'
   }
 
-  async #fetchPermissions(companyId) {
+  /**
+   * GET /api/permissions — endpoint nativo de Rails, lee de las tablas propias
+   * (user_roles → role_permissions → permissions). No recibe companyId: la
+   * compañía activa vive en la session cookie del servidor (§2.4).
+   */
+  async #fetchPermissions() {
     try {
-      const response = await fetch(
-        `/api/Permission/GetPermsByUser?companyId=${companyId}`,
-        { headers: getApiHeaders() }
-      )
+      const response = await fetch('/api/permissions', { headers: getApiHeaders() })
       if (!response.ok) return []
       const data = await response.json()
       const perms = (data?.Data ?? []).map(p => p.Name)
