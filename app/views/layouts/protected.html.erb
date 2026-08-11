@@ -191,18 +191,25 @@
             <%# ===================================================== %>
             <%# Menú de usuario — ícono con contorno tenue al final    %>
             <%# ===================================================== %>
-            <div class="relative" data-controller="user-menu">
+            <%# El usuario sale de la sesión de servidor (cookie httpOnly): tras el cutover %>
+            <%# a OIDC el browser ya no tiene la llave `Session` de localStorage, así que %>
+            <%# el nombre lo imprime el servidor acá y el controller solo lo colorea. %>
+            <% user_label = current_user&.name.presence || current_user&.email.to_s %>
+            <div class="relative"
+                 data-controller="user-menu"
+                 data-user-menu-label-value="<%= user_label %>"
+                 data-user-menu-email-value="<%= current_user&.email %>">
               <button type="button"
                       data-action="click->user-menu#toggle"
                       data-user-menu-target="avatar"
                       data-testid="user-menu-button"
                       class="group relative flex items-center justify-center w-9 h-9 rounded-full bg-gray-300 hover:opacity-90 transition-opacity cursor-pointer">
                 <span data-user-menu-target="initial"
-                      class="text-sm font-semibold uppercase leading-none text-gray-700"></span>
+                      class="text-sm font-semibold uppercase leading-none text-gray-700"><%= user_label.first %></span>
 
                 <%# Tooltip con el nombre de usuario (hover) %>
                 <span data-user-menu-target="tooltip"
-                      class="pointer-events-none absolute right-0 top-full mt-1 whitespace-nowrap rounded-md bg-gray-800 px-2 py-1 text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity z-[9999]"></span>
+                      class="pointer-events-none absolute right-0 top-full mt-1 whitespace-nowrap rounded-md bg-gray-800 px-2 py-1 text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity z-[9999]"><%= user_label %></span>
               </button>
 
               <%# Menú flotante — mismo estilo que el context menu de compañía %>
@@ -210,7 +217,7 @@
                    class="hidden absolute right-0 top-full mt-1 z-[9999] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[200px]">
                 <div class="px-3 py-2 border-b border-gray-100">
                   <p class="text-xs text-gray-400">Usuario</p>
-                  <p data-user-menu-target="username" class="text-sm text-gray-700 truncate"></p>
+                  <p data-user-menu-target="username" class="text-sm text-gray-700 truncate"><%= user_label %></p>
                 </div>
                 <button type="button"
                         data-action="click->user-menu#goToProfile"

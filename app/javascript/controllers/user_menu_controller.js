@@ -1,5 +1,4 @@
 import { Controller } from '@hotwired/stimulus'
-import { Storage } from 'vendor/clavisco/core'
 
 /**
  * UserMenuController — Menú de usuario del toolbar.
@@ -9,11 +8,15 @@ import { Storage } from 'vendor/clavisco/core'
  *  - Click → menú flotante (mismo patrón que el context menu de compañía).
  *  - Opción "Perfil de usuario" → navega a /configurations/user-profile.
  *
- * El toolbar NO es data-turbo-permanent: este controller reconecta en cada
- * visita Turbo, por eso el nombre se lee de la sesión en connect().
+ * El usuario NO se lee del browser: tras el cutover a OIDC la sesión vive en la
+ * cookie httpOnly, así que el layout `protected` imprime nombre y correo (y ya la
+ * inicial) desde el servidor y este controller solo aplica el color del avatar.
+ * El toolbar NO es data-turbo-permanent: reconecta en cada visita Turbo, y los
+ * values vienen con el HTML nuevo.
  */
 export default class extends Controller {
   static targets = ['menu', 'tooltip', 'username', 'initial', 'avatar']
+  static values  = { label: String, email: String }
 
   // Paleta de avatares — fondo tenue + letra oscura (misma familia que los
   // badges del proyecto). El color se elige por hash del correo: varía entre
@@ -62,12 +65,13 @@ export default class extends Controller {
   // ---------------------------------------------------------------------------
 
   #setUsername() {
-    const session = Storage.get('Session')
-    const name = session?.UserEmail ?? ''
-    if (this.hasUsernameTarget) this.usernameTarget.textContent = name
-    if (this.hasTooltipTarget) this.tooltipTarget.textContent = name
-    if (this.hasInitialTarget) this.initialTarget.textContent = name ? name.charAt(0).toUpperCase() : '?'
-    this.#applyAvatarColor(name)
+    // El servidor ya imprimió el texto; acá solo se cubre el caso de un value
+    // vacío (sesión sin nombre ni correo) y se aplica el color del avatar.
+    const label = this.labelValue
+    if (this.hasUsernameTarget) this.usernameTarget.textContent = label
+    if (this.hasTooltipTarget) this.tooltipTarget.textContent = label
+    if (this.hasInitialTarget) this.initialTarget.textContent = label ? label.charAt(0).toUpperCase() : '?'
+    this.#applyAvatarColor(this.emailValue || label)
   }
 
   /** Colorea el avatar con un tono de la paleta elegido por hash del correo. */
