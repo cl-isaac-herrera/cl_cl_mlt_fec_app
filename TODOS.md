@@ -133,3 +133,43 @@ Los endpoints del selector ya son nativos de Rails (`GET /api/companies`,
       **Pendiente:** importar de SQL Server `CLSQL03` / `CL_CL_MLT_FEC_APP_44` las tablas
       `Rol`, `PermissionByRol` y `RolByUser` → `roles`, `role_permissions`, `user_roles`;
       después quitar el rol `Administrador` sembrado.
+
+---
+
+## Submódulos — cambios que corresponden a `cl-auth-ruby`
+
+Estas tres cosas están resueltas **con workarounds en este producto** porque el submódulo
+`vendor/clavisco/auth` no las ofrece y su código **no se toca desde acá** (ver `CLAUDE.md`
+§27). Cada una debe implementarse en el repo `Crisql/cl-auth-ruby`; al mergearse allá, se
+mueve el puntero del submódulo y se borra el workaround.
+
+- [ ] **`logout_url` no acepta `id_token_hint`.** Sin ese parámetro Keycloak 18+ no cierra la
+      sesión SSO: muestra una pantalla de confirmación y, si el usuario no la confirma, el
+      siguiente login entra sin pedir credenciales.
+      **Workaround:** `AuthController#provider_logout_url` concatena `&id_token_hint=` a la URL
+      que devuelve el submódulo, solo cuando el proveedor es Keycloak.
+      **Pendiente submódulo:** `logout_url(return_to:, id_token_hint: nil)` en
+      `lib/clavisco/auth/oidc_client.rb`, incluyendo el parámetro para Keycloak e ignorándolo
+      en Auth0 (su `/v2/logout` no lo entiende). Probado localmente contra el Keycloak real:
+      la URL con el hint es correcta y el rechazo que veíamos era por el post-logout URI sin
+      registrar en el cliente `fec`, no por el hint.
+
+- [ ] **No existe `OidcConfig.build` — los endpoints se derivan en el producto.**
+      CLAVISCO-PLATFORM-STANDARDS §2.3 exige derivar authorize/token/jwks/logout desde
+      `Clavisco::Auth::OidcConfig.build(domain:, client_id:, client_secret:, provider:, realm:,
+      audience:)`; esa clase no existe en el submódulo.
+      **Workaround:** `config/initializers/oidc.rb` arma el `Struct` y el `case provider` a mano
+      (issuer sin slash final y JWKS en `/protocol/openid-connect/certs` para Keycloak).
+      **Pendiente submódulo:** crear `OidcConfig` y reemplazar el initializer por una llamada
+      a `build`.
+
+- [ ] **`JwtValidator` hardcodea el patrón de Auth0 — rompe el Bearer con Keycloak.**
+      `initialize` solo acepta `domain:`/`audience:`, fija `@issuer = "https://#{domain}/"`
+      (Keycloak no lleva slash final) y busca las llaves en
+      `https://#{domain}/.well-known/jwks.json` (Keycloak las publica en
+      `/protocol/openid-connect/certs`). Resultado: **ningún Bearer JWT valida contra Keycloak**,
+      en silencio, hasta que alguien consume la API con token.
+      **Sin workaround en el producto** — hoy no pega porque la UI usa la session cookie, no
+      Bearer. El initializer ya calcula `issuer` y `jwks_uri` correctos, pero nadie los consume.
+      **Pendiente submódulo:** `initialize(domain:, audience:, issuer: nil, jwks_uri: nil)`
+      leyendo esos valores de la config, con el patrón Auth0 solo como fallback.

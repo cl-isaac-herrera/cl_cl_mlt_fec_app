@@ -1446,3 +1446,63 @@ openCreateNumbering() {
 Los **botones de submit dentro de un formulario** que se deshabilitan por **validación**
 (campos incompletos), no por permisos, siguen §22/§12 (`disabled:opacity-50` mientras falte
 algo). Esta sección aplica al **gating por permisos** de acciones.
+
+---
+
+## 27. Submódulos — PROHIBIDO modificar su código fuente
+
+Todo lo que vive bajo `vendor/clavisco/` (`structures`, `common`, `data_access`, `auth`, …)
+es un **git submodule**: otro repositorio, compartido por todos los productos Clavisco.
+
+> **Regla:** nunca crear, editar ni borrar archivos dentro de `vendor/clavisco/*`.
+> Eso incluye `lib/`, `test/` y `README.md`. Sin excepciones, ni siquiera para
+> "arreglar un bug obvio" o "agregar una clase que falta".
+
+### Por qué
+
+- El commit del producto **no lleva el contenido** del submódulo, solo un puntero a un SHA.
+  Un cambio local queda fuera del PR: nadie lo revisa y nadie lo recibe. Quien clone el repo
+  y haga `git submodule update` obtiene el código original → **la app no arranca** si el
+  producto empezó a depender de algo que solo existía en la copia local.
+- Es código compartido y de seguridad: un cambio pensado para este producto puede romper
+  otro sin que nadie lo note hasta producción.
+- El working tree del submódulo se revierte con un `submodule update` — el trabajo se pierde
+  en silencio.
+
+### Qué hacer cuando el submódulo no ofrece lo que se necesita
+
+1. **Implementarlo del lado de la app**, envolviendo lo que el submódulo sí expone
+   (un método privado en el controller, un service object, una subclase). Es el patrón
+   adaptador: el producto se acomoda, el submódulo no se toca.
+2. **Anotar la deuda en `TODOS.md`**, en la sección *Submódulos*, describiendo el cambio que
+   hace falta aguas arriba: repo, archivo, método y qué debería recibir/devolver.
+3. **Dejar un comentario en el código de la app** que apunte a esa entrada, para que el
+   workaround se pueda borrar el día que el submódulo lo soporte.
+
+```ruby
+# ✅ CORRECTO — el submódulo arma la URL sin id_token_hint; se agrega acá.
+#    Ver TODOS.md → Submódulos → cl-auth-ruby.
+def provider_logout_url(return_to, id_token_hint)
+  url = oidc_client(redirect_uri: nil).logout_url(return_to: return_to)
+  # ...
+end
+
+# ❌ INCORRECTO — editar vendor/clavisco/auth/lib/clavisco/auth/oidc_client.rb
+#    para que logout_url acepte id_token_hint.
+```
+
+### Verificación obligatoria antes de dar por terminado un cambio
+
+```bash
+git submodule foreach --quiet 'git status --porcelain | grep . && echo "SUCIO: $name" || true'
+# No debe imprimir nada. Cualquier salida significa que se tocó un submódulo.
+```
+
+Si ya se modificó uno por error: `git -C vendor/clavisco/<x> checkout -- .` y borrar a mano
+los archivos sin trackear que se hayan creado.
+
+### Actualizar un submódulo sí es válido — pero es otra tarea
+
+Mover el puntero a un commit nuevo (`git -C vendor/clavisco/auth fetch && git checkout <sha>`)
+es legítimo **cuando el cambio ya fue mergeado en el repo del submódulo**. Lo prohibido es
+editar sus archivos desde el producto.
