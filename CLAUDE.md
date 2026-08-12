@@ -1159,51 +1159,59 @@ Los botones de formulario (`Crear`, `Guardar`, `Modificar`) siguen §12 — no s
 
 ## 22. Formulario de Conexión SAP — está DUPLICADO en tres lugares
 
-El formulario "Nueva Conexión SAP" (campos Servidor, URL API, URL Crystal API, Tipo ODBC,
-Motor de Base de Datos, Tipo de Servidor, Usuario/Contraseña de BD, etc.) **NO es un partial
-compartido**: el mismo formulario está copiado en tres ubicaciones independientes. Todo cambio
-de campos, validación, etiquetas, requeridos o comportamiento **DEBE replicarse en las tres**,
-con su vista y su controller correspondientes.
+El formulario "Nueva Conexión SAP" **NO es un partial compartido**: el mismo formulario está
+copiado en tres ubicaciones independientes. Todo cambio de campos, validación, etiquetas,
+requeridos o comportamiento **DEBE replicarse en las tres**, con su vista y su controller
+correspondientes.
 
 ### Las tres ubicaciones
 
 | # | Vista | Controller | Contexto |
 |---|---|---|---|
 | 1 | `app/views/configurations/connections/index.html.erb` (panel lateral) | `connections_controller.js` | Crear/editar conexión desde el listado de conexiones (panel lateral, paginación remota). **Es el principal y el que ve el usuario normalmente.** |
-| 2 | `app/views/configurations/companies/_form.html.erb` (panel lateral, ~línea 750+) | `company_form_controller.js` (targets `conn*`, acciones `*ConnectionPanel`) | Crear conexión **inline** mientras se crea/edita una compañía (botón `add` del campo "Conexión de SAP"). Solo crea, no edita. Reutilizado por `companies/new` y `companies/edit`. |
+| 2 | `app/views/configurations/companies/_form.html.erb` (panel lateral) | `company_form_controller.js` (targets `conn*`, acciones `*ConnectionPanel`) | Crear conexión **inline** mientras se crea/edita una compañía (botón `add` del campo "Conexión de SAP"). Solo crea, no edita. Reutilizado por `companies/new` y `companies/edit`. |
 | 3 | `app/views/configurations/connections/_form.html.erb` (partial nav) | `connection_form_controller.js` | Formulario legacy de navegación (`connections/new` y `connections/edit`). Orfanado por el panel de #1 pero aún ruteado; mantener en sync por seguridad. |
 
 ### Prefijos de target por controller
 
-- `connections_controller.js` → targets `f*` (`fServer`, `fDbUser`, `fServerType`, …).
-- `company_form_controller.js` → targets `conn*` (`connServer`, `connDbUser`, `connServerType`, …) + acciones `connServerTypeChanged`, `refreshConnSubmitState`.
-- `connection_form_controller.js` → targets sin prefijo (`server`, `dbUser`, `serverType`, …).
+- `connections_controller.js` → targets `f*` (`fName`, `fSlUrl`, `fSlType`).
+- `company_form_controller.js` → targets `conn*` (`connName`, `connSlUrl`, `connSlType`) +
+  acciones `refreshConnSubmitState`, `*ConnectionPanel`.
+- `connection_form_controller.js` → targets sin prefijo (`name`, `slUrl`, `slType`).
 
-### Reglas de negocio vigentes del formulario (mantener idénticas en las tres)
+### El formulario tiene EXACTAMENTE tres campos — los de la tabla
 
-- **Motor de Base de Datos** y **Tipo de Servidor** son `<select>` (no inputs libres).
-  - Motor: `SQL` (SQL Server) / `HANA` (SAP HANA).
-  - Tipo de Servidor: `SQLSERVERT` (SQL Server trusted) / `HANASERVER` (HANA estándar).
-    El sufijo `T` = Trusted (autenticación de Windows). Hay un texto-ayuda dinámico (`*ServerTypeHint`)
-    bajo el select y un `#*serverTypeHints` map en cada controller.
-  - `#applySelectValue` preserva valores legacy fuera del catálogo al editar (inyecta opción temporal).
-- **Campos ocultos** (en el DOM, se conservan en el payload): Servidor de Licencias, Idiomas
-  Soportados (BoSuppLangs), DST y el check UseTrusted (Trusted) van con clase `hidden`.
-- **Tipo ODBC** y **Tipo de Servidor** son **requeridos**.
-- **Tipo ODBC** es un combobox: `<input list>` + `<datalist>` con valores sugeridos
-  (`HDBODBC`, `SQL Server`) pero **permite escribir un valor personalizado**. El `id` del
-  datalist debe ser único por página (`odbc-types-connections` / `odbc-types-company` /
-  `odbc-types-connection-form`). Sigue siendo un `input` (no `select`), así que el target y la
-  lectura de `.value` no cambian.
-- **Usuario y Contraseña de BD** son requeridos **solo cuando Tipo de Servidor = `HANASERVER`**.
-  El asterisco rojo del label se muestra/oculta dinámicamente (`#updateCredentialRequirement` /
-  `#updateConnCredentialRequirement`).
-- **Botón de guardar deshabilitado** hasta que todo lo requerido esté completo: cada panel/form
+La tabla `connections` es la que manda. Cuando los endpoints se migraron a Rails
+(`GET|POST|PATCH /api/connections`), el formulario se recortó a las columnas que existen:
+
+| Campo visible | Columna | Requerido |
+|---|---|---|
+| Nombre | `name` | Sí — único entre las conexiones activas |
+| URL del Service Layer | `sl_url` | Sí — debe empezar con `http://` o `https://` |
+| Motor de Base de Datos | `sl_type` | No — `SQL` o `HANA` |
+
+**Se eliminaron** por no tener columna: Servidor de Licencias, URL Crystal API, Tipo ODBC,
+Tipo de Servidor (`SQLSERVERT`/`HANASERVER`), Usuario y Contraseña de BD, Idiomas Soportados
+(BoSuppLangs), DST y el check UseTrusted. Eran parámetros de **DI-API/ODBC** que este producto
+no usa: llega a SAP únicamente por Service Layer (§29). No volver a agregarlos sin agregar
+antes la columna y la razón por la que hace falta — ver `TODOS.md` → SAP.
+
+### Reglas de negocio vigentes (mantener idénticas en las tres)
+
+- **Motor de Base de Datos** es un `<select>` (no input libre): `SQL` / `HANA`, y vacío es
+  válido. `#applySelectValue` preserva valores fuera del catálogo al editar (inyecta una opción
+  temporal) para no perder el dato de una conexión importada.
+- **La URL se valida en el cliente con el mismo criterio que el modelo** (`/^https?:\/\//i`),
+  para que el error se vea antes de mandar la petición y no como un 422.
+- **Botón de guardar deshabilitado** hasta que Nombre y URL estén completos: cada panel/form
   tiene `data-action="input->… change->…"` en el contenedor que llama a `refreshSubmitState` /
   `refreshConnSubmitState`, y se invoca también al abrir/resetear/cargar el formulario.
+- **El id no viaja en el cuerpo.** Crear va a `POST /api/connections`; actualizar, a
+  `PATCH /api/connections/:id` (§28). El `Id` que llegue en el JSON se ignora del lado del
+  servidor.
 
 > ⚠️ Antes de tocar el formulario de conexión, buscá las tres ubicaciones
-> (`grep -rl "Tipo de Servidor" app/views/configurations`) y aplicá el cambio en todas.
+> (`grep -rl "URL del Service Layer" app/views/configurations`) y aplicá el cambio en todas.
 
 ---
 
@@ -1557,7 +1565,37 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 | `GET /api/User/GetUserInfo` | `GET /api/profile` |
 | `PATCH /api/User/profile-info` | `PATCH /api/profile` |
 | `POST /api/Connections/validate-user-credentials` | `POST /api/sap_credential_validations` |
+| `GET /api/Connections?server=&apiUrl=` (paginado por headers) | `GET /api/connections?name=&sl_url=&page=&per_page=` |
+| `GET /api/Connections/:id` | `GET /api/connections/:id` |
+| `POST /api/Connections` | `POST /api/connections` |
+| `PATCH /api/Connections` (id en el cuerpo) | `PATCH /api/connections/:id` |
+| `GET /api/Connections/for-assignment` | `GET /api/connections/assignable` |
 | (nuevo — la compañía activa era `sessionStorage`) | `PUT /api/session/company` |
+
+### Paginación — query string, no headers
+
+El .NET paginaba con los headers `cl-dba-pagination-page` / `cl-dba-pagination-page-size` y
+devolvía el total en `cl-dba-pagination-records-count`. **Los endpoints migrados no usan esos
+headers**: la página es parte de la identificación del recurso, así que va en la URL, y el
+total va en el cuerpo para que el contador de Tabulator no tenga que inferirlo (§17).
+
+```
+GET /api/connections?page=2&per_page=10
+→ { "Data": { "Items": [...], "Total": 154 }, "Code": 200, "Message": null }
+```
+
+- `page` es **1-indexed** (el .NET era 0-indexed). Valores inválidos caen a 1.
+- `per_page` tiene tope (`MAX_PER_PAGE`) para que nadie pida la tabla entera de un saque.
+- Del lado del JS, `#fetchPage` lee `json.Data.Total` y `json.Data.Items`.
+
+### Subcolecciones (`/api/connections/assignable`)
+
+Cuando el .NET tenía un endpoint aparte que devuelve **el mismo recurso con otra proyección o
+para otra audiencia** (`for-assignment`), se modela como una **subcolección con nombre de
+sustantivo o adjetivo**, nunca como un verbo. `assignable` devuelve solo `Id`/`Name` para
+poblar un `<select>`, y **no exige el permiso del módulo**: quien administra compañías necesita
+el selector aunque no administre conexiones. Ese relajamiento es deliberado y está comentado en
+la acción; no copiarlo a las demás sin la misma justificación.
 
 ### Patrón
 

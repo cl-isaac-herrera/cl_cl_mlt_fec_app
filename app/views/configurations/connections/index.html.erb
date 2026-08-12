@@ -11,23 +11,23 @@
   <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4 flex-shrink-0">
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-end">
 
-      <%# Servidor %>
+      <%# Nombre %>
       <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Servidor</label>
+        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Nombre</label>
         <input type="text"
-               data-connections-target="inputServer"
-               data-testid="input-server"
-               placeholder="Servidor"
+               data-connections-target="inputName"
+               data-testid="input-name"
+               placeholder="Nombre de la conexión"
                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
       </div>
 
-      <%# URL API %>
+      <%# URL del Service Layer %>
       <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">URL API</label>
+        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">URL del Service Layer</label>
         <input type="text"
-               data-connections-target="inputApiUrl"
-               data-testid="input-api-url"
-               placeholder="URL API"
+               data-connections-target="inputSlUrl"
+               data-testid="input-sl-url"
+               placeholder="https://servidor:50000/b1s/v1"
                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
       </div>
 
@@ -98,153 +98,42 @@
     <div class="flex-1 overflow-y-auto px-6 py-5">
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-        <%# Servidor %>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">Servidor <span class="text-red-500">*</span></label>
+        <%# Nombre %>
+        <div class="sm:col-span-2 flex flex-col gap-1">
+          <label class="text-xs font-medium text-gray-600">Nombre <span class="text-red-500">*</span></label>
           <input type="text"
-                 data-connections-target="fServer"
-                 data-testid="panel-input-server"
-                 placeholder="Servidor SAP"
+                 data-connections-target="fName"
+                 data-testid="panel-input-name"
+                 placeholder="SAP Producción"
                  class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <span data-connections-target="fServerError" class="hidden text-xs text-red-500">El servidor es requerido.</span>
+          <span data-connections-target="fNameError" class="hidden text-xs text-red-500">El nombre es requerido.</span>
         </div>
 
-        <%# Servidor de Licencias (oculto por requerimiento — se conserva en el payload) %>
-        <div class="hidden flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">Servidor de Licencias</label>
+        <%# URL del Service Layer %>
+        <div class="sm:col-span-2 flex flex-col gap-1">
+          <label class="text-xs font-medium text-gray-600">URL del Service Layer <span class="text-red-500">*</span></label>
           <input type="text"
-                 data-connections-target="fLicenseServer"
-                 data-testid="panel-input-license-server"
-                 placeholder="Servidor de Licencias"
+                 data-connections-target="fSlUrl"
+                 data-testid="panel-input-sl-url"
+                 placeholder="https://servidor:50000/b1s/v1"
                  class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        </div>
-
-        <%# URL API %>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">URL API <span class="text-red-500">*</span></label>
-          <input type="text"
-                 data-connections-target="fApiUrl"
-                 data-testid="panel-input-api-url"
-                 placeholder="https://servidor:50000"
-                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <span data-connections-target="fApiUrlError" class="hidden text-xs text-red-500">La URL de la API es requerida.</span>
-        </div>
-
-        <%# URL Crystal API %>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">URL Crystal API</label>
-          <input type="text"
-                 data-connections-target="fCrystalApiUrl"
-                 data-testid="panel-input-crystal-api-url"
-                 placeholder="https://crystal.servidor.com"
-                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        </div>
-
-        <%# Tipo ODBC %>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">Tipo ODBC <span class="text-red-500">*</span></label>
-          <input type="text"
-                 data-connections-target="fOdbcType"
-                 data-testid="panel-input-odbc-type"
-                 list="odbc-types-connections"
-                 placeholder="HDBODBC, SQL Server u otro"
-                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <datalist id="odbc-types-connections">
-            <option value="HDBODBC"></option>
-            <option value="SQL Server"></option>
-          </datalist>
-          <span data-connections-target="fOdbcTypeError" class="hidden text-xs text-red-500">El tipo ODBC es requerido.</span>
+          <span data-connections-target="fSlUrlError" class="hidden text-xs text-red-500">La URL debe empezar con http:// o https://.</span>
         </div>
 
         <%# Motor de Base de Datos %>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">Motor de Base de Datos <span class="text-red-500">*</span></label>
-          <select data-connections-target="fDbEngine"
-                  data-testid="panel-input-db-engine"
+        <div class="sm:col-span-2 flex flex-col gap-1">
+          <label class="text-xs font-medium text-gray-600">Motor de Base de Datos</label>
+          <select data-connections-target="fSlType"
+                  data-testid="panel-input-sl-type"
                   class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="">Seleccione...</option>
-            <option value="SQL"  title="Conexiones a SQL Server">SQL (SQL Server)</option>
-            <option value="HANA" title="Conexiones a SAP HANA">HANA (SAP HANA)</option>
+            <option value="SQL"  title="SAP corriendo sobre SQL Server">SQL (SQL Server)</option>
+            <option value="HANA" title="SAP corriendo sobre SAP HANA">HANA (SAP HANA)</option>
           </select>
-          <span data-connections-target="fDbEngineError" class="hidden text-xs text-red-500">El motor de base de datos es requerido.</span>
-        </div>
-
-        <%# Tipo de Servidor %>
-        <div class="flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">Tipo de Servidor <span class="text-red-500">*</span></label>
-          <select data-connections-target="fServerType"
-                  data-testid="panel-input-server-type"
-                  data-action="change->connections#serverTypeChanged"
-                  class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="">Seleccione...</option>
-            <option value="SQLSERVERT"  title="SQL Server con conexion de confianza (autenticacion de Windows / Trusted). Arma el connectionString para SQL Server.">SQLSERVERT</option>
-            <option value="HANASERVER"  title="SAP HANA con autenticacion estandar (usuario y contrasena). Arma el connectionString para SAP HANA Studio.">HANASERVER</option>
-          </select>
-          <span data-connections-target="fServerTypeError" class="hidden text-xs text-red-500">El tipo de servidor es requerido.</span>
-          <span data-connections-target="fServerTypeHint" class="text-xs text-gray-500"></span>
-        </div>
-
-        <%# Usuario de Base de Datos (requerido solo si Tipo de Servidor = HANASERVER) %>
-        <div class="sm:col-span-2 flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">Usuario de Base de Datos<span data-connections-target="fDbUserRequired" class="hidden text-red-500"> *</span></label>
-          <input type="text"
-                 data-connections-target="fDbUser"
-                 data-testid="panel-input-db-user"
-                 placeholder="sa"
-                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <span data-connections-target="fDbUserError" class="hidden text-xs text-red-500">El usuario de base de datos es requerido.</span>
-        </div>
-
-        <%# Contraseña de Base de Datos (requerido solo si Tipo de Servidor = HANASERVER) %>
-        <div class="sm:col-span-2 flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">
-            Contraseña de Base de Datos<span data-connections-target="fDbPassRequired" class="hidden text-red-500"> *</span>
-          </label>
-          <div class="relative">
-            <input type="password"
-                   data-connections-target="fDbPass"
-                   data-testid="panel-input-db-pass"
-                   placeholder="••••••••"
-                   class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <button type="button"
-                    data-action="click->connections#togglePassword"
-                    data-testid="panel-btn-toggle-pass"
-                    class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-gray-700">
-              <span data-connections-target="togglePassIcon" class="material-icons text-base">visibility_off</span>
-            </button>
-          </div>
-          <span data-connections-target="fDbPassError" class="hidden text-xs text-red-500">La contraseña es requerida.</span>
-          <span data-connections-target="fDbPassHint" class="hidden text-xs text-gray-500">Dejar en blanco para no cambiar la contraseña actual.</span>
-        </div>
-
-        <%# Idiomas Soportados (oculto por requerimiento — se conserva en el payload) %>
-        <div class="hidden flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">Idiomas Soportados (BoSuppLangs)</label>
-          <input type="text"
-                 data-connections-target="fBoSuppLangs"
-                 data-testid="panel-input-bo-supp-langs"
-                 placeholder="93"
-                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        </div>
-
-        <%# DST (oculto por requerimiento — se conserva en el payload) %>
-        <div class="hidden flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">DST</label>
-          <input type="text"
-                 data-connections-target="fDst"
-                 data-testid="panel-input-dst"
-                 placeholder="DST"
-                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        </div>
-
-        <%# UseTrusted (oculto por requerimiento — se conserva en el payload) %>
-        <div class="hidden sm:col-span-2 flex items-center gap-2">
-          <input type="checkbox"
-                 id="connUseTrusted"
-                 data-connections-target="fUseTrusted"
-                 data-testid="panel-input-use-trusted"
-                 class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer">
-          <label for="connUseTrusted" class="text-sm text-gray-700 cursor-pointer">Usar Conexión de Confianza (Trusted)</label>
+          <span class="text-xs text-gray-500">
+            Motor sobre el que corre SAP. Solo afecta la sintaxis de las consultas, no cómo se
+            conecta el Service Layer.
+          </span>
         </div>
 
       </div>

@@ -225,12 +225,11 @@ pendiente:
       `db/migrate/20260812100000_rename_connection_columns_to_standard.rb` la renombró a
       `sl_url` (§8) y, por consistencia de prefijo, `service_layer_type` → `sl_type`.
 
-- [ ] **`connections.sl_type` no lo lee nadie.** Se agregó para distinguir el motor sobre el
-      que corre SAP (SQL Server / HANA) porque hay sintaxis de `SQLQueries` y funciones de
-      fecha que difieren, pero hoy ninguna consulta la usa — no la pide el estándar y el
-      único código que la menciona es su migración. No confundirla con los selects "Motor de
-      Base de Datos" / "Tipo de Servidor" del formulario de conexión (`CLAUDE.md` §22): esos
-      viajan al API .NET, no a esta tabla.
+- [ ] **`connections.sl_type` se escribe pero todavía no se lee.** Desde la migración de la
+      pantalla de conexiones es el select "Motor de Base de Datos" del formulario (`CLAUDE.md`
+      §22), así que ya se puebla; lo que sigue faltando es el consumidor. Se agregó para
+      distinguir el motor sobre el que corre SAP (SQL Server / HANA) porque hay sintaxis de
+      `SQLQueries` y funciones de fecha que difieren, pero ninguna consulta la mira aún.
       **Pendiente:** usarla cuando se escriba la primera consulta que dependa del motor, o
       borrarla si al final no aparece.
 
@@ -254,6 +253,57 @@ pendiente:
       **Pendiente:** decidir si se migra al modelo del estándar. No es solo mover columnas:
       cambia la pantalla de perfil (una credencial por compañía, no una por usuario) y el
       payload del endpoint. Coordinar con la tarea de importación de usuarios.
+
+---
+
+## Conexiones SAP — endpoints migrados a Rails (`/configurations/connections`)
+
+La pantalla ya no toca el .NET: `GET|POST /api/connections`, `GET|PATCH /api/connections/:id` y
+`GET /api/connections/assignable` son nativos y leen/escriben la tabla propia `connections`.
+El formulario se recortó a las tres columnas que existen (`name`, `sl_url`, `sl_type`) — ver
+`CLAUDE.md` §22. Lo que quedó pendiente:
+
+- [ ] **La tabla `connections` está vacía.** Igual que `companies` y `users_by_companies`: hasta
+      que se importen los datos, el listado sale sin filas y el selector "Conexión de SAP" del
+      formulario de compañías queda sin opciones. La fuente es SQL Server `CLSQL03`, base
+      `CL_CL_MLT_FEC_APP_44`, tabla `SAPConnection`.
+      **Pendiente:** incluirla en la tarea de importación con el mapeo `Server → name`,
+      `APIUrl → sl_url`, `DBEngine → sl_type`. Ojo con `name`: es único entre las conexiones
+      activas y `Server` del origen puede venir repetido — hay que decidir el desempate
+      (sufijo con el `APIUrl`, o elegir un nombre a mano) antes de importar.
+
+- [ ] **Se dejaron de capturar los parámetros de DI-API/ODBC.** `SAPConnection` del .NET tiene
+      `LicenseServer`, `CrystalAPIUrl`, `ODBCType`, `ServerType`, `DBUser`, `DBPass`,
+      `BoSuppLangs`, `DST` y `UseTrusted`; la tabla propia no. Este producto no los necesita
+      (llega a SAP solo por Service Layer, `CLAUDE.md` §29), pero **sí los usan otros
+      consumidores de esa misma tabla en SQL Server**: el sync legacy (`clvsfesync4.3`) se
+      conecta por DI-API y los reportes salen por `CrystalAPIUrl`.
+      Mientras las dos bases convivan, una conexión creada desde Rails **no** le sirve a esos
+      consumidores.
+      **Pendiente:** confirmar qué consumidores siguen vivos y decidir entre (a) agregar las
+      columnas a `connections` y volver a poner los campos en el formulario, (b) que esos
+      sistemas sigan administrando sus conexiones por su lado, o (c) migrarlos también.
+      Hasta resolverlo, no crear conexiones desde esta pantalla para compañías que todavía
+      dependan del sync legacy.
+
+- [ ] **`DBPass` estaba cifrada con el AES del .NET y acá no existe.** El
+      `SAPConnectionService` la cifraba al guardar y la descifraba al leer. Si el punto anterior
+      se resuelve por (a), la columna nueva tiene que nacer con `encrypts` (como
+      `users.sap_password`) y entrar en `filter_parameters` — ver las tres reglas de
+      `CLAUDE.md` §29.
+
+- [ ] **La contraseña de la conexión no se valida contra SAP.** El formulario ya no la pide, así
+      que hoy no hay forma de saber si una conexión recién creada realmente responde. La
+      pantalla de perfil sí prueba credenciales (`POST /api/sap_credential_validations`), pero
+      contra una compañía, no contra una conexión suelta.
+      **Pendiente:** evaluar un botón "Probar conexión" que haga un GET de sondeo al
+      `sl_url` — reutilizando `Sap::CredentialValidator` o el `Client` del submódulo.
+
+- [ ] **`connections/new` y `connections/:id/edit` siguen ruteadas pero nadie las abre.** El
+      panel lateral del listado las reemplazó; se mantienen en sync (`CLAUDE.md` §22 #3) por si
+      alguien llega por URL directa.
+      **Pendiente:** decidir si se borran junto con `connection_form_controller.js`,
+      `_form.html.erb`, `new.html.erb` y `edit.html.erb`, o si se conservan.
 
 ---
 

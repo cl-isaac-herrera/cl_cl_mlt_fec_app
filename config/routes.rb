@@ -19,6 +19,14 @@ Rails.application.routes.draw do
     # Reemplaza POST /api/Connections/validate-user-credentials.
     resources :sap_credential_validations, only: [:create]
 
+    # Conexiones a servidores SAP. Reemplaza GET/POST/PATCH /api/Connections del
+    # .NET; el id de update pasa del cuerpo al path. `assignable` es la
+    # subcolección que alimenta el selector del formulario de compañías, y
+    # reemplaza GET /api/Connections/for-assignment.
+    resources :connections, only: %i[index show create update] do
+      get :assignable, on: :collection
+    end
+
     put 'session/company', to: 'sessions#update_company'
   end
 

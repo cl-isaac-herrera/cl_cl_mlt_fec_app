@@ -94,18 +94,9 @@ export default class extends Controller {
 
     // Panel lateral — crear conexión SAP
     'connPanel', 'connPanelBackdrop',
-    'connServer', 'connServerError',
-    'connLicenseServer',
-    'connApiUrl', 'connApiUrlError',
-    'connCrystalApiUrl',
-    'connOdbcType', 'connOdbcTypeError',
-    'connDbEngine', 'connDbEngineError',
-    'connServerType', 'connServerTypeError', 'connServerTypeHint',
-    'connDbUser', 'connDbUserError', 'connDbUserRequired',
-    'connDbPass', 'connDbPassError', 'connDbPassEyeIcon', 'connDbPassRequired',
-    'connBoSuppLangs',
-    'connDst',
-    'connUseTrusted',
+    'connName', 'connNameError',
+    'connSlUrl', 'connSlUrlError',
+    'connSlType',
     'connSaveBtn',
   ];
 
@@ -203,7 +194,7 @@ export default class extends Controller {
     try {
       const [groupsResp, sapResp] = await Promise.all([
         this.#apiFetch('/api/Group/GetGroups'),
-        this.#apiFetch('/api/Connections/for-assignment'),
+        this.#apiFetch('/api/connections/assignable'),
       ]);
 
       if (groupsResp.Data?.length) this.#fillGroupsSelect(groupsResp.Data);
@@ -227,7 +218,7 @@ export default class extends Controller {
         currencyMapResp, activityCodesResp,
       ] = await Promise.allSettled([
         this.#apiFetch('/api/Group/GetGroups'),
-        this.#apiFetch('/api/Connections/for-assignment'),
+        this.#apiFetch('/api/connections/assignable'),
         this.#apiFetch(`/api/companies/${companyId}`),
         this.#apiFetch(`/api/warehouse?companyId=${companyId}`),
         this.#apiFetch(`/api/Tax?companyId=${companyId}`),
@@ -384,7 +375,7 @@ export default class extends Controller {
     connections.forEach(c => {
       const opt = document.createElement('option');
       opt.value = String(c.Id);
-      opt.textContent = c.Server;
+      opt.textContent = c.Name;
       select.appendChild(opt);
     });
     if (current) select.value = current;
@@ -1216,7 +1207,7 @@ export default class extends Controller {
     this.connPanelTarget.classList.remove('translate-x-full');
     document.body.style.overflow = 'hidden';
     // Foco en el primer campo
-    setTimeout(() => this.connServerTarget.focus(), 310);
+    setTimeout(() => this.connNameTarget.focus(), 310);
   }
 
   closeConnectionPanel() {
@@ -1225,54 +1216,19 @@ export default class extends Controller {
     document.body.style.overflow = '';
   }
 
-  toggleConnDbPass() {
-    const input = this.connDbPassTarget;
-    const icon  = this.connDbPassEyeIconTarget;
-    input.type       = input.type === 'password' ? 'text' : 'password';
-    icon.textContent = input.type === 'password' ? 'visibility_off' : 'visibility';
-  }
-
-  // Descripción por valor de "Tipo de Servidor". El sufijo "T" indica conexión de
-  // confianza (Trusted / autenticación de Windows). Los valores HANA arman el
-  // connectionString para SAP HANA Studio; los SQL arman el de SQL Server.
-  #connServerTypeHints = {
-    SQLSERVERT:  'SQL Server con conexión de confianza (autenticación de Windows / Trusted).',
-    HANASERVER:  'SAP HANA con autenticación estándar (usuario y contraseña).',
-  };
-
-  /** Muestra la descripción del tipo de servidor y ajusta si usuario/contraseña son requeridos. */
-  connServerTypeChanged() {
-    if (this.hasConnServerTypeHintTarget) {
-      this.connServerTypeHintTarget.textContent = this.#connServerTypeHints[this.connServerTypeTarget.value] ?? '';
-    }
-    this.#updateConnCredentialRequirement();
-  }
-
-  /**
-   * Usuario y contraseña de base de datos solo son obligatorios cuando el tipo
-   * de servidor es HANASERVER. Refleja la condición en los asteriscos del label.
-   */
-  #updateConnCredentialRequirement() {
-    const required = this.connServerTypeTarget.value === 'HANASERVER';
-    if (this.hasConnDbUserRequiredTarget) this.connDbUserRequiredTarget.classList.toggle('hidden', !required);
-    if (this.hasConnDbPassRequiredTarget) this.connDbPassRequiredTarget.classList.toggle('hidden', !required);
-  }
-
   /** Habilita el botón de crear conexión solo cuando todos los requeridos están completos. */
   refreshConnSubmitState() {
     if (this.hasConnSaveBtnTarget) this.connSaveBtnTarget.disabled = !this.#isConnFormValid();
   }
 
-  /** ¿Están completos todos los campos obligatorios del panel de conexión? */
+  /** ¿Están completos los campos obligatorios? El motor (SlType) es opcional. */
   #isConnFormValid() {
-    const filled = (t) => t.value.trim() !== '';
-    let ok = filled(this.connServerTarget) && filled(this.connApiUrlTarget) &&
-             filled(this.connOdbcTypeTarget) && filled(this.connDbEngineTarget) &&
-             filled(this.connServerTypeTarget);
-    if (this.connServerTypeTarget.value === 'HANASERVER') {
-      ok = ok && filled(this.connDbUserTarget) && filled(this.connDbPassTarget);
-    }
-    return ok;
+    return this.connNameTarget.value.trim() !== '' && this.#isConnSlUrlValid();
+  }
+
+  /** La URL tiene que ser http(s), igual que valida el modelo del servidor. */
+  #isConnSlUrlValid() {
+    return /^https?:\/\//i.test(this.connSlUrlTarget.value.trim());
   }
 
   /**
@@ -1288,22 +1244,13 @@ export default class extends Controller {
     this.connSaveBtnTarget.disabled = true;
 
     try {
-      const json = await this.#apiFetch('/api/Connections', {
+      // Solo las tres columnas que existen en la tabla `connections`.
+      const json = await this.#apiFetch('/api/connections', {
         method: 'POST',
         body: JSON.stringify({
-          Id:            0,
-          Server:        this.connServerTarget.value.trim(),
-          LicenseServer: this.connLicenseServerTarget.value.trim(),
-          APIUrl:        this.connApiUrlTarget.value.trim(),
-          CrystalAPIUrl: this.connCrystalApiUrlTarget.value.trim(),
-          ODBCType:      this.connOdbcTypeTarget.value.trim(),
-          DBEngine:      this.connDbEngineTarget.value.trim(),
-          ServerType:    this.connServerTypeTarget.value.trim(),
-          DBUser:        this.connDbUserTarget.value.trim(),
-          DBPass:        this.connDbPassTarget.value,
-          BoSuppLangs:   this.connBoSuppLangsTarget.value.trim(),
-          DST:           this.connDstTarget.value.trim(),
-          UseTrusted:    this.connUseTrustedTarget.checked,
+          Name:   this.connNameTarget.value.trim(),
+          SlUrl:  this.connSlUrlTarget.value.trim(),
+          SlType: this.connSlTypeTarget.value.trim(),
         }),
       });
 
@@ -1314,7 +1261,7 @@ export default class extends Controller {
 
       // Recargar lista de conexiones y auto-seleccionar la recién creada (la última del listado).
       // Mismo comportamiento que el legacy Angular: GetSAPConnectionsForAssignment + patchValue(lastConnection).
-      const sapResp = await this.#apiFetch('/api/Connections/for-assignment');
+      const sapResp = await this.#apiFetch('/api/connections/assignable');
       if (sapResp.Data?.length) {
         this.#fillSapConnectionsSelect(sapResp.Data);
         const lastConn = sapResp.Data[sapResp.Data.length - 1];
@@ -1334,46 +1281,22 @@ export default class extends Controller {
   }
 
   #resetConnectionPanel() {
-    [
-      this.connServerTarget, this.connLicenseServerTarget, this.connApiUrlTarget,
-      this.connCrystalApiUrlTarget, this.connOdbcTypeTarget, this.connDbEngineTarget,
-      this.connServerTypeTarget, this.connDbUserTarget, this.connDbPassTarget,
-      this.connBoSuppLangsTarget, this.connDstTarget,
-    ].forEach(el => { el.value = ''; });
+    [this.connNameTarget, this.connSlUrlTarget, this.connSlTypeTarget]
+      .forEach(el => { el.value = ''; });
 
-    this.connUseTrustedTarget.checked  = false;
-    this.connDbPassTarget.type         = 'password';
-    this.connDbPassEyeIconTarget.textContent = 'visibility_off';
-    if (this.hasConnServerTypeHintTarget) this.connServerTypeHintTarget.textContent = '';
-    this.#updateConnCredentialRequirement();
     this.refreshConnSubmitState();
 
-    [
-      this.connServerErrorTarget, this.connApiUrlErrorTarget, this.connDbEngineErrorTarget,
-      this.connDbUserErrorTarget, this.connDbPassErrorTarget,
-    ].forEach(el => el.classList.add('hidden'));
+    [this.connNameErrorTarget, this.connSlUrlErrorTarget]
+      .forEach(el => el.classList.add('hidden'));
   }
 
   #validateConnectionPanel() {
-    let valid = true;
-    const required = [
-      { input: this.connServerTarget,     error: this.connServerErrorTarget     },
-      { input: this.connApiUrlTarget,     error: this.connApiUrlErrorTarget     },
-      { input: this.connOdbcTypeTarget,   error: this.connOdbcTypeErrorTarget   },
-      { input: this.connDbEngineTarget,   error: this.connDbEngineErrorTarget   },
-      { input: this.connServerTypeTarget, error: this.connServerTypeErrorTarget },
-    ];
+    const nameEmpty  = !this.connNameTarget.value.trim();
+    const urlInvalid = !this.#isConnSlUrlValid();
 
-    // Usuario y contraseña solo son obligatorios para servidores HANASERVER.
-    if (this.connServerTypeTarget.value === 'HANASERVER') {
-      required.push({ input: this.connDbUserTarget, error: this.connDbUserErrorTarget });
-      required.push({ input: this.connDbPassTarget, error: this.connDbPassErrorTarget });
-    }
-    for (const { input, error } of required) {
-      const empty = !input.value.trim();
-      error.classList.toggle('hidden', !empty);
-      if (empty) valid = false;
-    }
-    return valid;
+    this.connNameErrorTarget.classList.toggle('hidden', !nameEmpty);
+    this.connSlUrlErrorTarget.classList.toggle('hidden', !urlInvalid);
+
+    return !nameEmpty && !urlInvalid;
   }
 }

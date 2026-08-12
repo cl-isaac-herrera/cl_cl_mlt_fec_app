@@ -1,58 +1,37 @@
 import { Controller } from '@hotwired/stimulus';
-import { Storage, SStore } from 'vendor/clavisco/core';
+import { SStore, getApiHeaders } from 'vendor/clavisco/core';
 import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
 
 /**
  * ConnectionFormController — Crear / Editar una conexión SAP.
  *
- * Replica: Angular CreateOrUpdateConnectionComponent
+ * Formulario de navegación (`/configurations/connections/new` y `/:id/edit`),
+ * orfanado por el panel lateral del listado pero todavía ruteado. Se mantiene en
+ * sync con las otras dos copias del formulario (ver CLAUDE.md §22).
  *
  * Modos:
- *   - create: connectionIdValue = 0  → botón "Crear", DBPass requerida
+ *   - create: connectionIdValue = 0  → botón "Crear"
  *   - edit:   connectionIdValue > 0  → botón "Actualizar", carga data vía GET
  *
- * Storage (fec-migration-docs/STORAGE-KEY-MAPPING.md):
- *   - localStorage.Session       → { access_token, ... }
- *   - sessionStorage.Permissions → string[]
- *
- * API:
- *   - GET   /api/Connections/:id   (modo edición)
- *   - POST  /api/Connections       (crear)
- *   - PATCH /api/Connections       (actualizar)
+ * Endpoints nativos de Rails (ver CLAUDE.md §28):
+ *   - GET   /api/connections/:id   (modo edición)
+ *   - POST  /api/connections       (crear)
+ *   - PATCH /api/connections/:id   (actualizar)
  */
 export default class extends Controller {
   static values = { connectionId: Number };
 
   static targets = [
-    'server',       'serverError',
-    'licenseServer',
-    'apiUrl',       'apiUrlError',
-    'crystalApiUrl',
-    'odbcType',     'odbcTypeError',
-    'dbEngine',     'dbEngineError',
-    'serverType',   'serverTypeError', 'serverTypeHint',
-    'dbUser',       'dbUserError', 'dbUserRequired',
-    'dbPass',       'dbPassError', 'dbPassRequired', 'dbPassHint',
-    'boSuppLangs',
-    'dst',
-    'useTrusted',
-    'togglePassIcon',
+    'name',  'nameError',
+    'slUrl', 'slUrlError',
+    'slType',
     'submitBtn', 'submitIcon', 'submitLabel',
   ];
 
   // ── Estado interno ─────────────────────────────────────────────────────────
 
-  #isEditMode   = false;
-  #permissions  = [];
-  #passVisible  = false;
-
-  // Descripción por valor de "Tipo de Servidor". El sufijo "T" indica conexión de
-  // confianza (Trusted / autenticación de Windows). Los valores HANA arman el
-  // connectionString para SAP HANA Studio; los SQL arman el de SQL Server.
-  #serverTypeHints = {
-    SQLSERVERT:  'SQL Server con conexión de confianza (autenticación de Windows / Trusted).',
-    HANASERVER:  'SAP HANA con autenticación estándar (usuario y contraseña).',
-  };
+  #isEditMode  = false;
+  #permissions = [];
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -78,26 +57,24 @@ export default class extends Controller {
   async #initCreateMode() {
     if (!this.#hasPerm('Configurations_Connections_Create')) {
       await showAlert({ type: ALERT_TYPES.WARNING, title: 'Acceso Denegado', message: 'No cuenta con permisos para crear conexiones.' });
-      window.location.href = '/configurations/connections';
+      Turbo.visit('/configurations/connections');
       return;
     }
 
     this.submitIconTarget.textContent  = 'check';
     this.submitLabelTarget.textContent = 'Crear';
-    this.#updateCredentialRequirement();
     this.refreshSubmitState();
   }
 
   async #initEditMode() {
     if (!this.#hasPerm('Configurations_Connections_Update')) {
       await showAlert({ type: ALERT_TYPES.WARNING, title: 'Acceso Denegado', message: 'No cuenta con permisos para actualizar conexiones.' });
-      window.location.href = '/configurations/connections';
+      Turbo.visit('/configurations/connections');
       return;
     }
 
     this.submitIconTarget.textContent  = 'autorenew';
     this.submitLabelTarget.textContent = 'Actualizar';
-    this.#updateCredentialRequirement();
 
     this.#loadConnection();
   }
@@ -106,42 +83,31 @@ export default class extends Controller {
 
   async #loadConnection() {
     try {
-      const json = await this.#apiFetch(`/api/Connections/${this.connectionIdValue}`);
+      const json = await this.#apiFetch(`/api/connections/${this.connectionIdValue}`);
 
       if (!json.Data) {
         showToast(json.Message || 'No se encontró la conexión', 'error');
-        setTimeout(() => window.location.href = '/configurations/connections', 2000);
+        setTimeout(() => Turbo.visit('/configurations/connections'), 2000);
         return;
       }
 
       this.#fillForm(json.Data);
     } catch (err) {
       showToast(err.message || 'Error al cargar la conexión', 'error');
-      setTimeout(() => window.location.href = '/configurations/connections', 2000);
+      setTimeout(() => Turbo.visit('/configurations/connections'), 2000);
     }
   }
 
   #fillForm(conn) {
-    this.serverTarget.value        = conn.Server        ?? '';
-    this.licenseServerTarget.value = conn.LicenseServer ?? '';
-    this.apiUrlTarget.value        = conn.APIUrl        ?? '';
-    this.crystalApiUrlTarget.value = conn.CrystalAPIUrl ?? '';
-    this.odbcTypeTarget.value      = conn.ODBCType      ?? '';
-    this.#applySelectValue(this.dbEngineTarget,   conn.DBEngine   ?? '');
-    this.#applySelectValue(this.serverTypeTarget, conn.ServerType ?? '');
-    this.dbUserTarget.value        = conn.DBUser        ?? '';
-    this.dbPassTarget.value        = conn.DBPass        ?? '';
-    this.boSuppLangsTarget.value   = conn.BoSuppLangs   ?? '';
-    this.dstTarget.value           = conn.DST           ?? '';
-    this.useTrustedTarget.checked  = conn.UseTrusted    ?? false;
-    this.#updateServerTypeHint();
-    this.#updateCredentialRequirement();
+    this.nameTarget.value  = conn.Name  ?? '';
+    this.slUrlTarget.value = conn.SlUrl ?? '';
+    this.#applySelectValue(this.slTypeTarget, conn.SlType ?? '');
     this.refreshSubmitState();
   }
 
   /**
    * Asigna un valor a un <select>; si el valor no corresponde a ninguna opción
-   * (p. ej. una conexión legacy con un motor/tipo fuera del catálogo actual),
+   * (p. ej. una conexión importada con un motor fuera del catálogo actual),
    * agrega una opción temporal para no perder el dato al editar.
    */
   #applySelectValue(select, value) {
@@ -154,67 +120,39 @@ export default class extends Controller {
     select.value = value;
   }
 
-  /** Refresca el texto de ayuda bajo el select "Tipo de Servidor". */
-  #updateServerTypeHint() {
-    if (!this.hasServerTypeHintTarget) return;
-    this.serverTypeHintTarget.textContent = this.#serverTypeHints[this.serverTypeTarget.value] ?? '';
-  }
-
   // ── Handlers de eventos ───────────────────────────────────────────────────
-
-  togglePassword() {
-    this.#passVisible = !this.#passVisible;
-    this.dbPassTarget.type             = this.#passVisible ? 'text' : 'password';
-    this.togglePassIconTarget.textContent = this.#passVisible ? 'visibility' : 'visibility_off';
-  }
-
-  /** Muestra la descripción del tipo de servidor y ajusta si usuario/contraseña son requeridos. */
-  serverTypeChanged() {
-    this.#updateServerTypeHint();
-    this.#updateCredentialRequirement();
-  }
-
-  /**
-   * Usuario y contraseña de base de datos solo son obligatorios cuando el tipo
-   * de servidor es HANASERVER. Refleja la condición en los asteriscos del label.
-   * La contraseña nunca se marca requerida en edición: el API no la devuelve por
-   * seguridad y, si se deja en blanco, el backend conserva la contraseña actual.
-   */
-  #updateCredentialRequirement() {
-    const required = this.serverTypeTarget.value === 'HANASERVER';
-    this.dbUserRequiredTarget.classList.toggle('hidden', !required);
-    this.dbPassRequiredTarget.classList.toggle('hidden', !required || this.#isEditMode);
-    this.dbPassHintTarget.classList.toggle('hidden', !this.#isEditMode);
-  }
 
   /** Habilita el botón de guardar solo cuando todos los campos requeridos están completos. */
   refreshSubmitState() {
     this.submitBtnTarget.disabled = !this.#isFormValid();
   }
 
-  /** ¿Están completos todos los campos obligatorios del formulario? */
+  /** ¿Están completos los campos obligatorios? El motor (SlType) es opcional. */
   #isFormValid() {
-    const filled = (t) => t.value.trim() !== '';
-    let ok = filled(this.serverTarget) && filled(this.apiUrlTarget) &&
-             filled(this.odbcTypeTarget) && filled(this.dbEngineTarget) &&
-             filled(this.serverTypeTarget);
-    if (this.serverTypeTarget.value === 'HANASERVER') {
-      ok = ok && filled(this.dbUserTarget) && (this.#isEditMode || filled(this.dbPassTarget));
-    }
-    return ok;
+    return this.nameTarget.value.trim() !== '' && this.#isSlUrlValid();
+  }
+
+  /** La URL tiene que ser http(s), igual que valida el modelo del servidor. */
+  #isSlUrlValid() {
+    return /^https?:\/\//i.test(this.slUrlTarget.value.trim());
   }
 
   async save() {
     if (!this.#validate()) return;
 
-    const payload = this.#buildPayload();
+    const payload  = this.#buildPayload();
     const isCreate = !this.#isEditMode;
 
     try {
-      const json = await this.#apiFetch('/api/Connections', {
-        method: isCreate ? 'POST' : 'PATCH',
-        body:   JSON.stringify(payload),
-      });
+      // Crear va a la colección; actualizar, al recurso: el id viaja en el path,
+      // no en el cuerpo como pedía el .NET (CLAUDE.md §28).
+      const json = await this.#apiFetch(
+        isCreate ? '/api/connections' : `/api/connections/${this.connectionIdValue}`,
+        {
+          method: isCreate ? 'POST' : 'PATCH',
+          body:   JSON.stringify(payload),
+        },
+      );
 
       if (!json.Data) {
         const action = isCreate ? 'crear' : 'actualizar';
@@ -225,66 +163,39 @@ export default class extends Controller {
       const msg = isCreate ? 'Conexión creada con éxito' : 'Conexión actualizada con éxito';
       showToast(msg, 'success');
 
-      setTimeout(() => { window.location.href = '/configurations/connections'; }, 1500);
+      setTimeout(() => Turbo.visit('/configurations/connections'), 1500);
     } catch (err) {
       showAlert({ type: ALERT_TYPES.ERROR, title: 'Error', message: err.message });
     }
   }
 
   cancel() {
-    window.location.href = '/configurations/connections';
+    Turbo.visit('/configurations/connections');
   }
 
   // ── Validación ────────────────────────────────────────────────────────────
 
   #validate() {
-    let valid = true;
+    const nameEmpty  = !this.nameTarget.value.trim();
+    const urlInvalid = !this.#isSlUrlValid();
 
-    const required = [
-      { target: this.serverTarget,     error: this.serverErrorTarget     },
-      { target: this.apiUrlTarget,     error: this.apiUrlErrorTarget     },
-      { target: this.odbcTypeTarget,   error: this.odbcTypeErrorTarget   },
-      { target: this.dbEngineTarget,   error: this.dbEngineErrorTarget   },
-      { target: this.serverTypeTarget, error: this.serverTypeErrorTarget },
-    ];
+    this.nameErrorTarget.classList.toggle('hidden', !nameEmpty);
+    this.slUrlErrorTarget.classList.toggle('hidden', !urlInvalid);
 
-    // Usuario y contraseña solo son obligatorios para servidores HANASERVER.
-    // La contraseña se exime en edición: en blanco significa "no cambiar".
-    if (this.serverTypeTarget.value === 'HANASERVER') {
-      required.push({ target: this.dbUserTarget, error: this.dbUserErrorTarget });
-      if (!this.#isEditMode) {
-        required.push({ target: this.dbPassTarget, error: this.dbPassErrorTarget });
-      }
-    }
-
-    for (const { target, error } of required) {
-      const empty = !target.value.trim();
-      error.classList.toggle('hidden', !empty);
-      if (empty) valid = false;
-    }
-
-    if (!valid) {
+    if (nameEmpty || urlInvalid) {
       showToast('Por favor complete todos los campos requeridos', 'warning');
+      return false;
     }
-
-    return valid;
+    return true;
   }
 
+  // Solo las tres columnas que existen en la tabla. El Id ya no viaja en el
+  // cuerpo: para actualizar va en el path (CLAUDE.md §28).
   #buildPayload() {
     return {
-      Id:            this.#isEditMode ? this.connectionIdValue : 0,
-      Server:        this.serverTarget.value.trim(),
-      LicenseServer: this.licenseServerTarget.value.trim(),
-      APIUrl:        this.apiUrlTarget.value.trim(),
-      CrystalAPIUrl: this.crystalApiUrlTarget.value.trim(),
-      ODBCType:      this.odbcTypeTarget.value.trim(),
-      DBEngine:      this.dbEngineTarget.value.trim(),
-      ServerType:    this.serverTypeTarget.value.trim(),
-      DBUser:        this.dbUserTarget.value.trim(),
-      DBPass:        this.dbPassTarget.value,
-      BoSuppLangs:   this.boSuppLangsTarget.value.trim(),
-      DST:           this.dstTarget.value.trim(),
-      UseTrusted:    this.useTrustedTarget.checked,
+      Name:   this.nameTarget.value.trim(),
+      SlUrl:  this.slUrlTarget.value.trim(),
+      SlType: this.slTypeTarget.value.trim(),
     };
   }
 
@@ -294,24 +205,24 @@ export default class extends Controller {
     return this.#permissions.includes(name);
   }
 
+  /**
+   * Endpoints nativos: la sesión va en la cookie httpOnly, así que no se arma
+   * ningún header Authorization — getApiHeaders() aporta lo único que hace falta.
+   * El motivo del error lo trae el campo Message del contrato ApiResponse.
+   */
   async #apiFetch(url, options = {}) {
-    const session = Storage.get('Session') || {};
-    const token   = session.access_token;
-
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type':             'application/json',
-        'API':                      'ApiAppUrl',
-        'X-Skip-Error-Interceptor': 'true',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'Accept': 'application/json',
+        ...getApiHeaders(),
         ...(options.headers || {}),
       },
     });
 
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(text || `HTTP ${response.status}`);
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.Message || `HTTP ${response.status}`);
     }
     return response.json();
   }

@@ -5,13 +5,40 @@
 #
 # Nombres de columna según CLAVISCO-PLATFORM-STANDARDS §8: `sl_url` es la URL del
 # Service Layer. `sl_type` (motor: SQL Server o HANA) es propio de este producto.
+#
+# La tabla es deliberadamente más chica que la `SAPConnection` del .NET: acá no
+# viven los parámetros de DI-API/ODBC (LicenseServer, ODBCType, ServerType,
+# DBUser, DBPass, BoSuppLangs, DST, UseTrusted) porque este producto llega a SAP
+# únicamente por Service Layer (`CLAUDE.md` §29). Ver `TODOS.md` → SAP.
 class Connection < ApplicationRecord
   include Auditable
   include Clavisco::DataAccess::SoftDeletable
+
+  # Motores sobre los que puede correr SAP. Condiciona la sintaxis de las
+  # consultas y de las funciones de fecha, no cómo se habla con el Service Layer.
+  SL_TYPES = %w[SQL HANA].freeze
 
   # La asociación inversa se llama `sap_connection` en Company para no pisar
   # `ActiveRecord::Base#connection`.
   has_many :companies, foreign_key: :connection_id, inverse_of: :sap_connection, dependent: :nullify
 
-  validates :name, :sl_url, presence: true
+  validates :name, presence: true, length: { maximum: 100 }
+  # Único entre las activas: una conexión dada de baja no debe bloquear el
+  # nombre. `is_active` está en el scope por eso, no por multitenancy.
+  validates :name, uniqueness: { scope: :is_active, case_sensitive: false }, if: :name?
+  validates :sl_url, presence: true, length: { maximum: 250 }, format: {
+    with:    %r{\Ahttps?://}i,
+    message: 'debe empezar con http:// o https://',
+    allow_blank: true
+  }
+  validates :sl_type, inclusion: { in: SL_TYPES, message: 'no es un motor válido' }, allow_blank: true
+
+  # Filtro de la pantalla de conexiones. Ambos parámetros son opcionales y se
+  # aplican como "contiene"; en blanco no filtran nada.
+  scope :search, lambda { |name: nil, sl_url: nil|
+    scope = all
+    scope = scope.where(arel_table[:name].matches("%#{sanitize_sql_like(name.to_s.strip)}%"))     if name.present?
+    scope = scope.where(arel_table[:sl_url].matches("%#{sanitize_sql_like(sl_url.to_s.strip)}%")) if sl_url.present?
+    scope
+  }
 end

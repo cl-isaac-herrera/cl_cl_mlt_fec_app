@@ -1,5 +1,5 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
-import { Storage, SStore } from 'vendor/clavisco/core';
+import { SStore, getApiHeaders } from 'vendor/clavisco/core';
 import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
@@ -7,42 +7,32 @@ import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'contr
  * ConnectionsController — Lista + búsqueda de conexiones SAP (Tabulator) y
  * panel lateral de creación/edición.
  *
- * Replica: Angular ConnectionsComponent + CreateOrUpdateConnectionComponent.
- *   - GET /api/Connections?server=&apiUrl=  (paginado vía headers)
- *   - GET /api/Connections/:id              (cargar para editar)
- *   - POST /api/Connections                 (crear)
- *   - PATCH /api/Connections                (actualizar)
+ * Endpoints nativos de Rails (ver CLAUDE.md §28):
+ *   - GET   /api/connections?name=&sl_url=&page=&per_page=   (listado paginado)
+ *   - GET   /api/connections/:id                             (cargar para editar)
+ *   - POST  /api/connections                                 (crear)
+ *   - PATCH /api/connections/:id                             (actualizar)
+ *
+ * El formulario solo maneja las tres columnas que existen en la tabla
+ * `connections` (Name, SlUrl, SlType). Los parámetros de DI-API/ODBC que pedía
+ * el .NET (ODBCType, ServerType, DBUser, DBPass, …) se eliminaron: este producto
+ * llega a SAP únicamente por Service Layer (CLAUDE.md §29).
  *
  * Crear/editar ya NO navega a otra vista: abre un panel lateral derecho
- * (patrón de CLAUDE.md §8, copiado del panel "Nueva Conexión SAP" del form de
- * compañías). Al guardar con éxito se cierra el panel y se refresca la tabla,
- * sin recargar la página.
- *
- * Storage (fec-migration-docs/STORAGE-KEY-MAPPING.md):
- *   - localStorage.Session          → { access_token, ... }
- *   - sessionStorage.Permissions    → string[]
+ * (patrón de CLAUDE.md §8). Al guardar con éxito se cierra el panel y se
+ * refresca la tabla, sin recargar la página.
  */
 export default class extends TabulatorController {
   static targets = [
     ...TabulatorController.targets,
-    'inputServer',
-    'inputApiUrl',
+    'inputName',
+    'inputSlUrl',
     'btnCreate', 'btnCreateWrap',
     // Panel lateral
     'panel', 'panelBackdrop', 'panelTitle',
-    'fServer', 'fServerError',
-    'fLicenseServer',
-    'fApiUrl', 'fApiUrlError',
-    'fCrystalApiUrl',
-    'fOdbcType', 'fOdbcTypeError',
-    'fDbEngine', 'fDbEngineError',
-    'fServerType', 'fServerTypeError', 'fServerTypeHint',
-    'fDbUser', 'fDbUserError', 'fDbUserRequired',
-    'fDbPass', 'fDbPassError', 'fDbPassRequired', 'fDbPassHint',
-    'fBoSuppLangs',
-    'fDst',
-    'fUseTrusted',
-    'togglePassIcon',
+    'fName', 'fNameError',
+    'fSlUrl', 'fSlUrlError',
+    'fSlType',
     'submitBtn', 'submitIcon', 'submitLabel',
   ];
 
@@ -52,15 +42,6 @@ export default class extends TabulatorController {
   #totalRecords = 0;        // total real del servidor (evita sobreestimación de Tabulator)
   #connectionId = 0;        // 0 = crear; >0 = editar
   #editMode = false;
-  #passVisible = false;
-
-  // Descripción por valor de "Tipo de Servidor". El sufijo "T" indica conexión de
-  // confianza (Trusted / autenticación de Windows). Los valores HANA arman el
-  // connectionString para SAP HANA Studio; los SQL arman el de SQL Server.
-  #serverTypeHints = {
-    SQLSERVERT:  'SQL Server con conexión de confianza (autenticación de Windows / Trusted).',
-    HANASERVER:  'SAP HANA con autenticación estándar (usuario y contraseña).',
-  };
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -104,7 +85,7 @@ export default class extends TabulatorController {
       locale: TABULATOR_LOCALE,
       langs: TABULATOR_LANGS,
       dataLoaderLoading: TABULATOR_LOADING_HTML,
-      ajaxURL: '/api/Connections',
+      ajaxURL: '/api/connections',
       ajaxRequestFunc: (url, config, params) => this.#fetchPage(url, params),
 
       columns: this.getColumns(),
@@ -116,11 +97,9 @@ export default class extends TabulatorController {
 
     const columns = [
       { title: 'ID', field: 'Id', width: 80 },
-      { title: 'Servidor', field: 'Server', widthGrow: 1 },
-      { title: 'Usuario', field: 'DBUser', widthGrow: 1 },
-      { title: 'Motor de base de datos', field: 'DBEngine', widthGrow: 1 },
-      { title: 'URL API', field: 'APIUrl', widthGrow: 2, tooltip: true },
-      { title: 'URL Crystal API', field: 'CrystalAPIUrl', widthGrow: 2, tooltip: true },
+      { title: 'Nombre', field: 'Name', widthGrow: 2 },
+      { title: 'Motor de base de datos', field: 'SlType', widthGrow: 1 },
+      { title: 'URL del Service Layer', field: 'SlUrl', widthGrow: 3, tooltip: true },
     ];
 
     // Columna Acciones siempre presente; el botón editar se deshabilita con
@@ -140,38 +119,34 @@ export default class extends TabulatorController {
 
   /**
    * Función de carga remota para Tabulator.
-   * La API pagina por headers (página 0-indexed) y devuelve el total en
-   * el header cl-dba-pagination-records-count.
+   * El endpoint nativo pagina por query string (página 1-indexed) y devuelve el
+   * total real en el cuerpo (`Data.Total`), no en un header.
    * @param {string} url     ajaxURL configurada
    * @param {Object} params  { page (1-indexed), size, ... }
    * @returns {Promise<{data: Array, last_page: number}>}
    */
   async #fetchPage(url, params) {
-    const size = params.size || 5;
-    const apiPage = (params.page || 1) - 1;   // la API es 0-indexed
+    const size = params.size || 10;
 
     const qp = new URLSearchParams({
-      server: this.inputServerTarget.value.trim(),
-      apiUrl: this.inputApiUrlTarget.value.trim(),
+      name:     this.inputNameTarget.value.trim(),
+      sl_url:   this.inputSlUrlTarget.value.trim(),
+      page:     String(params.page || 1),
+      per_page: String(size),
     });
 
     try {
-      const { json, headers } = await this.#apiFetch(`${url}?${qp}`, {
-        headers: {
-          'cl-dba-pagination-page':      String(apiPage),
-          'cl-dba-pagination-page-size': String(size),
-        },
-      });
+      const { json } = await this.#apiFetch(`${url}?${qp}`);
 
-      if (json.Error || !json.Data) {
+      if (!json.Data) {
         showToast(json.Message || 'Error al obtener las conexiones', 'error');
         return { data: [], last_page: 1 };
       }
 
-      const total    = parseInt(headers.get('cl-dba-pagination-records-count') ?? '0') || json.Data.length;
+      const total = json.Data.Total ?? 0;
       this.#totalRecords = total;
       const lastPage = Math.max(1, Math.ceil(total / size));
-      return { data: json.Data, last_page: lastPage };
+      return { data: json.Data.Items ?? [], last_page: lastPage };
     } catch (err) {
       showToast(err.message || 'Error al obtener las conexiones', 'error');
       return { data: [], last_page: 1 };
@@ -221,9 +196,10 @@ export default class extends TabulatorController {
 
     this.#openPanel();
 
-    // Cargar la conexión completa (la fila de la tabla no trae DBPass ni todos los campos)
+    // Se recarga desde el servidor en vez de usar la fila: la lista pudo quedar
+    // vieja si otra persona editó la conexión mientras la tabla estaba abierta.
     try {
-      const { json } = await this.#apiFetch(`/api/Connections/${this.#connectionId}`);
+      const { json } = await this.#apiFetch(`/api/connections/${this.#connectionId}`);
       if (!json.Data) {
         showToast(json.Message || 'No se encontró la conexión', 'error');
         this.closePanel();
@@ -242,31 +218,6 @@ export default class extends TabulatorController {
     document.body.style.overflow = '';
   }
 
-  togglePassword() {
-    this.#passVisible = !this.#passVisible;
-    this.fDbPassTarget.type               = this.#passVisible ? 'text' : 'password';
-    this.togglePassIconTarget.textContent = this.#passVisible ? 'visibility' : 'visibility_off';
-  }
-
-  /** Muestra la descripción del tipo de servidor y ajusta si usuario/contraseña son requeridos. */
-  serverTypeChanged() {
-    this.#updateServerTypeHint();
-    this.#updateCredentialRequirement();
-  }
-
-  /**
-   * Usuario y contraseña de base de datos solo son obligatorios cuando el tipo
-   * de servidor es HANASERVER. Refleja la condición en los asteriscos del label.
-   * La contraseña nunca se marca requerida en edición: el API no la devuelve por
-   * seguridad y, si se deja en blanco, el backend conserva la contraseña actual.
-   */
-  #updateCredentialRequirement() {
-    const required = this.fServerTypeTarget.value === 'HANASERVER';
-    this.fDbUserRequiredTarget.classList.toggle('hidden', !required);
-    this.fDbPassRequiredTarget.classList.toggle('hidden', !required || this.#editMode);
-    this.fDbPassHintTarget.classList.toggle('hidden', !this.#editMode);
-  }
-
   /** Habilita el botón de guardar solo cuando todos los campos requeridos están completos. */
   refreshSubmitState() {
     this.submitBtnTarget.disabled = !this.#isFormValid();
@@ -274,14 +225,13 @@ export default class extends TabulatorController {
 
   /** ¿Están completos todos los campos obligatorios del panel? */
   #isFormValid() {
-    const filled = (t) => t.value.trim() !== '';
-    let ok = filled(this.fServerTarget) && filled(this.fApiUrlTarget) &&
-             filled(this.fOdbcTypeTarget) && filled(this.fDbEngineTarget) &&
-             filled(this.fServerTypeTarget);
-    if (this.fServerTypeTarget.value === 'HANASERVER') {
-      ok = ok && filled(this.fDbUserTarget) && (this.#editMode || filled(this.fDbPassTarget));
-    }
-    return ok;
+    // El motor (SlType) es opcional: la tabla lo acepta nulo.
+    return this.fNameTarget.value.trim() !== '' && this.#isSlUrlValid();
+  }
+
+  /** La URL tiene que ser http(s), igual que valida el modelo del servidor. */
+  #isSlUrlValid() {
+    return /^https?:\/\//i.test(this.fSlUrlTarget.value.trim());
   }
 
   async savePanel() {
@@ -292,10 +242,15 @@ export default class extends TabulatorController {
 
     this.submitBtnTarget.disabled = true;
     try {
-      const { json } = await this.#apiFetch('/api/Connections', {
-        method: isCreate ? 'POST' : 'PATCH',
-        body:   JSON.stringify(payload),
-      });
+      // Crear va a la colección; actualizar, al recurso: el id viaja en el path,
+      // no en el cuerpo como pedía el .NET (CLAUDE.md §28).
+      const { json } = await this.#apiFetch(
+        isCreate ? '/api/connections' : `/api/connections/${this.#connectionId}`,
+        {
+          method: isCreate ? 'POST' : 'PATCH',
+          body:   JSON.stringify(payload),
+        },
+      );
 
       if (!json.Data) {
         const action = isCreate ? 'crear' : 'actualizar';
@@ -322,50 +277,24 @@ export default class extends TabulatorController {
   }
 
   #resetPanel() {
-    this.#passVisible = false;
-    this.fServerTarget.value        = '';
-    this.fLicenseServerTarget.value = '';
-    this.fApiUrlTarget.value        = '';
-    this.fCrystalApiUrlTarget.value = '';
-    this.fOdbcTypeTarget.value      = '';
-    this.fDbEngineTarget.value      = '';
-    this.fServerTypeTarget.value    = '';
-    this.fDbUserTarget.value        = '';
-    this.fDbPassTarget.value        = '';
-    this.fDbPassTarget.type         = 'password';
-    this.togglePassIconTarget.textContent = 'visibility_off';
-    this.fBoSuppLangsTarget.value   = '';
-    this.fDstTarget.value           = '';
-    this.fUseTrustedTarget.checked  = false;
-    this.#updateServerTypeHint();
-    this.#updateCredentialRequirement();
+    this.fNameTarget.value  = '';
+    this.fSlUrlTarget.value = '';
+    this.fSlTypeTarget.value = '';
     this.refreshSubmitState();
 
-    [this.fServerErrorTarget, this.fApiUrlErrorTarget, this.fDbEngineErrorTarget,
-     this.fDbUserErrorTarget, this.fDbPassErrorTarget].forEach(e => e.classList.add('hidden'));
+    [this.fNameErrorTarget, this.fSlUrlErrorTarget].forEach(e => e.classList.add('hidden'));
   }
 
   #fillPanel(conn) {
-    this.fServerTarget.value        = conn.Server        ?? '';
-    this.fLicenseServerTarget.value = conn.LicenseServer ?? '';
-    this.fApiUrlTarget.value        = conn.APIUrl        ?? '';
-    this.fCrystalApiUrlTarget.value = conn.CrystalAPIUrl ?? '';
-    this.fOdbcTypeTarget.value      = conn.ODBCType      ?? '';
-    this.#applySelectValue(this.fDbEngineTarget,   conn.DBEngine   ?? '');
-    this.#applySelectValue(this.fServerTypeTarget, conn.ServerType ?? '');
-    this.fDbUserTarget.value        = conn.DBUser        ?? '';
-    this.fDbPassTarget.value        = conn.DBPass        ?? '';
-    this.fBoSuppLangsTarget.value   = conn.BoSuppLangs   ?? '';
-    this.fDstTarget.value           = conn.DST           ?? '';
-    this.fUseTrustedTarget.checked  = conn.UseTrusted    ?? false;
-    this.#updateServerTypeHint();
-    this.#updateCredentialRequirement();
+    this.fNameTarget.value  = conn.Name  ?? '';
+    this.fSlUrlTarget.value = conn.SlUrl ?? '';
+    this.#applySelectValue(this.fSlTypeTarget, conn.SlType ?? '');
     this.refreshSubmitState();
   }
 
   /**
    * Asigna un valor a un <select>; si el valor no corresponde a ninguna opción
-   * (p. ej. una conexión legacy con un motor/tipo fuera del catálogo actual),
+   * (p. ej. una conexión importada con un motor fuera del catálogo actual),
    * agrega una opción temporal para no perder el dato al editar.
    */
   #applySelectValue(select, value) {
@@ -378,57 +307,27 @@ export default class extends TabulatorController {
     select.value = value;
   }
 
-  /** Refresca el texto de ayuda bajo el select "Tipo de Servidor". */
-  #updateServerTypeHint() {
-    if (!this.hasFServerTypeHintTarget) return;
-    this.fServerTypeHintTarget.textContent = this.#serverTypeHints[this.fServerTypeTarget.value] ?? '';
-  }
-
   #validatePanel() {
-    let valid = true;
+    const nameEmpty  = !this.fNameTarget.value.trim();
+    const urlInvalid = !this.#isSlUrlValid();
 
-    const required = [
-      { target: this.fServerTarget,     error: this.fServerErrorTarget     },
-      { target: this.fApiUrlTarget,     error: this.fApiUrlErrorTarget     },
-      { target: this.fOdbcTypeTarget,   error: this.fOdbcTypeErrorTarget   },
-      { target: this.fDbEngineTarget,   error: this.fDbEngineErrorTarget   },
-      { target: this.fServerTypeTarget, error: this.fServerTypeErrorTarget },
-    ];
+    this.fNameErrorTarget.classList.toggle('hidden', !nameEmpty);
+    this.fSlUrlErrorTarget.classList.toggle('hidden', !urlInvalid);
 
-    // Usuario y contraseña solo son obligatorios para servidores HANASERVER.
-    // La contraseña se exime en edición: en blanco significa "no cambiar".
-    if (this.fServerTypeTarget.value === 'HANASERVER') {
-      required.push({ target: this.fDbUserTarget, error: this.fDbUserErrorTarget });
-      if (!this.#editMode) {
-        required.push({ target: this.fDbPassTarget, error: this.fDbPassErrorTarget });
-      }
+    if (nameEmpty || urlInvalid) {
+      showToast('Por favor complete todos los campos requeridos', 'warning');
+      return false;
     }
-
-    for (const { target, error } of required) {
-      const empty = !target.value.trim();
-      error.classList.toggle('hidden', !empty);
-      if (empty) valid = false;
-    }
-
-    if (!valid) showToast('Por favor complete todos los campos requeridos', 'warning');
-    return valid;
+    return true;
   }
 
+  // Solo las tres columnas que existen en la tabla. El Id ya no viaja en el
+  // cuerpo: para actualizar va en el path (CLAUDE.md §28).
   #buildPayload() {
     return {
-      Id:            this.#editMode ? this.#connectionId : 0,
-      Server:        this.fServerTarget.value.trim(),
-      LicenseServer: this.fLicenseServerTarget.value.trim(),
-      APIUrl:        this.fApiUrlTarget.value.trim(),
-      CrystalAPIUrl: this.fCrystalApiUrlTarget.value.trim(),
-      ODBCType:      this.fOdbcTypeTarget.value.trim(),
-      DBEngine:      this.fDbEngineTarget.value.trim(),
-      ServerType:    this.fServerTypeTarget.value.trim(),
-      DBUser:        this.fDbUserTarget.value.trim(),
-      DBPass:        this.fDbPassTarget.value,
-      BoSuppLangs:   this.fBoSuppLangsTarget.value.trim(),
-      DST:           this.fDstTarget.value.trim(),
-      UseTrusted:    this.fUseTrustedTarget.checked,
+      Name:   this.fNameTarget.value.trim(),
+      SlUrl:  this.fSlUrlTarget.value.trim(),
+      SlType: this.fSlTypeTarget.value.trim(),
     };
   }
 
@@ -515,33 +414,26 @@ export default class extends TabulatorController {
     });
   }
 
+  /**
+   * Endpoints nativos: la sesión va en la cookie httpOnly, así que no se arma
+   * ningún header Authorization — getApiHeaders() aporta lo único que hace falta.
+   * El motivo del error lo trae el campo Message del contrato ApiResponse.
+   */
   async #apiFetch(url, options = {}) {
-    const session = Storage.get('Session') || {};
-    const token   = session.access_token;
-
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type':             'application/json',
-        'API':                      'ApiAppUrl',
-        'X-Skip-Error-Interceptor': 'true',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'Accept': 'application/json',
+        ...getApiHeaders(),
         ...(options.headers || {}),
       },
     });
 
-    const clMessage = response.headers.get('cl-message');
-    const decodedMessage = clMessage ? (() => {
-      try { return decodeURIComponent(clMessage); } catch { return clMessage; }
-    })() : null;
-
     if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(decodedMessage || text || `HTTP ${response.status}`);
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.Message || `HTTP ${response.status}`);
     }
 
-    const json = await response.json();
-    if (decodedMessage && !json.Message) json.Message = decodedMessage;
-    return { json, headers: response.headers };
+    return { json: await response.json(), headers: response.headers };
   }
 }
