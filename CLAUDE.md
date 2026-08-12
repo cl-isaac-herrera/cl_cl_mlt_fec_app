@@ -1190,11 +1190,15 @@ La tabla `connections` es la que manda. Cuando los endpoints se migraron a Rails
 | URL del Service Layer | `sl_url` | Sí — debe empezar con `http://` o `https://` |
 | Motor de Base de Datos | `sl_type` | No — `SQL` o `HANA` |
 
-**Se eliminaron** por no tener columna: Servidor de Licencias, URL Crystal API, Tipo ODBC,
-Tipo de Servidor (`SQLSERVERT`/`HANASERVER`), Usuario y Contraseña de BD, Idiomas Soportados
-(BoSuppLangs), DST y el check UseTrusted. Eran parámetros de **DI-API/ODBC** que este producto
-no usa: llega a SAP únicamente por Service Layer (§29). No volver a agregarlos sin agregar
-antes la columna y la razón por la que hace falta — ver `TODOS.md` → SAP.
+**Se eliminaron definitivamente** por no tener columna: Servidor de Licencias, URL Crystal API,
+Tipo ODBC, Tipo de Servidor (`SQLSERVERT`/`HANASERVER`), Usuario y Contraseña de BD, Idiomas
+Soportados (BoSuppLangs), DST y el check UseTrusted. Eran parámetros de **DI-API/ODBC** y este
+producto llega a SAP únicamente por Service Layer (§29), así que **no tienen consumidor vivo**:
+no son deuda pendiente ni hay que preservarlos al importar desde el .NET.
+
+> **Regla:** la tabla `connections` es la que manda. Un campo que no tenga columna no va en el
+> formulario. Si en el futuro hiciera falta uno, primero la migración que agrega la columna y
+> la razón por la que hace falta; nunca un campo que se manda al API "por compatibilidad".
 
 ### Reglas de negocio vigentes (mantener idénticas en las tres)
 

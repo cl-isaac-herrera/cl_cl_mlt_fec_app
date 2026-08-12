@@ -272,32 +272,23 @@ El formulario se recortó a las tres columnas que existen (`name`, `sl_url`, `sl
       activas y `Server` del origen puede venir repetido — hay que decidir el desempate
       (sufijo con el `APIUrl`, o elegir un nombre a mano) antes de importar.
 
-- [ ] **Se dejaron de capturar los parámetros de DI-API/ODBC.** `SAPConnection` del .NET tiene
-      `LicenseServer`, `CrystalAPIUrl`, `ODBCType`, `ServerType`, `DBUser`, `DBPass`,
-      `BoSuppLangs`, `DST` y `UseTrusted`; la tabla propia no. Este producto no los necesita
-      (llega a SAP solo por Service Layer, `CLAUDE.md` §29), pero **sí los usan otros
-      consumidores de esa misma tabla en SQL Server**: el sync legacy (`clvsfesync4.3`) se
-      conecta por DI-API y los reportes salen por `CrystalAPIUrl`.
-      Mientras las dos bases convivan, una conexión creada desde Rails **no** le sirve a esos
-      consumidores.
-      **Pendiente:** confirmar qué consumidores siguen vivos y decidir entre (a) agregar las
-      columnas a `connections` y volver a poner los campos en el formulario, (b) que esos
-      sistemas sigan administrando sus conexiones por su lado, o (c) migrarlos también.
-      Hasta resolverlo, no crear conexiones desde esta pantalla para compañías que todavía
-      dependan del sync legacy.
+- [x] **Los parámetros de DI-API/ODBC se eliminan por completo — no son deuda.** `SAPConnection`
+      del .NET tenía `LicenseServer`, `CrystalAPIUrl`, `ODBCType`, `ServerType`, `DBUser`,
+      `DBPass`, `BoSuppLangs`, `DST` y `UseTrusted`. **Decisión de producto (2026-08-12):** el
+      esquema de la tabla `connections` de Rails es el que manda; lo que no está ahí muere.
+      Este producto llega a SAP únicamente por Service Layer (`CLAUDE.md` §29), así que esos
+      campos no tienen consumidor vivo: los sistemas que se conectaban por DI-API quedan fuera
+      de alcance, no hay que preservarlos ni volver a agregarlos.
+      Con eso también queda cerrado el `DBPass` cifrado con el AES del .NET: no se importa ni
+      se recrea la columna.
 
-- [ ] **`DBPass` estaba cifrada con el AES del .NET y acá no existe.** El
-      `SAPConnectionService` la cifraba al guardar y la descifraba al leer. Si el punto anterior
-      se resuelve por (a), la columna nueva tiene que nacer con `encrypts` (como
-      `users.sap_password`) y entrar en `filter_parameters` — ver las tres reglas de
-      `CLAUDE.md` §29.
-
-- [ ] **La contraseña de la conexión no se valida contra SAP.** El formulario ya no la pide, así
-      que hoy no hay forma de saber si una conexión recién creada realmente responde. La
-      pantalla de perfil sí prueba credenciales (`POST /api/sap_credential_validations`), pero
-      contra una compañía, no contra una conexión suelta.
-      **Pendiente:** evaluar un botón "Probar conexión" que haga un GET de sondeo al
-      `sl_url` — reutilizando `Sap::CredentialValidator` o el `Client` del submódulo.
+- [ ] **No hay forma de verificar que una conexión responde.** Al guardarla solo se valida el
+      formato de la URL; nadie contacta el `sl_url`. La pantalla de perfil sí prueba
+      credenciales (`POST /api/sap_credential_validations`), pero contra una compañía, no
+      contra una conexión suelta.
+      **Pendiente:** evaluar un botón "Probar conexión" que haga un GET de sondeo al `sl_url`
+      reutilizando el `Client` del submódulo. No es bloqueante: un `sl_url` malo se detecta al
+      primer uso real.
 
 - [ ] **`connections/new` y `connections/:id/edit` siguen ruteadas pero nadie las abre.** El
       panel lateral del listado las reemplazó; se mantienen en sync (`CLAUDE.md` §22 #3) por si

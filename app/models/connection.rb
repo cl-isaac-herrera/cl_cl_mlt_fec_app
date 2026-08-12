@@ -6,10 +6,12 @@
 # Nombres de columna según CLAVISCO-PLATFORM-STANDARDS §8: `sl_url` es la URL del
 # Service Layer. `sl_type` (motor: SQL Server o HANA) es propio de este producto.
 #
-# La tabla es deliberadamente más chica que la `SAPConnection` del .NET: acá no
-# viven los parámetros de DI-API/ODBC (LicenseServer, ODBCType, ServerType,
-# DBUser, DBPass, BoSuppLangs, DST, UseTrusted) porque este producto llega a SAP
-# únicamente por Service Layer (`CLAUDE.md` §29). Ver `TODOS.md` → SAP.
+# La tabla es deliberadamente más chica que la `SAPConnection` del .NET: los
+# parámetros de DI-API/ODBC (LicenseServer, ODBCType, ServerType, DBUser,
+# DBPass, BoSuppLangs, DST, UseTrusted) se eliminaron por decisión de producto,
+# no quedaron pendientes — este producto llega a SAP únicamente por Service
+# Layer (`CLAUDE.md` §29). El formulario refleja estas columnas y solo estas
+# (`CLAUDE.md` §22).
 class Connection < ApplicationRecord
   include Auditable
   include Clavisco::DataAccess::SoftDeletable
