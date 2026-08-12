@@ -1589,3 +1589,102 @@ grep -rn "GetUserInfo\|profile-info" app/javascript
 
 Los endpoints nativos usan la session cookie: en su `#apiFetch` **no** se arma header
 `Authorization` — basta `getApiHeaders()` de `vendor/clavisco/core`.
+
+---
+
+## 29. Acceso a SAP — SIEMPRE por `Clavisco::ServiceLayer::Client`
+
+Todo llamado a SAP Business One pasa por el submódulo
+`vendor/clavisco/service_layer` (`ClavisCo/cl-sap-servicelayer-ruby`).
+**Está prohibido hablar HTTP a mano con el Service Layer** — sin Faraday, sin `Net::HTTP`,
+sin `HTTParty`, ni siquiera para un solo `/Login`.
+
+> **Regla del estándar** (CLAVISCO-PLATFORM-STANDARDS §2.7): *«Nunca crear sesiones SAP por
+> request. Usar el session pool singleton del Client.»*
+
+```ruby
+client = Clavisco::ServiceLayer::Client.new(
+  base_url:         company.sap_connection.sl_url,
+  company_db:       company.sap_db_code,
+  username:         user.sap_user,
+  password:         user.sap_password,
+  session_owner_id: Current.user.id     # llave del pool: owner|company_db|username
+)
+
+client.get('BusinessPartners', params: { '$top' => 10 })
+client.post('Orders', body: payload)
+client.patch('Orders(123)', body: payload)
+client.delete('Orders(123)')
+```
+
+### De dónde salen `base_url` y `company_db`
+
+**Nunca de variables de entorno.** El ejemplo de §2.7 usa `SAP_SL_URL`/`SAP_COMPANY_DB` porque
+asume un solo servidor; este producto es multi-compañía, así que:
+
+| Dato | Fuente |
+|---|---|
+| `base_url` | `connections.sl_url` (vía `companies.connection_id`) |
+| `company_db` | `companies.sap_db_code` |
+| `username` / `password` | `users.sap_user` / `users.sap_password` (ver deuda en `TODOS.md`: el estándar los quiere en `sap_licenses`) |
+
+### El pool, y por qué no se cierra la sesión
+
+El Client se autentica solo en el primer request y guarda la sesión en un `LoadBalancer`
+singleton con la llave `session_owner_id|company_db|username`. **No llamar `logout` al terminar
+una operación:** eso vuelve a "una sesión por request", justo lo que la regla prohíbe. La sesión
+se reutiliza y expira sola (20 min).
+
+### Errores
+
+`Clavisco::ServiceLayer::Client::ServiceLayerError` y sus subclases
+(`AuthenticationError`, `SessionExpiredError`, `NotFoundError`) llevan `status_code`,
+`sap_error_code` y `sap_message`. Al mostrarle el motivo al usuario, usar `sap_message` y
+quitar el prefijo del cliente (`SL Login failed: …`) — le sirve el error de SAP, no en qué capa
+se detectó.
+
+### La contraseña de SAP se guarda cifrada
+
+`users.sap_password` lleva `encrypts` (ActiveRecord Encryption) — cifrado **reversible**, no
+un digest: el Service Layer exige la contraseña en claro para el `/Login`.
+
+```ruby
+class User < ApplicationRecord
+  encrypts :sap_password   # cifra al escribir, descifra al leer, transparente
+end
+```
+
+Tres reglas que cuestan caro si se olvidan:
+
+1. **`encrypts` solo actúa al escribir el atributo.** Una fila insertada por fuera del modelo
+   (SQL directo, importación, seed) se queda en texto plano y nadie avisa. Si se agrega una
+   columna cifrada sobre datos que ya existen, hay que migrarlos — ver
+   `db/migrate/20260812110000_encrypt_existing_sap_passwords.rb` como patrón: leer el crudo
+   con SQL, serializar con `type_for_attribute(...).serialize` y escribir con `UPDATE`.
+   Reasignar el atributo con el mismo valor **no** dispara el UPDATE (dirty tracking no ve
+   cambio).
+2. **`support_unencrypted_data = false`.** Leer una fila en claro levanta en vez de devolverla.
+   No volver a ponerlo en `true` para "arreglar" un error de lectura: ese error está avisando
+   que hay un dato sin cifrar.
+3. **Todo campo sensible nuevo va también a `filter_parameters`**
+   (`config/initializers/filter_parameter_logging.rb`). Cifrar la columna no sirve si el valor
+   queda escrito en `log/*.log` — que es exactamente lo que pasaba con `SapPass`.
+4. **Nunca ponerle `limit:` a una columna cifrada pensando en el largo del dato.** Lo guardado
+   es un sobre JSON (`{"p":…,"h":{"iv":…,"at":…}}`): ~70 caracteres fijos más 4/3 del texto
+   original. Una contraseña de 50 chars ocupa **138**. SQLite ignora el largo de `varchar`, así
+   que hoy no molesta, pero si la base se muda a una que sí lo respeta hay que dimensionar
+   contra el cifrado, no contra el dato. Las validaciones de largo del modelo sí miran el texto
+   original (`validates :sap_password, length: { maximum: 50 }`), que es lo correcto.
+
+El cifrado es **no determinista**: el mismo valor produce un texto distinto cada vez, porque el
+IV es aleatorio. Consecuencia: no se puede buscar por esa columna (`where(sap_password: x)`
+nunca encuentra nada) ni ponerle un índice único. Si algún día hace falta buscar por un campo
+cifrado, se declara `encrypts :campo, deterministic: true`.
+
+### Referencia
+
+`app/services/sap/credential_validator.rb` es el consumidor de ejemplo en este proyecto.
+Ojo con su rodeo documentado: el Client no expone un `login` suelto, así que para *solo*
+validar credenciales hay que forzar la autenticación con un GET de sondeo y desambiguar con el
+pool. Está anotado en `TODOS.md` como deuda del submódulo — **no copiar ese patrón** para
+operaciones normales, que simplemente llaman `get`/`post`/`patch`/`delete`.

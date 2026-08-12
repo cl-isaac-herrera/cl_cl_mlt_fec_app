@@ -10,3 +10,6 @@
 [submodule "vendor/clavisco/auth"]
 	path = vendor/clavisco/auth
 	url = https://github.com/Crisql/cl-auth-ruby.git
+[submodule "vendor/clavisco/service_layer"]
+	path = vendor/clavisco/service_layer
+	url = https://github.com/ClavisCo/cl-sap-servicelayer-ruby.git

@@ -8,13 +8,14 @@ require_relative '../../vendor/clavisco/structures/lib/clavisco/structures'
 require_relative '../../vendor/clavisco/common/lib/clavisco/common'
 require_relative '../../vendor/clavisco/data_access/lib/clavisco/data_access'
 require_relative '../../vendor/clavisco/auth/lib/clavisco/auth'
+require_relative '../../vendor/clavisco/service_layer/lib/clavisco/service_layer'
 
 # licensing y app_menu todavía no existen como submodules — agregar cuando estén disponibles.
 # require_relative '../../vendor/clavisco/licensing/lib/clavisco/licensing'
 # require_relative '../../vendor/clavisco/app_menu/lib/clavisco/app_menu'
 
-# SAP — este producto no integra SAP Business One directamente, no se cargan.
-# require_relative '../../vendor/clavisco/service_layer/lib/clavisco/service_layer'
+# sap_udfs administra la estructura (UDTs/UDFs) en SAP. Este producto todavía no
+# declara schemas propios; agregar cuando los tenga.
 # require_relative '../../vendor/clavisco/sap_udfs/lib/clavisco/sap_udfs'
 
 # ── Alias ─────────────────────────────────────────────────────────────────────

@@ -51,8 +51,14 @@ module FecApp
     config.active_record.encryption.key_derivation_salt =
       ENV['AR_ENCRYPTION_KEY_DERIVATION_SALT'].presence || derive_key.call('salt')
 
-    # Las filas que ya existan con la contraseña en claro se siguen leyendo; se
-    # vuelven a guardar cifradas la próxima vez que el usuario actualice su perfil.
-    config.active_record.encryption.support_unencrypted_data = true
+    # Sin excepciones: leer una fila en claro levanta en vez de devolverla como si
+    # nada. Con `true`, una contraseña sin cifrar se lee para siempre sin que nadie
+    # se entere — y eso fue exactamente lo que pasó: `encrypts` solo actúa al
+    # escribir, así que las filas viejas se quedaron en texto plano en silencio.
+    #
+    # Las que existían las cifró `20260812110000_encrypt_existing_sap_passwords`,
+    # que corre antes que esto entre en efecto. Si aparece una nueva fila en claro
+    # (una importación mal hecha, por ejemplo), ahora falla a la vista.
+    config.active_record.encryption.support_unencrypted_data = false
   end
 end

@@ -74,6 +74,18 @@ RSpec.describe 'Api::Profiles', type: :request do
       expect(user.reload.sap_password).to eq('otra-clave')
     end
 
+    # El log escribía `"SapPass"=>"@Moises..."` en claro en cada request: cifrar la
+    # columna no sirve de nada si el mismo valor queda escrito en log/*.log.
+    it 'no deja la contraseña de SAP en los logs' do
+      filtered = ActiveSupport::ParameterFilter
+                 .new(Rails.application.config.filter_parameters)
+                 .filter('SapPass' => 'otra-clave', 'SapUser' => 'manager')
+
+      expect(filtered['SapPass']).to eq('[FILTERED]')
+      # El usuario no es secreto: se sigue viendo para poder diagnosticar.
+      expect(filtered['SapUser']).to eq('manager')
+    end
+
     it 'ignora cualquier intento de tocar otro usuario: siempre escribe el de la sesión' do
       otro = User.create!(email: 'otro@example.com', sap_user: 'intacto')
 

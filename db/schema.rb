@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_11_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_12_110000) do
   create_table "companies", force: :cascade do |t|
     t.integer "connection_id"
     t.datetime "created_at", null: false
@@ -29,8 +29,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_11_130000) do
     t.string "created_by"
     t.boolean "is_active", default: true, null: false
     t.string "name", null: false
-    t.string "service_layer_type"
-    t.string "service_layer_url", null: false
+    t.string "sl_type"
+    t.string "sl_url", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
   end

@@ -165,11 +165,27 @@ pendiente:
 
 - [ ] **Las contraseñas de SAP importadas vienen cifradas con el AES del .NET.** Rails las
       guarda con ActiveRecord Encryption (ver `config/application.rb`), que no las puede
-      descifrar. `support_unencrypted_data = true` evita que reviente la lectura, pero el
-      valor que salga va a ser el ciphertext del .NET, no la contraseña: el `/Login` contra
-      SAP fallaría.
-      **Pendiente:** en la tarea de importación, descifrar con la llave del .NET antes de
-      insertar (o dejar el campo vacío y pedir que cada usuario reingrese su contraseña).
+      descifrar. Desde que `support_unencrypted_data = false`, una fila insertada así ya no
+      se lee en silencio: **levanta al leerla**, que es lo correcto — antes habría mandado el
+      ciphertext del .NET a SAP como si fuera la contraseña.
+      **Pendiente:** en la tarea de importación, descifrar con la llave del .NET y escribir el
+      valor por el modelo (para que Rails lo cifre), o dejar el campo vacío y pedir que cada
+      usuario reingrese su contraseña.
+
+> La contraseña de SAP viaja en el cuerpo de `POST /api/sap_credential_validations` y
+> `PATCH /api/profile`. No es deuda: ya no queda en los logs
+> (`config/initializers/filter_parameter_logging.rb`), está cifrada en reposo, y el
+> transporte va forzado a HTTPS por `config.force_ssl = true`
+> (`config/environments/production.rb:16`).
+
+- [ ] **`.env.example` está ignorado por git (`/.env*` en `.gitignore`), así que no documenta
+      nada para el equipo.** Las llaves `AR_ENCRYPTION_PRIMARY_KEY` /
+      `AR_ENCRYPTION_DETERMINISTIC_KEY` / `AR_ENCRYPTION_KEY_DERIVATION_SALT` que hay que fijar
+      en producción quedaron explicadas en `config/application.rb` (sí trackeado), pero el
+      ejemplo de `.env` no llega al repo. `.env.example` no tiene secretos — solo placeholders
+      y hostnames de dev.
+      **Pendiente:** decidir si se agrega la excepción `!/.env.example` al `.gitignore`. Es
+      política del repo, no de esta tarea.
 
 - [ ] **La visibilidad del campo "Tipo de OC" sigue con compañías hardcodeadas.**
       `user_profile_controller.js` mantiene `COMPANIES_WITH_OC = [186, 1206]`, heredado del
@@ -177,6 +193,67 @@ pendiente:
       coincidir con `companies.id` de la base propia.
       **Pendiente:** convertirlo en un dato de la compañía (columna o UDF) y exponerlo en
       `GET /api/companies`, en vez de una lista de ids en el frontend.
+
+---
+
+## SAP — deuda del acceso a Service Layer
+
+`vendor/clavisco/service_layer` (`ClavisCo/cl-sap-servicelayer-ruby`) ya está montado y es el
+único camino a SAP, según CLAVISCO-PLATFORM-STANDARDS §2.7. Lo que quedó pendiente:
+
+- [x] **`Sap::CredentialValidator` usaba Faraday a mano y abría una sesión por request** —
+      resuelto: ahora pasa por `Clavisco::ServiceLayer::Client` y su pool singleton.
+
+- [ ] **La validación fuerza el login con un GET de sondeo a `BusinessPartners`.** El Client
+      no expone un `login` suelto: se autentica solo en el primer request. Funciona y está
+      documentado en la clase, pero es un rodeo — la prueba real es el `/Login`, no el
+      recurso.
+      **Pendiente submódulo (`cl-sap-servicelayer-ruby`):** un método explícito
+      (`Client#login` / `#authenticated?`) que fuerce la creación de la sesión y devuelva si
+      funcionó. Con eso desaparecen `PROBE_RESOURCE`, `PROBE_PARAMS` y `#session_established?`.
+
+- [ ] **`#session_established?` consulta el pool para desambiguar los errores.** Cuando el
+      Client levanta un `ServiceLayerError` genérico no hay forma de saber si falló el login
+      (red caída) o el recurso de sondeo (permisos del usuario en SAP) — la diferencia
+      importa, porque lo primero NO prueba que las credenciales sean malas. Hoy se resuelve
+      preguntándole al `LoadBalancer` si quedó sesión viva. Es API pública, pero se apoya en
+      un detalle de implementación del gem.
+      **Pendiente submódulo:** que el error de login y el error de recurso sean clases
+      distintas, o el `Client#login` del punto anterior.
+
+- [x] **`connections.service_layer_url` no se llamaba como el estándar** — resuelto:
+      `db/migrate/20260812100000_rename_connection_columns_to_standard.rb` la renombró a
+      `sl_url` (§8) y, por consistencia de prefijo, `service_layer_type` → `sl_type`.
+
+- [ ] **`connections.sl_type` no lo lee nadie.** Se agregó para distinguir el motor sobre el
+      que corre SAP (SQL Server / HANA) porque hay sintaxis de `SQLQueries` y funciones de
+      fecha que difieren, pero hoy ninguna consulta la usa — no la pide el estándar y el
+      único código que la menciona es su migración. No confundirla con los selects "Motor de
+      Base de Datos" / "Tipo de Servidor" del formulario de conexión (`CLAUDE.md` §22): esos
+      viajan al API .NET, no a esta tabla.
+      **Pendiente:** usarla cuando se escriba la primera consulta que dependa del motor, o
+      borrarla si al final no aparece.
+
+- [ ] **`roles` no tiene la columna `description`.** §4.1 la lista explícitamente
+      (`roles (id, name, description, is_active)`) y `permissions` sí la tiene. No entró en
+      el renombrado de `connections` porque es un `add_column`, no un rename.
+      **Pendiente:** agregarla y decidir si se puebla al importar `Rol` desde SQL Server.
+
+- [ ] **La tabla puente se llama `users_by_companies`; el estándar dice `company_memberships`.**
+      Es un rename mecánico (modelo `UsersByCompany`, el scope `Company.assigned_to`, seeds y
+      specs), pero se dejó junto al punto de `sap_licenses` de abajo porque esa misma tabla
+      necesita ganar la columna `license_id` — conviene un solo cambio, no dos.
+
+- [ ] **Las credenciales de SAP viven en `users`, no en `sap_licenses`.** §8 define
+      `sap_licenses` (`sap_username`, `sap_password`) como catálogo de credenciales
+      reutilizables, asignado a cada usuario por compañía vía la tabla puente
+      (`company_memberships.license_id` en el estándar; acá el equivalente es
+      `users_by_companies`). Este producto las tiene en `users.sap_user` /
+      `users.sap_password`, que es lo que heredó del .NET y lo que consume hoy
+      `PATCH /api/profile`.
+      **Pendiente:** decidir si se migra al modelo del estándar. No es solo mover columnas:
+      cambia la pantalla de perfil (una credencial por compañía, no una por usuario) y el
+      payload del endpoint. Coordinar con la tarea de importación de usuarios.
 
 ---
 

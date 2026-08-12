@@ -4,47 +4,48 @@ require 'rails_helper'
 
 RSpec.describe 'POST /api/sap_credential_validations', type: :request do
   let(:user) { User.create!(email: 'sap@example.com') }
-  let(:sap)  { Connection.create!(name: 'SAP Producción', service_layer_url: 'https://sap.test:50000/b1s/v1') }
+  let(:sap)  { Connection.create!(name: 'SAP Producción', sl_url: 'https://sap.test:50000/b1s/v1') }
   let(:acme) { Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db_code: 'SBO_ACME') }
 
-  let(:login_url)  { 'https://sap.test:50000/b1s/v1/Login' }
-  let(:logout_url) { 'https://sap.test:50000/b1s/v1/Logout' }
+  let(:login_url) { 'https://sap.test:50000/b1s/v1/Login' }
+  let(:probe_url) { %r{\Ahttps://sap\.test:50000/b1s/v1/BusinessPartners} }
 
   let(:credentials) { { SapUser: 'manager', SapPass: 'secreto', CompanyId: acme.id } }
 
   def body = JSON.parse(response.body)
 
-  before { UsersByCompany.create!(user: user, company: acme) }
+  # El pool de sesiones del Client es un singleton que sobrevive entre ejemplos: sin
+  # limpiarlo, el segundo ejemplo reusaría la sesión del primero y no volvería a
+  # pedir /Login, que es justamente lo que se está probando.
+  before do
+    Clavisco::ServiceLayer::LoadBalancer.instance.instance_variable_set(:@sessions, {})
+    UsersByCompany.create!(user: user, company: acme)
+  end
 
-  it 'devuelve Data true cuando el Service Layer acepta el login' do
+  def stub_successful_login
     stub_request(:post, login_url)
       .with(body: { CompanyDB: 'SBO_ACME', UserName: 'manager', Password: 'secreto' }.to_json)
-      .to_return(status: 200, body: { SessionId: 'abc' }.to_json, headers: { 'Set-Cookie' => 'B1SESSION=abc' })
-    stub_request(:post, logout_url)
+      .to_return(status: 200, body: { SessionId: 'abc' }.to_json,
+                 headers: { 'Content-Type' => 'application/json' })
+  end
+
+  it 'devuelve Data true cuando el Service Layer acepta el login' do
+    stub_successful_login
+    stub_request(:get, probe_url).to_return(status: 200, body: { value: [] }.to_json,
+                                            headers: { 'Content-Type' => 'application/json' })
 
     sign_in(user)
-    # Cuerpo JSON, tal como lo manda la pantalla.
     post '/api/sap_credential_validations', params: credentials, as: :json
 
     expect(response).to have_http_status(:ok)
     expect(body['Data']).to be(true)
   end
 
-  it 'cierra la sesión de SAP que abrió para validar' do
-    stub_request(:post, login_url)
-      .to_return(status: 200, body: '{}', headers: { 'Set-Cookie' => 'B1SESSION=abc' })
-    logout = stub_request(:post, logout_url).with(headers: { 'Cookie' => 'B1SESSION=abc' })
-
-    sign_in(user)
-    post '/api/sap_credential_validations', params: credentials
-
-    expect(logout).to have_been_requested
-  end
-
-  it 'devuelve Data false con el mensaje OData cuando SAP rechaza las credenciales' do
+  it 'devuelve Data false con el mensaje de SAP cuando rechaza las credenciales' do
     stub_request(:post, login_url).to_return(
       status: 401,
-      body: { error: { code: -304, message: { lang: 'en-us', value: 'Invalid user or password' } } }.to_json
+      body: { error: { code: -304, message: { lang: 'en-us', value: 'Invalid user or password' } } }.to_json,
+      headers: { 'Content-Type' => 'application/json' }
     )
 
     sign_in(user)
@@ -52,7 +53,24 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
 
     expect(response).to have_http_status(:ok)
     expect(body['Data']).to be(false)
+    # Sin el prefijo del cliente: al usuario le sirve el motivo de SAP.
     expect(body['Message']).to eq('Invalid user or password')
+  end
+
+  # El login es lo único que se está probando. Que el recurso de prueba falle
+  # después (permisos del usuario dentro de SAP) no invalida las credenciales.
+  it 'devuelve Data true si el login funciona aunque el recurso de prueba falle' do
+    stub_successful_login
+    stub_request(:get, probe_url).to_return(
+      status: 403,
+      body: { error: { code: -1, message: { value: 'No authorization' } } }.to_json,
+      headers: { 'Content-Type' => 'application/json' }
+    )
+
+    sign_in(user)
+    post '/api/sap_credential_validations', params: credentials
+
+    expect(body['Data']).to be(true)
   end
 
   it 'devuelve Data false cuando el Service Layer no responde, sin reventar' do
