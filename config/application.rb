@@ -13,6 +13,14 @@ require 'action_cable/engine'
 # Autoload libs
 Bundler.require(*Rails.groups)
 
+# Los middlewares de `common` se registran en el cuerpo de la clase de abajo, que
+# corre ANTES de config/initializers/clavisco_submodules.rb. Se cargan acá para
+# poder referenciar las constantes reales: `insert_before`/`insert_after` no
+# aceptan el nombre en string como referencia de posición.
+# Orden según CLAVISCO-PLATFORM-STANDARDS §3: structures → common.
+require_relative '../vendor/clavisco/structures/lib/clavisco/structures'
+require_relative '../vendor/clavisco/common/lib/clavisco/common'
+
 module FecApp
   class Application < Rails::Application
     config.load_defaults 8.0
@@ -29,6 +37,34 @@ module FecApp
       g.assets        false
       g.test_framework :rspec
     end
+
+    # ── Middleware de plataforma (CLAVISCO-PLATFORM-STANDARDS §2.4) ──────────
+    #
+    # ErrorHandler captura cualquier excepción no manejada en /api/*, la convierte
+    # a `ApiResponse.error` y la reporta a Sentry. Sin él, la excepción sale como
+    # la página de error de Rails: `text/html` en un endpoint JSON, y el riesgo de
+    # filtrar el mensaje de la excepción, que es lo que prohíbe §1.5.
+    #
+    # ⚠️ La posición NO es la del snippet de §2.4 (`insert_before
+    # Rails::Rack::Logger`), y es a propósito. Ahí el ErrorHandler queda POR FUERA
+    # de `ActionDispatch::ShowExceptions`, que es quien realmente rescata las
+    # excepciones del controller y renderiza la página de error SIN re-lanzarlas
+    # (`show_exceptions = :all`, el default en los tres ambientes). Resultado: el
+    # ErrorHandler nunca corre y el cliente recibe HTML vacío con 500.
+    # Verificado: con el snippet literal, `GET /api/roles` con una excepción
+    # adentro devuelve `text/html` y cuerpo vacío.
+    #
+    # Va DESPUÉS de DebugExceptions para quedar por dentro de ambos y ver la
+    # excepción primero. Para lo que no es /api/*, ErrorHandler re-lanza y la
+    # página HTML de error sigue funcionando igual que siempre.
+    # Anotado en TODOS.md como corrección a proponer al estándar.
+    #
+    # `CompanyContext` NO se registra a propósito — el company_id vive en la
+    # session cookie, no en un header (§2.4).
+    config.middleware.insert_after ActionDispatch::DebugExceptions,
+                                   Clavisco::Common::Middleware::ErrorHandler
+    config.middleware.insert_before Rails::Rack::Logger,
+                                    Clavisco::Common::Middleware::RequestLogger
 
     # ── Cifrado en reposo (ActiveRecord Encryption) ─────────────────────────
     #

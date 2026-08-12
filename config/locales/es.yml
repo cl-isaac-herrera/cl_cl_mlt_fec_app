@@ -1,0 +1,91 @@
+# Mensajes de validación en español.
+#
+# `config.i18n.default_locale = :es` (config/application.rb) sin este archivo hace
+# que CADA error de validación salga como el bloque literal
+# "Translation missing. Options considered were: - es.activerecord.errors..." —
+# y ese texto viaja tal cual al usuario, porque los controllers de la API
+# responden `ApiResponse.error(record.errors.full_messages.to_sentence)`.
+#
+# Solo se traduce lo que el producto realmente usa. Al agregar un validador nuevo
+# (`numericality`, `confirmation`, …) hay que agregar su clave acá o el mensaje
+# vuelve a salir roto. Un validador con `message:` explícito no pasa por acá.
+es:
+  # `full_messages.to_sentence` une los errores con estos conectores. Sin ellos
+  # sale el default de Rails en inglés: "El nombre ... and La URL ...".
+  support:
+    array:
+      words_connector: ", "
+      two_words_connector: " y "
+      last_word_connector: " y "
+
+  errors:
+    format: "%{attribute} %{message}"
+    messages:
+      blank: "no puede estar en blanco"
+      taken: "ya está en uso"
+      invalid: "no tiene un formato válido"
+      inclusion: "no está incluido en la lista"
+      exclusion: "no está disponible"
+      required: "debe existir"
+      too_long: "es demasiado largo (máximo %{count} caracteres)"
+      too_short: "es demasiado corto (mínimo %{count} caracteres)"
+      wrong_length: "no tiene la longitud correcta (%{count} caracteres)"
+      not_a_number: "no es un número"
+      greater_than: "debe ser mayor que %{count}"
+      greater_than_or_equal_to: "debe ser mayor o igual que %{count}"
+      less_than: "debe ser menor que %{count}"
+      less_than_or_equal_to: "debe ser menor o igual que %{count}"
+
+  activerecord:
+    errors:
+      format: "%{attribute} %{message}"
+      messages:
+        record_invalid: "La validación falló: %{errors}"
+        taken: "ya está en uso"
+
+    # Nombres visibles de modelos y atributos: sin esto el mensaje dice
+    # "Sl url no puede estar en blanco" en vez de "La URL del Service Layer...".
+    models:
+      connection:
+        one: Conexión
+        other: Conexiones
+      role:
+        one: Rol
+        other: Roles
+      permission:
+        one: Permiso
+        other: Permisos
+      company:
+        one: Compañía
+        other: Compañías
+      user:
+        one: Usuario
+        other: Usuarios
+
+    attributes:
+      connection:
+        name: "El nombre"
+        sl_url: "La URL del Service Layer"
+        sl_type: "El motor de base de datos"
+      role:
+        name: "El nombre"
+      permission:
+        name: "El nombre"
+        description: "La descripción"
+        type: "El tipo"
+      company:
+        name: "El nombre"
+        sap_db_code: "El código de base de SAP"
+      user:
+        email: "El correo"
+        name: "El nombre"
+        sap_user: "El usuario de SAP"
+        sap_password: "La contraseña de SAP"
+        doc_number_preference: "El tipo de OC"
+      user_role:
+        company: "La compañía"
+        role: "El rol"
+        user: "El usuario"
+      users_by_company:
+        company: "La compañía"
+        user: "El usuario"

@@ -1574,7 +1574,43 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 | `POST /api/Connections` | `POST /api/connections` |
 | `PATCH /api/Connections` (id en el cuerpo) | `PATCH /api/connections/:id` |
 | `GET /api/Connections/for-assignment` | `GET /api/connections/assignable` |
+| `GET /api/Rol/GetRoles?companyId=N` | `GET /api/roles` |
+| `POST /api/Rol` | `POST /api/roles` |
+| `PATCH /api/Rol` (id en el cuerpo) | `PATCH /api/roles/:id` |
+| `GET /api/Permission/GetPermissionsByRol?idRol=N` | `GET /api/roles/:id/permissions` |
+| `POST /api/Permission/AssignPermByRol` | `PUT /api/roles/:id/permissions` |
+| `GET /api/Permission/GetPermissions` | `GET /api/permissions/catalog` ⚠️ ver nota |
 | (nuevo — la compañía activa era `sessionStorage`) | `PUT /api/session/company` |
+
+> ⚠️ `GET /api/permissions/catalog` está mal nombrado a propósito: el catálogo
+> debería ser el `index` del recurso, pero `GET /api/permissions` ya estaba tomado por
+> los permisos **efectivos** del usuario de la sesión, que consumen el menú y el
+> auth-guard. El intercambio está anotado en `TODOS.md` → Seguridad. **No tomarlo como
+> ejemplo a copiar.**
+
+### Recursos anidados de un solo elemento — `resource` singular + PUT
+
+Cuando el hijo es **un conjunto que pertenece al padre y se reemplaza entero** (los
+permisos de un rol), se declara con `resource` en singular: no lleva id propio y el
+recurso es "los permisos de este rol".
+
+```ruby
+resources :roles, only: %i[index create update] do
+  resource :permissions, only: %i[show update], module: :roles
+end
+# GET /api/roles/:role_id/permissions   → Api::Roles::PermissionsController#show
+# PUT /api/roles/:role_id/permissions   → Api::Roles::PermissionsController#update
+```
+
+- **PUT y no POST**: el cuerpo lleva el conjunto completo (`{ "PermissionIds": [1,2,3] }`)
+  y lo que no venga queda revocado. Mandar dos veces la misma lista deja el rol igual,
+  que es justamente lo que PUT promete. El .NET lo hacía con un POST que igual
+  reemplazaba todo y encima obligaba al cliente a armar a mano las filas de la tabla
+  puente (`{ Id, PermId, RolId, Active }`).
+- **El padre no viaja como parámetro** (`?idRol=N`): es el prefijo del path.
+- **Reasignar respeta el soft delete**: se consulta con `unscoped` para reactivar la fila
+  revocada en vez de insertar una nueva al lado. Sin eso, conceder y revocar el mismo
+  permiso varias veces deja basura acumulada en `role_permissions`.
 
 ### Paginación — query string, no headers
 
@@ -1730,3 +1766,43 @@ Ojo con su rodeo documentado: el Client no expone un `login` suelto, así que pa
 validar credenciales hay que forzar la autenticación con un GET de sondeo y desambiguar con el
 pool. Está anotado en `TODOS.md` como deuda del submódulo — **no copiar ese patrón** para
 operaciones normales, que simplemente llaman `get`/`post`/`patch`/`delete`.
+---
+
+## 30. Mensajes de validación — toda clave nueva va a `config/locales/es.yml`
+
+`config.i18n.default_locale = :es`. Si una clave de error no está traducida, Rails **no**
+cae al inglés: devuelve el bloque literal
+
+```
+Name Translation missing. Options considered were:
+- es.activerecord.errors.models.role.attributes.name.blank
+- ...
+```
+
+y ese texto **llega tal cual al usuario**, porque los controllers de la API responden
+`ApiResponse.error(record.errors.full_messages.to_sentence)` y el JS lo pinta en el modal
+de error. Es exactamente lo que pasaba antes de que existiera `config/locales/es.yml`.
+
+### Regla
+
+> Al agregar un validador cuyo mensaje sale por i18n (`presence`, `uniqueness`, `length`,
+> `numericality`, `inclusion`, `belongs_to` requerido…), **agregar su clave a
+> `config/locales/es.yml`** en el mismo cambio. Un validador con `message:` explícito no
+> pasa por i18n y no necesita clave.
+
+También conviene declarar el atributo en `activerecord.attributes.<modelo>`: sin eso el
+mensaje usa el nombre de la columna humanizado — `"Sl url no puede estar en blanco"` en vez
+de `"La URL del Service Layer no puede estar en blanco"`.
+
+### El spec tiene que comparar el mensaje, no solo su presencia
+
+```ruby
+# ❌ Pasa igual con "Translation missing. Options considered were: ..."
+expect(body['Message']).to be_present
+
+# ✅ Detecta la traducción faltante
+expect(body['Message']).to eq('El nombre no puede estar en blanco')
+```
+
+`to_sentence` también se traduce (`support.array.*`): sin esas claves une los errores con
+`" and "` en medio de una frase en español.

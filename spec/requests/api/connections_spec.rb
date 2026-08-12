@@ -151,13 +151,16 @@ RSpec.describe 'Api::Connections', type: :request do
       )
     end
 
+    # Los mensajes se comparan literales a propósito: `default_locale = :es` sin
+    # config/locales devolvía el bloque "Translation missing..." al usuario, y un
+    # `be_present` pelado no lo detecta.
     it 'rechaza una URL que no es http(s)' do
       sign_in_with('Configurations_Connections_Create')
 
       post '/api/connections', params: { Name: 'SAP Mala', SlUrl: 'sap.test:50000' }, as: :json
 
       expect(response).to have_http_status(:unprocessable_content)
-      expect(body['Message']).to be_present
+      expect(body['Message']).to eq('La URL del Service Layer debe empezar con http:// o https://')
       expect(Connection.find_by(name: 'SAP Mala')).to be_nil
     end
 
@@ -169,6 +172,7 @@ RSpec.describe 'Api::Connections', type: :request do
            as: :json
 
       expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('El motor de base de datos no es un motor válido')
     end
 
     it 'rechaza un nombre repetido' do
@@ -180,6 +184,16 @@ RSpec.describe 'Api::Connections', type: :request do
            as: :json
 
       expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('El nombre ya está en uso')
+    end
+
+    it 'une varios errores con "y", no con "and"' do
+      sign_in_with('Configurations_Connections_Create')
+
+      post '/api/connections', params: { Name: '', SlUrl: 'no-es-url' }, as: :json
+
+      expect(body['Message'])
+        .to eq('El nombre no puede estar en blanco y La URL del Service Layer debe empezar con http:// o https://')
     end
 
     it 'registra quién la creó' do

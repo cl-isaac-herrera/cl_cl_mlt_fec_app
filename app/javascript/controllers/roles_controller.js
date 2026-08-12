@@ -1,19 +1,22 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
-import { Storage, SStore } from 'vendor/clavisco/core';
+import { getApiHeaders } from 'vendor/clavisco/core';
 import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
- * RolesController — Gestión de roles por compañía (Tabulator).
+ * RolesController — Gestión de roles y de sus permisos (Tabulator + paneles).
  *
- * Replica la funcionalidad del componente Angular RolComponent:
- *   - Carga inicial: GET api/Rol/GetRoles?companyId={id} (todos los roles, paginación client-side)
- *   - Tabla Tabulator: Nombre del Rol, Estado (badge), Acciones (editar)
- *   - Botón "Nuevo" → abre modal crear
- *   - Editar por fila → abre modal editar (OWNER bloqueado)
- *   - POST api/Rol para crear (Id=0, Active=true, GroupId=0)
- *   - PATCH api/Rol para editar
- *   - Toast de éxito (showToast) / modal de error
+ * Endpoints nativos de Rails (ver CLAUDE.md §28):
+ *   - GET   /api/roles                        (listado)
+ *   - POST  /api/roles                        (crear)
+ *   - PATCH /api/roles/:id                    (renombrar)
+ *   - GET   /api/roles/:id/permissions        (permisos vigentes del rol)
+ *   - PUT   /api/roles/:id/permissions        (reasignación completa)
+ *   - GET   /api/permissions/catalog          (catálogo para pintar los checkboxes)
+ *
+ * ⚠️ El listado ya NO se filtra por compañía. En el esquema propio `roles` no
+ * tiene `company_id`: el rol existe para todo el producto y la compañía vive en
+ * `user_roles`. El .NET pedía `GetRoles?companyId=N`; ver TODOS.md → Seguridad.
  *
  * Layout full-height: la tabla ocupa toda la altura del contenedor con scroll interno
  * de filas y paginador al pie (height: "100%").
@@ -51,9 +54,6 @@ export default class extends TabulatorController {
   /** Rol en edición (null si es creación) */
   #editingRole = null;
 
-  /** companyId leído del storage */
-  #companyId = null;
-
   // ── Estado del panel de permisos ────────────────────────────────────────────
 
   /** Rol cuyos permisos se gestionan en el panel */
@@ -71,9 +71,7 @@ export default class extends TabulatorController {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   connect() {
-    const company = SStore.get('CurrentCompany');
-    this.#companyId = company?.companyId ? parseInt(company.companyId) : null;
-
+    // Sin companyId: los roles no se filtran por compañía (ver la nota de arriba).
     super.connect();   // construye la tabla y dispara ajaxRequestFunc automáticamente
   }
 
@@ -97,7 +95,7 @@ export default class extends TabulatorController {
       dataLoaderLoading: TABULATOR_LOADING_HTML,
       columnDefaults: { headerSort: false },
       columns: this.getColumns(),
-      ajaxURL: '/api/Rol/GetRoles',
+      ajaxURL: '/api/roles',
       ajaxRequestFunc: () => this.#loadRoles(),
       ajaxResponse:    (_url, _params, response) => response,
     };
@@ -135,9 +133,9 @@ export default class extends TabulatorController {
 
   // Invocado por ajaxRequestFunc — Tabulator muestra dataLoaderLoading automáticamente.
   async #loadRoles() {
-    const json = await this.#apiFetch(`/api/Rol/GetRoles?companyId=${this.#companyId}`);
+    const json = await this.#apiFetch('/api/roles');
 
-    if (json.Error || !json.Data) {
+    if (!json.Data) {
       showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener los roles', message: json.Message || 'Error desconocido' });
       return [];
     }
@@ -146,20 +144,22 @@ export default class extends TabulatorController {
     return json.Data;
   }
 
+  // El payload pierde `GroupId` (no existe la tabla `groups` en la base propia),
+  // `Active` (no se edita desde esta pantalla) y `companyId` (los roles no son
+  // por compañía). Queda solo el nombre, que es lo único que el formulario pide.
   async #createRole(name) {
-    const payload = {
-      role: { Id: 0, Name: name, Active: true, GroupId: 0 },
-      companyId: this.#companyId,
-    };
-    return this.#apiFetch('/api/Rol', { method: 'POST', body: JSON.stringify(payload) });
+    return this.#apiFetch('/api/roles', {
+      method: 'POST',
+      body: JSON.stringify({ Name: name }),
+    });
   }
 
+  // El id va en el path, no en el cuerpo como pedía el .NET (CLAUDE.md §28).
   async #updateRole(id, name) {
-    const payload = {
-      role: { Id: id, Name: name, Active: true, GroupId: 0 },
-      companyId: this.#companyId,
-    };
-    return this.#apiFetch('/api/Rol', { method: 'PATCH', body: JSON.stringify(payload) });
+    return this.#apiFetch(`/api/roles/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ Name: name }),
+    });
   }
 
   // ── Render helpers (formatters Tabulator) ───────────────────────────────────
@@ -315,10 +315,10 @@ export default class extends TabulatorController {
     try {
       // El catálogo de permisos se carga una sola vez y se reutiliza entre roles.
       const requests = [
-        this.#apiFetch(`/api/Permission/GetPermissionsByRol?idRol=${this.#permsRole.Id}`),
+        this.#apiFetch(`/api/roles/${this.#permsRole.Id}/permissions`),
       ];
       if (this.#allPerms.length === 0) {
-        requests.push(this.#apiFetch('/api/Permission/GetPermissions'));
+        requests.push(this.#apiFetch('/api/permissions/catalog'));
       }
 
       const [byRolRes, allPermsRes] = await Promise.all(requests);
@@ -331,7 +331,10 @@ export default class extends TabulatorController {
         }
       }
 
-      const assignedIds = Array.isArray(byRolRes.Data) ? byRolRes.Data : [];
+      // El endpoint devuelve los registros de permiso, no una lista de ids como
+      // el .NET: acá interesan solo los ids para marcar los checkboxes.
+      const assigned = Array.isArray(byRolRes.Data) ? byRolRes.Data : [];
+      const assignedIds = assigned.map((p) => p.Id);
       this.#initialPermIds = new Set(assignedIds);
       this.#currentPermIds = new Set(assignedIds);
 
@@ -451,19 +454,15 @@ export default class extends TabulatorController {
       return;
     }
 
-    const permByRolList = Array.from(this.#currentPermIds).map((permId) => ({
-      Id: 0,
-      PermId: permId,
-      RolId: this.#permsRole.Id,
-      Active: true,
-    }));
-
     this.permsLoaderTarget.classList.remove('hidden');
 
     try {
-      await this.#apiFetch('/api/Permission/AssignPermByRol', {
-        method: 'POST',
-        body: JSON.stringify({ permByRolList, idRol: this.#permsRole.Id }),
+      // Reemplazo completo: el servidor revoca lo que no venga en la lista. Por
+      // eso es PUT y basta con los ids — el .NET pedía armar a mano las filas
+      // de la tabla puente ({ Id, PermId, RolId, Active }).
+      await this.#apiFetch(`/api/roles/${this.#permsRole.Id}/permissions`, {
+        method: 'PUT',
+        body: JSON.stringify({ PermissionIds: Array.from(this.#currentPermIds) }),
       });
 
       showToast('Permisos asignados con éxito!!!', 'success');
@@ -477,40 +476,27 @@ export default class extends TabulatorController {
     }
   }
 
+  /**
+   * Endpoints nativos: la sesión va en la cookie httpOnly, así que no se arma
+   * ningún header Authorization — getApiHeaders() aporta lo único que hace falta.
+   * El motivo del error lo trae el campo Message del contrato ApiResponse.
+   */
   async #apiFetch(url, options = {}) {
-    const session = Storage.get('Session') || {};
-    const token   = session.access_token;
-
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type': 'application/json',
-        'API': 'ApiAppUrl',
-        'X-Skip-Error-Interceptor': 'true',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        'Accept': 'application/json',
+        ...getApiHeaders(),
         ...(options.headers || {}),
       },
     });
 
-    const clMessage = response.headers.get('cl-message');
-    const decodedMessage = clMessage ? (() => {
-      try { return decodeURIComponent(clMessage); } catch { return clMessage; }
-    })() : null;
-
     if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(decodedMessage || text || `HTTP ${response.status}`);
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.Message || `HTTP ${response.status}`);
     }
 
-    const contentType   = response.headers.get('content-type') || '';
-    const contentLength = response.headers.get('content-length');
-    if (contentLength === '0' || (!contentType.includes('json') && !contentType.includes('text'))) return {};
-
-    const text = await response.text();
-    if (!text || !text.trim()) return {};
-    const json = JSON.parse(text);
-    if (decodedMessage && !json.Message) json.Message = decodedMessage;
-    return json;
+    return response.json();
   }
 
   #escapeHtml(str) {

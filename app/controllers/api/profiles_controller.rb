@@ -21,6 +21,10 @@ module Api
 
     # PATCH /api/profile
     def update
+      # skip_permission_check! — escribe el perfil del propio usuario de la sesión
+      # y ningún id ajeno viaja (ver abajo: siempre `Current.user`). Exigir un
+      # permiso dejaría a un usuario sin roles sin poder configurar sus
+      # credenciales de SAP, que es lo primero que necesita hacer.
       skip_permission_check!
 
       user = Current.user

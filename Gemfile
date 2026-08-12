@@ -57,6 +57,12 @@ group :development, :test do
   gem 'rubocop-rails-omakase', require: false
 end
 
+group :development do
+  # Detecta N+1 en tiempo real (CLAVISCO-PLATFORM-STANDARDS §1.6: "usar la gema
+  # bullet en desarrollo... no depender solo de revisión manual").
+  gem 'bullet'
+end
+
 group :test do
   # Stub de las llamadas HTTP salientes de ProxyController (Net::HTTP), sin red real.
   gem 'webmock'

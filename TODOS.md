@@ -298,6 +298,150 @@ El formulario se recortó a las tres columnas que existen (`name`, `sl_url`, `sl
 
 ---
 
+## Seguridad — endpoints migrados a Rails (`/configurations/security`)
+
+La pantalla ya no toca el .NET: `GET|POST /api/roles`, `PATCH /api/roles/:id`,
+`GET|PUT /api/roles/:id/permissions` y `GET /api/permissions/catalog` son nativos.
+Lo que quedó pendiente:
+
+- [ ] **⚠️ CAMBIO DE COMPORTAMIENTO: el listado de roles ya no se filtra por compañía.**
+      El .NET pedía `GetRoles?companyId=N` y creaba el rol con `spCreateRole(RoleWithCompany)`:
+      allá un rol pertenecía a una compañía. En el esquema propio `roles` **no tiene**
+      `company_id` — la compañía vive en `user_roles` —, que es lo que manda
+      CLAVISCO-PLATFORM-STANDARDS §4.1 (`roles (id, name, description, is_active)`).
+      Consecuencia práctica: quien administra la seguridad de una compañía ahora **ve y
+      puede renombrar los roles que usan las demás**. No hay forma de acotarlo sin agregar
+      la columna, y agregarla contradice el estándar.
+      **Pendiente:** confirmar con el negocio que el rol global es lo que se quiere. Si no
+      lo es, hay que decidir entre `roles.company_id` (se aparta del estándar) o roles
+      globales con nombres convenidos por compañía. Definirlo **antes** de importar `Rol`
+      desde SQL Server: si allá hay roles homónimos en compañías distintas, la validación
+      de unicidad de `name` los va a rechazar.
+
+- [ ] **`GET /api/permissions` y `GET /api/permissions/catalog` están al revés.**
+      El `index` de un recurso debería ser su colección — el catálogo —, pero ese path ya
+      lo ocupaban los permisos **efectivos** del usuario de la sesión, que consumen
+      `menu_controller.js`, `auth_guard_controller.js` y `company_selector_controller.js`.
+      Renombrarlo en esta tarea significaba tocar las tres pantallas que sostienen el menú
+      y el guard, así que se dejó el catálogo en una subcolección.
+      **Pendiente:** cuando se toquen esas pantallas, intercambiar —
+      `GET /api/permissions` = catálogo y `GET /api/session/permissions` = permisos
+      efectivos (el namespace `session` ya existe por `PUT /api/session/company`).
+
+- [ ] **La pantalla no inhabilita nada por permisos.** El servidor sí exige
+      `Configurations_Security_Access` para los roles y `Configurations_Permissions_Access`
+      para la asignación, pero `roles_controller.js` no lee `SStore.get('Permissions')`:
+      los botones "Nuevo Rol", editar y permisos se ven habilitados siempre y el usuario
+      sin permiso se entera recién con el 403.
+      **Pendiente:** aplicar §26 — deshabilitar con tooltip explicativo, como ya hacen
+      `connections_controller.js` y `numbering_controller.js`.
+
+- [ ] **No se puede activar ni desactivar un rol.** La tabla muestra el badge Activo/Inactivo
+      y `roles.is_active` existe, pero la pantalla solo crea y renombra: `PATCH /api/roles/:id`
+      a propósito **solo toca el nombre**. Un rol creado por error queda para siempre.
+      **Pendiente:** decidir si la pantalla gana la acción de baja (soft delete) y agregar
+      `Active` al endpoint.
+
+- [ ] **La protección del rol `OWNER` está dormida.** `Role::PROTECTED_NAMES` bloquea
+      renombrarlo y reasignarle permisos (la UI ya lo hacía; el servidor lo hace de nuevo
+      por §26), pero **ese rol no existe en la base propia**: `db/seeds.rb` crea
+      `Administrador`. Viene del .NET y aparecería recién con la importación.
+      **Pendiente:** al importar `Rol`, confirmar si `OWNER` llega con ese nombre exacto —
+      la comparación es case-insensitive pero literal — o si el rol reservado pasa a ser
+      `Administrador`.
+
+- [ ] **`roles.description` sigue sin existir.** §4.1 la pide y el formulario no la ofrece,
+      así que el endpoint tampoco la expone. Ya estaba anotada más arriba (sección SAP);
+      se repite acá porque es esta pantalla la que tendría que capturarla.
+
+- [ ] **`CompanyScoped` afloja la obligatoriedad de `company` en `UserRole`.** El concern
+      declara `belongs_to :company, optional: true` dentro de su bloque `included do`, y
+      `UserRole` no vuelve a declarar la asociación: el resultado es que
+      `UserRole.new(user:, role:).valid?` devuelve **true** sin compañía y el guardado
+      revienta abajo con `ActiveRecord::NotNullViolation` (la columna es `null: false`).
+      Verificado en consola. Hoy no pega porque nadie crea `UserRole` desde un endpoint —
+      solo el seed—, pero cuando se migre la asignación de roles a usuarios sería un 500
+      en vez de un 422.
+      **Pendiente:** agregar `validates :company, presence: true` en `UserRole` (o
+      redeclarar `belongs_to :company` después del `include`). Lo correcto de fondo es que
+      el submódulo no imponga `optional: true` — anotarlo para `cl-data-access-ruby`.
+
+---
+
+## Cumplimiento del estándar — pendientes y correcciones a proponer
+
+Revisión contra `ClavisCo/platform-standards` (commit `84752f1`). Lo que ya se corrigió está
+en `[x]`; lo que sigue abierto necesita una decisión, no solo trabajo.
+
+- [x] **§2.4 — el middleware `ErrorHandler`/`RequestLogger` no estaba registrado.** Estaban
+      aliasados en `clavisco_submodules.rb` pero nunca montados, así que una excepción en
+      `/api/*` salía como HTML vacío con 500 en vez del contrato `ApiResponse`. Cubierto por
+      `spec/requests/api/error_handler_spec.rb`.
+
+- [ ] **⚠️ El snippet de §2.4 está mal y hay que proponer la corrección aguas arriba.** El
+      estándar dice `config.middleware.insert_before Rails::Rack::Logger, ErrorHandler`. En esa
+      posición el middleware queda **por fuera** de `ActionDispatch::ShowExceptions`, que es
+      quien rescata las excepciones del controller y renderiza sin re-lanzarlas
+      (`show_exceptions = :all`, el default en los tres ambientes). Con el snippet literal el
+      `ErrorHandler` **nunca corre**: verificado, `GET /api/roles` con una excepción adentro
+      devuelve `text/html` con cuerpo vacío.
+      Acá se registra con `insert_after ActionDispatch::DebugExceptions`, que sí funciona.
+      **Pendiente:** proponer el cambio en `platform-standards` §2.4. Cualquier producto que
+      haya copiado el snippet tal cual tiene un ErrorHandler muerto y no se enteró.
+
+- [x] **§1.5 — DSN de Sentry hardcodeado en el repositorio.** `config/initializers/sentry.rb`
+      tenía `ENV.fetch('SENTRY_DSN', 'https://86ce06ab...@o4511328163725312...')`: un secreto
+      real commiteado y, de paso, el mismo DSN para todos los ambientes (§10 pide uno por
+      deployment). Ahora es `ENV['SENTRY_DSN']` sin fallback. También se apagó
+      `send_default_pii`, que mandaba cabeceras y cuerpo de cada request a Sentry — justo lo
+      que `filter_parameter_logging.rb` evita en los logs propios.
+      **Pendiente operativo:** el DSN viejo quedó en el historial de git. Si el proyecto de
+      Sentry sigue en uso, **rotarlo**.
+
+- [ ] **§1.5 — quedan tres `ENV.fetch` con fallback hacia el backend legado.**
+      `config/initializers/proxy.rb` define `API_FE_SYNC_URL`, `API_FE_APP_URL` y
+      `API_CABYS_URL` con hostnames de desarrollo como valor por defecto. La regla es literal:
+      *"ningún puente hacia un backend legado usa un valor hardcodeado como fallback... si la
+      variable falta, debe fallar explícitamente"*. El riesgo real es que producción arranque
+      apuntando a los servidores de dev sin que nadie lo note.
+      **Pendiente:** decidir si se quitan los defaults (rompe el arranque de quien no tenga
+      `.env`) o si se toleran solo fuera de producción con un `raise` en `production`.
+
+- [x] **§1.6 — la reasignación de permisos por rol escribía checkbox por checkbox.** El
+      estándar nombra ese caso exacto como el N+1 de la escritura. Ahora es un `insert_all`
+      más dos `update_all`, con las columnas de auditoría escritas a mano (las operaciones en
+      lote no disparan los callbacks de `Auditable`). Fijado por spec que cuenta las sentencias.
+
+- [x] **§7.1/§1.6 — faltaba la gema `bullet`.** Agregada al grupo `development` y configurada
+      en `config/environments/development.rb`.
+
+- [x] **§4.5 — un `skip_permission_check!` sin justificación adyacente.**
+      `Api::ProfilesController#update`. Los demás ya la tenían.
+
+- [ ] **§4.4/§4.5 — los endpoints de escritura de roles se protegen con un permiso `_Access`.**
+      `POST /api/roles` y `PATCH /api/roles/:id` exigen `Configurations_Security_Access`, y
+      `PUT /api/roles/:id/permissions` exige `Configurations_Permissions_Access`. §4.5 pide que
+      el permiso *corresponda de verdad a la acción* (su ejemplo: un `#destroy` no debería
+      usar un permiso terminado en `_View`).
+      **No se inventaron** `Configurations_Security_Create` / `_Update`: el catálogo de
+      permisos está pendiente de importación (ver más arriba, faltan 11 ids) y crear nombres
+      que nadie tenga asignado dejaría la pantalla de seguridad inutilizable con 403 apenas se
+      importe. El catálogo actual solo tiene `_Access` para esta pantalla, mientras que para
+      conexiones sí distingue `_Create`/`_Update` (ids 61 y 62) — la inconsistencia viene del
+      origen.
+      **Pendiente:** resolverlo junto con la importación del catálogo, no antes.
+
+- [ ] **§8 — faltan `sap_licenses` y el rename a `company_memberships`.** Ya anotado arriba en
+      la sección de SAP. §8 es explícito en que las 8 tablas son *"no-negociables en todo
+      producto, sin condicional. La ausencia de cualquiera de ellas es ❌, nunca N/A"*.
+
+- [ ] **`AUDITORIA_PLATFORM_STANDARDS.md` está desactualizado.** Reporta como ❌ HIGH cosas ya
+      resueltas (los submodules no instalados, el token en `localStorage`, `Current` inexistente)
+      y marca §2.7 como N/A por *"producto sin integración SAP directa"*, que es falso.
+      **Pendiente:** re-correr la auditoría o fechar el documento como instantánea histórica.
+
+---
+
 ## Submódulos — cambios que corresponden a `cl-auth-ruby`
 
 Estas tres cosas están resueltas **con workarounds en este producto** porque el submódulo

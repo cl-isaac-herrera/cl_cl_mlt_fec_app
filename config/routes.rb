@@ -8,8 +8,22 @@ Rails.application.routes.draw do
   # Nombrado REST: el verbo va en el método HTTP, no en el path — `GET /api/companies`
   # en vez de `GET /api/Companies/GetCompanies`.
   namespace :api do
-    resources :companies,   only: [:index]
-    resources :permissions, only: [:index]
+    resources :companies, only: [:index]
+
+    # `index` son los permisos EFECTIVOS del usuario de la sesión; `catalog` es
+    # el catálogo completo que pinta la pantalla de seguridad. Ver la nota del
+    # controller: los nombres deberían ser al revés (`TODOS.md` → Seguridad).
+    resources :permissions, only: [:index] do
+      get :catalog, on: :collection
+    end
+
+    # Roles y sus permisos. Reemplazan `GET|POST|PATCH /api/Rol`,
+    # `GET /api/Permission/GetPermissionsByRol` y `POST /api/Permission/AssignPermByRol`.
+    # El conjunto de permisos de un rol es uno solo: `resource` singular, sin id,
+    # y se reemplaza entero con PUT.
+    resources :roles, only: %i[index create update] do
+      resource :permissions, only: %i[show update], module: :roles
+    end
 
     # Perfil del usuario de la sesión. Singular: no lleva id porque siempre es el
     # propio. Reemplaza GET /api/User/GetUserInfo y PATCH /api/User/profile-info.

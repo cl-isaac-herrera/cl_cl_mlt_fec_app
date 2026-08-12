@@ -22,4 +22,16 @@ Rails.application.configure do
 
   # Raises en lugar de 404 para rutas faltantes
   config.action_controller.raise_on_missing_callback_actions = true
+
+  # Detección de N+1 en tiempo real (CLAVISCO-PLATFORM-STANDARDS §1.6). Avisa en
+  # el log y en la consola del navegador dónde ocurre; no rompe la request.
+  # `raise` queda en false a propósito: el objetivo es enterarse mientras se
+  # desarrolla, no frenar a quien está probando otra cosa.
+  config.after_initialize do
+    Bullet.enable        = true
+    Bullet.rails_logger  = true
+    Bullet.console       = true
+    Bullet.add_footer    = true
+    Bullet.raise         = false
+  end
 end
