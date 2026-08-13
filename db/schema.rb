@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_12_110000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_12_130000) do
   create_table "companies", force: :cascade do |t|
     t.integer "connection_id"
     t.datetime "created_at", null: false
@@ -67,6 +67,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_12_110000) do
     t.string "updated_by"
   end
 
+  create_table "user_permissions", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "created_by"
+    t.boolean "is_active", default: true, null: false
+    t.integer "permission_id", null: false
+    t.datetime "updated_at", null: false
+    t.string "updated_by"
+    t.integer "user_id", null: false
+    t.index ["permission_id"], name: "index_user_permissions_on_permission_id"
+    t.index ["user_id", "permission_id"], name: "index_user_permissions_on_user_id_and_permission_id", unique: true
+    t.index ["user_id"], name: "index_user_permissions_on_user_id"
+  end
+
   create_table "user_roles", force: :cascade do |t|
     t.integer "company_id", null: false
     t.datetime "created_at", null: false
@@ -113,6 +126,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_12_110000) do
   add_foreign_key "companies", "connections"
   add_foreign_key "role_permissions", "permissions"
   add_foreign_key "role_permissions", "roles"
+  add_foreign_key "user_permissions", "permissions"
+  add_foreign_key "user_permissions", "users"
   add_foreign_key "user_roles", "companies"
   add_foreign_key "user_roles", "roles"
   add_foreign_key "user_roles", "users"

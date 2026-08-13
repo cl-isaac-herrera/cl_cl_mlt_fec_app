@@ -1,0 +1,110 @@
+# Correspondencia entre los nombres de permiso del API .NET y los de este producto.
+#
+# ── Para qué existe ──────────────────────────────────────────────────────────
+# El catálogo de `permissions` se importa desde SQL Server (`CLSQL03` /
+# `CL_CL_MLT_FEC_APP_44`, tablas `Permission` / `PermissionByRol` / `RolByUser`),
+# y ahí los permisos conservan el nombre viejo. Al renombrar uno acá, las filas
+# de `PermissionByRol` que lo conceden siguen apuntando al nombre de origen: sin
+# esta tabla de equivalencias, la importación crearía un permiso huérfano con el
+# nombre viejo y los roles reales perderían el acceso en silencio.
+#
+# La tarea de importación DEBE leer este archivo y traducir antes de insertar.
+#
+# ── Por qué se renombran ─────────────────────────────────────────────────────
+# Los nombres `S_*` vienen de los ítems de submenú del Angular ("Acceso a SubMenu
+# X") y describen dónde estaba el botón, no qué autoriza. La convención del
+# estándar (CLAVISCO-PLATFORM-STANDARDS §4.4) es `{Módulo}_{Recurso}_{Acción}`.
+#
+# ── Regla al agregar una entrada ─────────────────────────────────────────────
+# Un permiso solo se renombra cuando el nombre nuevo **no existe ya** en el
+# catálogo de origen. Si existe (fue el caso de `Configurations_Users_Create`),
+# no es un rename sino dos permisos distintos que hacen lo mismo, y hay que
+# decidir cuál sobrevive — igual se anota acá, con esa nota.
+---
+renames:
+  # El permiso del sub-tab "Compañías" del panel "Gestionar accesos"
+  # (antes, el tab "Asignación de compañías"). Lo exigen
+  # `GET /api/companies/assignable` y `PUT /api/users/:id/companies`.
+  - from: S_AsigUser
+    to:   Configurations_Users_CompanyAssignment
+    note: >-
+      El nombre nuevo NO existía en el catálogo de origen: es un rename puro.
+      Ojo al importar: el .NET lo trae con Id 9.
+
+  # Habilita el botón "Nuevo Usuario" y lo exige `POST /api/users`.
+  - from: S_RegUser
+    to:   Configurations_Users_Create
+    note: >-
+      ⚠️ NO es un rename puro: los DOS nombres existen en el catálogo de origen
+      (S_RegUser con Id 7, Configurations_Users_Create con Id 64). Se eligió el
+      segundo por §4.4. Al importar hay que decidir qué pasa con los roles que
+      tengan solo el primero: hoy perderían el botón.
+
+# Permisos sin sucesor: su pantalla se eliminó o su alcance dejó de existir. No
+# hay nada que traducir; se listan para que nadie les busque un equivalente que
+# no existe.
+#
+# `deactivated` dice si YA se les puso `is_active = false`:
+#   · true  → lo hizo `db/migrate/20260812130000_apply_permission_catalog_changes.rb`
+#             (base existente) y `DEACTIVATED` en `db/seeds.rb` (base nueva).
+#             Las dos listas tienen que seguir coincidiendo.
+#   · false → todavía los evalúa algún código. Se dan de baja cuando se borre la
+#             pantalla que los usa, NO antes: hacerlo ahora la volvería
+#             inalcanzable sin que nadie lo haya decidido.
+#
+# Se dan de baja en vez de borrarse: §2.2 prohíbe el DELETE físico, y borrar la
+# fila arrastraría las de `role_permissions` / `user_permissions` que la
+# referencien. Con `is_active = false` alcanza — un permiso inactivo no concede
+# nada y desaparece del catálogo de la UI.
+orphaned:
+  - name:        S_CompUser
+    deactivated: true
+    reason: >-
+      Gateaba el tab "Completar registro", que activaba usuarios pendientes de
+      confirmar su correo. Se eliminó: el IdP resuelve la autenticación, no hay
+      contraseña propia ni correo que confirmar, y el alta nace activa.
+
+  - name:        Configurations_Users_ViewGroupUsers
+    deactivated: true
+    reason: >-
+      Alcance "los usuarios de mi grupo", idéntico a "los de la instalación"
+      cuando no hay grupos (CLAUDE.md §31). Quien lo tenga ve el alcance de
+      compañía; para ver todo está Configurations_Users_ViewAllApplicationUsers.
+
+  - name:        Configurations_Companies_ChangeGroup
+    deactivated: true
+    reason: Cambiar una compañía de grupo. No hay grupos (CLAUDE.md §31).
+
+  - name:        Configurations_Groups_ViewAllApplicationGroups
+    deactivated: true
+    reason: Ver todos los grupos de la aplicación. No hay grupos (CLAUDE.md §31).
+
+  # ── Todavía evaluados: esperan a que se borre /configurations/group ──────────
+  - name:        S_Groups
+    deactivated: false
+    reason: >-
+      Gatea el nodo de menú "Grupos" (app/javascript/data/menu.js). La pantalla
+      sigue existiendo aunque el concepto no aplique; darlo de baja ahora la
+      escondería. Ver TODOS.md → Grupos.
+
+  - name:        Configurations_Groups_Create
+    deactivated: false
+    reason: Lo evalúa group_controller.js. Se da de baja con la pantalla.
+  - name:        Configurations_Groups_Update
+    deactivated: false
+    reason: Lo evalúa group_controller.js. Se da de baja con la pantalla.
+  - name:        Configurations_Groups_UpdateAllInApplication
+    deactivated: false
+    reason: Lo evalúa group_controller.js. Se da de baja con la pantalla.
+  - name:        Configurations_Groups_DownloadFEPrintFormat
+    deactivated: false
+    reason: Lo evalúa group_controller.js. Se da de baja con la pantalla.
+  - name:        Configurations_Groups_DownloadFEPrintFormatInAllGroups
+    deactivated: false
+    reason: Lo evalúa group_controller.js. Se da de baja con la pantalla.
+
+# ⚠️ NO confundir: `Configurations_Companies_ViewGroupCompanies` tiene "Group" en
+# el nombre pero NO es huérfano. Es la vía de escape del alcance de asignación de
+# compañías (`AssignableCompanies::SEE_ALL_COMPANIES`): sin grupos, "las
+# compañías del grupo" son las de la instalación, que es justo lo que ese permiso
+# habilita. No darlo de baja.

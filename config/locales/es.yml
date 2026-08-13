@@ -61,6 +61,9 @@ es:
       user:
         one: Usuario
         other: Usuarios
+      user_permission:
+        one: Permiso del usuario
+        other: Permisos del usuario
 
     attributes:
       connection:
@@ -85,6 +88,12 @@ es:
       user_role:
         company: "La compañía"
         role: "El rol"
+        user: "El usuario"
+      user_permission:
+        # `permission_id` es el atributo del validador de unicidad y `permission`
+        # el de la asociación: los dos mensajes le hablan al usuario del permiso.
+        permission_id: "El permiso"
+        permission: "El permiso"
         user: "El usuario"
       users_by_company:
         company: "La compañía"

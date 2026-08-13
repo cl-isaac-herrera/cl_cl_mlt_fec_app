@@ -111,4 +111,75 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
 
     expect(response).to have_http_status(:unauthorized)
   end
+
+  # Con `UserId` las credenciales son de OTRO usuario: es la pantalla de usuarios
+  # probando las de alguien más, y eso ya es administrar usuarios.
+  describe 'probando las credenciales de otro usuario' do
+    let(:target) { User.create!(email: 'objetivo@example.com') }
+    let(:role)   { Role.create!(name: 'Configurador') }
+
+    def grant(*names)
+      UserRole.create!(user: user, role: role, company: acme)
+      names.each { |n| RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: n)) }
+    end
+
+    it 'exige Configurations_Users_Update' do
+      UsersByCompany.create!(user: target, company: acme)
+      grant('Configurations_Users_ListAccess')
+
+      sign_in(user, company: acme)
+      post '/api/sap_credential_validations', params: credentials.merge(UserId: target.id), as: :json
+
+      expect(response).to have_http_status(:forbidden)
+      expect(a_request(:post, login_url)).not_to have_been_made
+    end
+
+    it 'valida contra la compañía del usuario objetivo y no la del administrador' do
+      UsersByCompany.create!(user: target, company: acme)
+      grant('Configurations_Users_Update')
+      stub_successful_login
+      stub_request(:get, probe_url).to_return(status: 200, body: { value: [] }.to_json,
+                                              headers: { 'Content-Type' => 'application/json' })
+
+      sign_in(user, company: acme)
+      post '/api/sap_credential_validations', params: credentials.merge(UserId: target.id), as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(body['Data']).to be(true)
+    end
+
+    # El administrador sí tiene la compañía asignada, el objetivo no: probar ahí no
+    # prueba nada, porque el usuario no va a operar nunca contra esa base.
+    it 'rechaza una compañía que el administrador tiene pero el objetivo no' do
+      grant('Configurations_Users_Update')
+
+      sign_in(user, company: acme)
+      post '/api/sap_credential_validations', params: credentials.merge(UserId: target.id), as: :json
+
+      expect(response).to have_http_status(:forbidden)
+      expect(a_request(:post, login_url)).not_to have_been_made
+    end
+
+    it 'responde 404 cuando el usuario objetivo no existe' do
+      grant('Configurations_Users_Update')
+
+      sign_in(user, company: acme)
+      post '/api/sap_credential_validations', params: credentials.merge(UserId: 999_999), as: :json
+
+      expect(response).to have_http_status(:not_found)
+    end
+
+    # Mandar el propio id es el mismo caso que no mandarlo: no necesita permiso.
+    it 'no exige permiso cuando el UserId es el del propio usuario' do
+      stub_successful_login
+      stub_request(:get, probe_url).to_return(status: 200, body: { value: [] }.to_json,
+                                              headers: { 'Content-Type' => 'application/json' })
+
+      sign_in(user)
+      post '/api/sap_credential_validations', params: credentials.merge(UserId: user.id), as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(body['Data']).to be(true)
+    end
+  end
 end

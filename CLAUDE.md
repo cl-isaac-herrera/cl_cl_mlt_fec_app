@@ -1580,6 +1580,21 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 | `GET /api/Permission/GetPermissionsByRol?idRol=N` | `GET /api/roles/:id/permissions` |
 | `POST /api/Permission/AssignPermByRol` | `PUT /api/roles/:id/permissions` |
 | `GET /api/Permission/GetPermissions` | `GET /api/permissions/catalog` ⚠️ ver nota |
+| `GET /api/User/accessible?fullName=&email=&activeOnly=` | `GET /api/users?name=&email=&page=&per_page=` |
+| `GET /api/User/information?userId=N` | `GET /api/users/:id` |
+| `POST /api/User` | `POST /api/users` |
+| `PATCH /api/User` (id en el cuerpo) | `PATCH /api/users/:id` |
+| `GET /api/User/companies?userId=N` | `GET /api/users/:id/companies` |
+| `GET /api/User/assigned-companies?userId=N` | `GET /api/users/:id/companies` (el mismo) |
+| `POST` + `POST /api/User/bulk-{assign,unassign}-companies` | `PUT /api/users/:id/companies` |
+| `GET /api/Companies/for-assignment?groupId=N` | `GET /api/companies/assignable` ⚠️ sin groupId (§31) |
+| `GET /api/User/for-assignments` | (no se migra — el usuario sale de la tabla) |
+| `GET /api/Group/for-assignments` | (no se migra — no hay grupos, §31) |
+| `GET /api/Rol/GetRolUserCompAssign?rolId=0&companyId=N` | `GET /api/users/:id/role` |
+| `POST /api/Rol/AssignRolByUserComp` | `PUT /api/users/:id/role` |
+| `GET /api/User/global-permissions?userId=N` | `GET /api/users/:id/permissions` |
+| `POST` + `DELETE /api/Permission/bulk-global-permissions` | `PUT /api/users/:id/permissions` |
+| `GET /api/Permission/global-permissions` | `GET /api/permissions/catalog?type=global` |
 | (nuevo — la compañía activa era `sessionStorage`) | `PUT /api/session/company` |
 
 > ⚠️ `GET /api/permissions/catalog` está mal nombrado a propósito: el catálogo
@@ -1611,6 +1626,158 @@ end
 - **Reasignar respeta el soft delete**: se consulta con `unscoped` para reactivar la fila
   revocada en vez de insertar una nueva al lado. Sin eso, conceder y revocar el mismo
   permiso varias veces deja basura acumulada en `role_permissions`.
+
+El mismo patrón aplica cuando el hijo es **uno solo**, no un conjunto: el rol de un
+usuario en la compañía activa es `resource :role` (singular, sin id) bajo `resources
+:users`, y se reemplaza con PUT. Ahí la compañía **no** viaja en el cuerpo: sale de la
+sesión, para que nadie pueda asignar roles en una compañía que no tiene activa.
+
+### Registros dados de baja — `unscoped` en las pantallas de administración
+
+`SoftDeletable` instala `default_scope { where(is_active: true) }`. Toda pantalla que
+**administra** un recurso —y por lo tanto tiene que poder ver y reactivar lo dado de
+baja— consulta con `unscoped`; el resto de la app usa el scope normal.
+
+```ruby
+# Lista de usuarios: incluye a los inactivos (el .NET lo pedía con activeOnly=false).
+User.unscoped.in_company(Current.company_id)
+```
+
+Dos consecuencias que cuestan caro si se olvidan:
+
+1. **Un alta no puede nacer inactiva** si la pantalla que la creó no usa `unscoped`
+   en todas sus consultas: el registro desaparece apenas se guarda. Por eso
+   `POST /api/users` crea con `is_active: true`.
+2. **La validación de unicidad hereda el default_scope.** Si el índice de la base NO
+   excluye a los inactivos —el de `users.email` no lo hace—, la validación tiene que
+   pedir explícitamente que lo ignore, o pasa de largo y explota la base:
+
+```ruby
+validates :email, uniqueness: { case_sensitive: false,
+                                conditions: -> { unscope(where: :is_active) } }
+```
+
+### Permiso como alcance, no como puerta — `permission?`
+
+`require_permission!` corta la respuesta con 403. Cuando el permiso no decide **si** se
+puede entrar sino **hasta dónde llega** lo que se devuelve, se usa el predicado
+`permission?`, que solo responde:
+
+```ruby
+# La acción ya exigió su permiso; este otro solo amplía el alcance.
+def visible_users
+  return User.unscoped if permission?('Configurations_Users_ViewAllApplicationUsers')
+
+  User.unscoped.in_company(Current.company_id)
+end
+```
+
+`permission?` **no** marca la acción como verificada: preguntar no es autorizar, y el
+safety net (`verify_permission_checked`) tiene que seguir exigiendo el check explícito.
+Es el mismo EXISTS query de §4.2 — nunca cargar los permisos y filtrar en Ruby.
+
+Cuando un endpoint sirve legítimamente a **dos pantallas con permisos distintos** —las
+compañías de un usuario las lee el panel de edición (`Configurations_Users_Update`) y el
+sub-tab de accesos (`S_AsigUser`)— se usa `require_any_permission!(*names)`: alcanza con
+cualquiera. No es un relajamiento, porque cada nombre por separado ya autoriza esa lectura.
+Si un permiso **no** alcanzara por sí solo, esta NO es la herramienta.
+
+### El catálogo y la escritura resuelven el MISMO alcance
+
+Cuando una pantalla ofrece un catálogo para elegir y después manda la selección, los dos
+endpoints tienen que calcular el conjunto permitido **con el mismo código** — no con la
+misma lógica escrita dos veces. Si el catálogo muestra de más, el usuario elige algo que
+el guardado después rechaza; si muestra de menos, no puede hacer su trabajo. Por eso el
+alcance vive en un concern (`AssignableCompanies`) que incluyen los dos controllers.
+
+**Y el reemplazo completo se acota a ese alcance.** Un PUT que reemplaza el conjunto
+entero borra lo que no viene en el cuerpo — pero lo que el solicitante **no puede ver**
+tampoco viaja en el cuerpo:
+
+```ruby
+# ✅ Solo se revoca lo que el solicitante podía asignar.
+to_disable = existing.select { |id, active| active && ids.exclude?(id) && manageable.include?(id) }.keys
+
+# ❌ Le revoca en silencio los accesos que nunca vio.
+to_disable = existing.select { |id, active| active && ids.exclude?(id) }.keys
+```
+
+Del lado de la UI, lo que quedó fuera de alcance **se muestra deshabilitado con su
+motivo** (§26), no se oculta: si no, el contador diría "3 asignadas" y habría dos
+checkboxes.
+
+### Renombrar un permiso — la equivalencia va a `db/permission_name_map.yml`
+
+Los permisos del API .NET se llaman `S_RegUser`, `S_AsigUser`, `S_CompUser`: nombres
+heredados de los ítems de submenú del Angular, que dicen **dónde estaba el botón**, no qué
+autorizan. Al migrarlos se renombran a la convención `{Módulo}_{Recurso}_{Acción}` (§4.4).
+
+> **Regla:** todo rename se anota en `db/permission_name_map.yml`, en el mismo cambio.
+
+No es documentación opcional. El catálogo se importa desde SQL Server y ahí las filas de
+`PermissionByRol` siguen apuntando al **nombre viejo**: si la importación no traduce,
+crea un permiso huérfano con el nombre de origen y **los roles reales pierden el acceso en
+silencio** — nadie recibe un error, simplemente el botón deja de aparecer.
+
+El archivo tiene dos secciones:
+
+- `renames:` — `from` / `to` / `note`. La nota importa cuando el rename **no es puro**:
+  si el nombre nuevo ya existía en el origen, no es un rename sino dos permisos que hacen
+  lo mismo, y hay que decidir cuál sobrevive.
+- `orphaned:` — permisos cuya pantalla se eliminó. No tienen sucesor y no hay nada que
+  traducir; se listan para que nadie les busque un equivalente que no existe.
+
+Al renombrar hay que tocar, además del map: `db/seeds.rb`, el `require_permission!` del
+controller, el `#hasPerm` del JS que gatea la UI, y los specs.
+
+### Cambiar el catálogo en una base viva es una MIGRACIÓN, no un re-seed
+
+`db/seeds.rb` **borra y recrea el catálogo entero** (`Permission.unscoped.delete_all`).
+Eso levanta un ambiente de cero; en una base con datos reales se lleva puestas todas las
+asignaciones de `role_permissions` y `user_permissions`.
+
+> **Regla:** renombrar o dar de baja un permiso se hace en una migración de datos, y
+> además en `seeds.rb`, de modo que **una base migrada y una sembrada de cero terminen
+> idénticas**. Referencia: `20260812130000_apply_permission_catalog_changes.rb`.
+
+- **Baja lógica, nunca `DELETE`.** §2.2 prohíbe el borrado físico, la FK desde
+  `role_permissions` lo impediría igual, y borrar en cascada destruiría la asignación real
+  de un rol sin dejar rastro. Con `is_active = false` alcanza: `require_permission!`,
+  `AuthorizationService` y el catálogo ya filtran por `is_active`.
+- **Solo se da de baja lo que tiene CERO consumidores.** Verificarlo con grep sobre `app/`
+  y `config/` antes de escribir la lista — incluido el JS, que gatea la UI, y
+  `menu.js`. Un permiso que todavía gatea una pantalla no se da de baja "porque el negocio
+  ya no lo usa": eso vuelve la pantalla inalcanzable sin que nadie lo haya decidido.
+- **La migración no usa el modelo de la app.** Se define una clase mínima local
+  (`self.table_name = 'permissions'`), porque el modelo cambia con el tiempo y su
+  `default_scope` escondería justo las filas que se quieren tocar.
+- **Idempotente y reversible:** no renombrar si el destino ya existe (una base sembrada de
+  cero ya tiene el nombre nuevo, y renombrar dejaría dos filas iguales).
+
+### Las DOS vías de concesión de permisos — y solo dos
+
+| Vía | Tabla | Alcance | Para qué |
+|---|---|---|---|
+| Por rol | `user_roles` → `role_permissions` | **La compañía** de la asignación | Todo permiso `normal`. Es el camino por defecto. |
+| Directa al usuario | `user_permissions` | **Toda la aplicación** (sin compañía) | Solo permisos `global`. |
+
+`permissions.type` (`normal` / `global`) es lo que separa las dos. La vía directa está
+acotada a propósito y la restricción vive **en el modelo**, no en el controller
+(`UserPermission#permission_must_be_global`): conceder un permiso por compañía sin
+compañía sería un portillo, no una comodidad.
+
+Consecuencias que hay que respetar al tocar autorización:
+
+- **`permission?` evalúa las dos** — primero el rol (cubre la enorme mayoría, y ahí
+  termina), y solo si no concedió nada consulta la directa. Nunca asumir que
+  `user_roles` es la única fuente.
+- **Los permisos efectivos también son la unión** (`Api::PermissionsController#index`).
+  `Clavisco::Auth::AuthorizationService` solo conoce la vía por rol: vive en un
+  submódulo y **no se toca** (§27), así que la unión se arma del lado de la app.
+- **Un permiso global aplica sin compañía activa.** Es exactamente lo que lo hace
+  global: si se filtrara por `Current.company_id` no se distinguiría de uno normal.
+- **`user_permissions` no lleva `company_id`.** Agregárselo obligaría a repetir la misma
+  fila por cada compañía y a mantenerlas sincronizadas a mano.
 
 ### Paginación — query string, no headers
 
@@ -1806,3 +1973,43 @@ expect(body['Message']).to eq('El nombre no puede estar en blanco')
 
 `to_sentence` también se traduce (`support.array.*`): sin esas claves une los errores con
 `" and "` en medio de una frase en español.
+
+---
+
+## 31. Grupos de compañías — NO existen en esta versión
+
+Esta versión se despliega como **una instancia por cliente / grupo económico**: la base de
+datos de la instalación contiene únicamente las compañías de ese cliente. Por lo tanto
+**el concepto de "grupo de compañías" ya no aplica** y no se migra.
+
+### De dónde viene
+
+La versión anterior era un **SaaS global**: una sola instalación servía a todos los
+clientes, y sus datos convivían en las mismas tablas separados **lógicamente** por
+`GroupId` y por identificadores de base. El grupo existía para responder "¿qué compañías
+son de este cliente?" — una pregunta que en esta versión responde el despliegue, no una
+columna.
+
+### Regla
+
+> **No existe la tabla `groups` ni ninguna columna `group_id`, y no se crean.** El
+> aislamiento entre clientes es el despliegue. "Todas las compañías de la instalación" ES
+> "todas las compañías del cliente".
+
+- **Nada de filtros ni selectores por grupo.** Un `<select>`/autocomplete de grupo no
+  filtra nada: siempre habría un solo grupo. Se eliminan de la vista junto con la consulta
+  que los alimentaba (§24, caso "consulta cuyo único fin era poblar el campo eliminado").
+- **`?groupId=` se cae del endpoint**, no se migra con un valor por defecto. `Companies/for-assignment?groupId=-1`
+  (el `-1` del .NET significaba "todos") pasa a ser `GET /api/companies/assignable` a secas.
+- **`Configurations_Users_ViewGroupUsers` no tiene implementación** y no es deuda: el
+  alcance "los usuarios de mi grupo" es idéntico a "los de la instalación". Quien lo tenga
+  ve el alcance de compañía; para ver todo está `Configurations_Users_ViewAllApplicationUsers`.
+- **Los permisos `Configurations_Groups_*` del catálogo quedan huérfanos.** Siguen
+  sembrados porque el catálogo se importa tal cual del origen, pero no los evalúa nadie.
+
+### Lo que todavía tiene código de grupos
+
+`/configurations/group` (vista, controller y `group_controller.js`), su nodo de menú y las
+llamadas a `/api/Group/*` que quedan en `companies_controller.js`, `company_form_controller.js`
+y `users_register_controller.js`. Es código muerto por esta decisión, pero **borrar una
+pantalla completa es una tarea aparte** — está anotado en `TODOS.md` → Grupos.

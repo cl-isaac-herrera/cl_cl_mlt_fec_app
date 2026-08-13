@@ -31,8 +31,14 @@ CATALOG = [
   [5,  'S_ReceptDocs',                      'Acceso a SubMenu Recepción de Documentos'],
   [6,  'S_Company',                         'Acceso a SubMenu de Compañías'],
   [7,  'S_RegUser',                         'Acceso a SubMenu Registro de Usuarios'],
+  # Huérfano: su pantalla ("Completar registro") se eliminó y nadie lo evalúa. Se
+  # sigue sembrando porque el catálogo replica el del origen tal cual. Ver
+  # `db/permission_name_map.yml` → orphaned.
   [8,  'S_CompUser',                        'Acceso a SubMenu Completar Registro de Usuarios'],
-  [9,  'S_AsigUser',                        'Acceso a SubMenu Asignación de Usuarios'],
+  # Renombrado desde `S_AsigUser` (§4.4). La equivalencia con el nombre de origen
+  # vive en `db/permission_name_map.yml` y la importación tiene que traducirla.
+  [9,  'Configurations_Users_CompanyAssignment',
+       'Permite asignarle compañías a un usuario'],
   [10, 'S_Groups',                          'Acceso a SubMenu de  Grupos'],
   [11, 'S_Numbering',                       'Acceso a SubMenu de Numeración'],
   [12, 'S_PermsByRol',                      'Acceso a SubMenu de Roles por Usuarios'],
@@ -172,29 +178,67 @@ CODE_ONLY = [
   [1012, 'Configurations_MailParser_Update', 'Modificar bandejas de recepción']
 ].freeze
 
+# ---------------------------------------------------------------------------
+# 4. DADOS DE BAJA — se siembran INACTIVOS.
+#
+#    Se siguen sembrando (y con su Id de origen) porque el catálogo replica el
+#    del .NET: si se omitieran, una importación posterior de `PermissionByRol`
+#    que los referencie no encontraría la fila. Pero nacen `is_active: false`
+#    porque su pantalla ya no existe y nadie los evalúa.
+#
+#    Tiene que coincidir con `DEACTIVATE` de
+#    `db/migrate/20260812130000_apply_permission_catalog_changes.rb`: esta lista
+#    es para la base que se crea de cero, la migración es para la que ya existe,
+#    y las dos deben dejar el mismo estado final.
+#
+#    Ver `db/permission_name_map.yml` → orphaned.
+# ---------------------------------------------------------------------------
+DEACTIVATED = %w[
+  S_CompUser
+  Configurations_Users_ViewGroupUsers
+  Configurations_Companies_ChangeGroup
+  Configurations_Groups_ViewAllApplicationGroups
+].to_set.freeze
+
 ADMIN_ROLE_NAME = 'Administrador'
 
 ActiveRecord::Base.transaction do
   # 1. Catálogo. Se reemplaza completo para poder fijar los Id del origen.
-  RolePermission.delete_all
-  Permission.delete_all
+  #
+  # Hay que vaciar ANTES las dos tablas que referencian `permissions`, o el
+  # `delete_all` choca contra sus llaves foráneas. `user_permissions` es la vía de
+  # concesión directa (permisos globales por usuario): hoy nace vacía, pero apenas
+  # alguien asigne uno, un `db:seed` sin esta línea revienta.
+  #
+  # ⚠️ `unscoped` obligatorio: los tres modelos tienen `SoftDeletable`, y su
+  # `default_scope` hace que un `delete_all` pelado borre SOLO las filas activas.
+  # Las revocadas sobreviven, siguen apuntando a `permissions` y la FK falla — que
+  # es exactamente lo que pasaba apenas alguien revocaba un permiso de un rol.
+  RolePermission.unscoped.delete_all
+  UserPermission.unscoped.delete_all
+  Permission.unscoped.delete_all
 
   rows = CATALOG.map        { |id, name, desc| [id, name, desc, 'normal'] } +
          GLOBAL_CATALOG.map { |id, name, desc| [id, name, desc, 'global'] } +
          CODE_ONLY.map      { |id, name, desc| [id, name, desc, 'normal'] }
 
   rows.each do |id, name, description, type|
-    Permission.create!(id: id, name: name, description: description, type: type, is_active: true)
+    Permission.create!(id: id, name: name, description: description, type: type,
+                       is_active: !DEACTIVATED.include?(name))
   end
-  puts "Permisos: #{Permission.count} " \
+  puts "Permisos: #{Permission.count} activos " \
        "(#{Permission.normal.count} normal / #{Permission.global.count} global; " \
-       "#{CODE_ONLY.size} sin Id de origen)"
+       "#{CODE_ONLY.size} sin Id de origen) " \
+       "+ #{DEACTIVATED.size} dados de baja"
 
   # 2. Rol Administrador con el catálogo completo.
   admin = Role.find_or_initialize_by(name: ADMIN_ROLE_NAME)
   admin.is_active = true
   admin.save!
 
+  # Sin `unscoped` a propósito: el default_scope de SoftDeletable deja fuera a los
+  # de `DEACTIVATED`, que es justo lo que se quiere — no tiene sentido concederle
+  # a nadie un permiso dado de baja.
   Permission.find_each do |permission|
     RolePermission.create!(role_id: admin.id, permission_id: permission.id, is_active: true)
   end

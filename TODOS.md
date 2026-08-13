@@ -115,16 +115,13 @@ Los endpoints del selector ya son nativos de Rails (`GET /api/companies`,
       se parecen a `Configurations_EmailInbox_Access` y `Configurations_Permissions_GlobalAccess`
       del código y podrían ser el mismo permiso renombrado por error en la migración.
 
-- [ ] **El campo `permissions.type` todavía no lo usa nadie.** Lo agregó
-      `db/migrate/20260811120000_add_type_to_permissions.rb` (texto, `null: false`,
-      default `'normal'`, valores válidos en `Permission::TYPES`) para poder distinguir
-      permisos por compañía (`normal`) de permisos a nivel de aplicación (`global`).
-      Hoy solo lo puebla el seed: ni `AuthorizationService` ni `GET /api/permissions` lo
-      miran, así que un permiso global se sigue concediendo vía `user_roles` con
-      `company_id` como cualquier otro.
-      **Pendiente:** cuando se implemente la distinción, resolver los `global` sin pasar por
-      la compañía activa y exponer el tipo en la respuesta del endpoint si el cliente lo
-      necesita.
+- [x] **El campo `permissions.type` ya se usa** — resuelto al migrar los permisos globales
+      por usuario: `user_permissions` solo acepta `type = 'global'` y esas concesiones se
+      resuelven **sin** pasar por la compañía activa, tanto en `permission?` como en
+      `GET /api/permissions`. Ver la sección *Usuarios* más abajo y `CLAUDE.md` §28.
+      Queda en pie que un permiso `global` **también** se puede seguir concediendo por rol
+      (y ahí sí queda atado a una compañía): las dos vías conviven a propósito, para no
+      invalidar las asignaciones que ya existen en el origen.
 
 - [ ] **Los roles y sus asignaciones son de desarrollo, no los reales.** `db/seeds.rb` crea un
       único rol `Administrador` con los 80 permisos y lo asigna a cada fila activa de
@@ -140,21 +137,21 @@ La pantalla ya no toca el .NET: `GET /api/profile`, `PATCH /api/profile`,
 `POST /api/sap_credential_validations` y `GET /api/companies` son nativos. Lo que quedó
 pendiente:
 
-- [ ] **`POST /api/Connections/validate-user-credentials` sigue vivo en
-      `users_controller.js:470`** (pantalla de asignación de usuarios). Es exactamente el
-      mismo llamado con el mismo payload que ya resuelve `POST /api/sap_credential_validations`,
-      pero esa pantalla no entraba en esta migración y su semántica es distinta: valida las
-      credenciales de **otro** usuario, no las propias, así que el `skip_permission_check!`
-      del endpoint nativo no aplica tal cual.
-      **Pendiente:** al migrar la pantalla de usuarios, apuntarla al endpoint nativo y
-      agregarle el permiso que corresponda (`Configurations_Users_*`).
+- [x] **`POST /api/Connections/validate-user-credentials` seguía vivo en
+      `users_controller.js`** — resuelto al migrar la lista de usuarios: ahora llama
+      `POST /api/sap_credential_validations` con `UserId`. Ese parámetro es lo que separa
+      los dos casos: sin él son las credenciales propias y no lleva permiso; con él son las
+      de otro usuario, exige `Configurations_Users_Update` y la compañía se valida contra
+      las asignaciones del **usuario objetivo**, no las del administrador.
 
-- [ ] **`GET /api/Group/GetGroupsByUser` no se migró: se eliminó de esta pantalla.** El
-      Angular lo pedía y descartaba la respuesta (ningún campo del perfil depende de los
-      grupos), así que no era deuda sino código muerto — criterio de §24. Sigue en uso en
-      `group_controller.js`, `users_controller.js` y `users_register_controller.js`, que sí
-      lo consumen; ahí se migra cuando toque esas pantallas (no existe todavía tabla `groups`
-      en la base propia).
+- [ ] **`GET /api/Group/GetGroupsByUser` no se migró: se eliminó de las pantallas.** El
+      Angular lo pedía en el perfil y descartaba la respuesta (ningún campo depende de los
+      grupos), así que no era deuda sino código muerto — criterio de §24. En la lista de
+      usuarios alimentaba el select "Cuenta" del panel de creación, que se eliminó junto con
+      la consulta por la misma razón: no existe tabla `groups` en la base propia.
+      Sigue en uso en `group_controller.js`; ahí se resuelve cuando se borre esa pantalla
+      (`users_register_controller.js`, que era el otro consumidor, se eliminó con la página
+      de alta).
 
 - [ ] **`users.doc_number_preference` no se importó del origen.** La columna la agregó
       `db/migrate/20260811130000_add_doc_number_preference_to_users.rb` (texto, equivalente a
@@ -359,12 +356,231 @@ Lo que quedó pendiente:
       `UserRole` no vuelve a declarar la asociación: el resultado es que
       `UserRole.new(user:, role:).valid?` devuelve **true** sin compañía y el guardado
       revienta abajo con `ActiveRecord::NotNullViolation` (la columna es `null: false`).
-      Verificado en consola. Hoy no pega porque nadie crea `UserRole` desde un endpoint —
-      solo el seed—, pero cuando se migre la asignación de roles a usuarios sería un 500
-      en vez de un 422.
+      Verificado en consola. **Ya hay un endpoint que crea `UserRole`**
+      (`PUT /api/users/:id/role`): ahí no revienta porque un `before_action` exige compañía
+      activa antes de tocar la base, pero esa es una guarda del controller, no del modelo —
+      el próximo que escriba `user_roles` se lleva el 500.
       **Pendiente:** agregar `validates :company, presence: true` en `UserRole` (o
       redeclarar `belongs_to :company` después del `include`). Lo correcto de fondo es que
       el submódulo no imponga `optional: true` — anotarlo para `cl-data-access-ruby`.
+
+---
+
+## Usuarios — endpoints migrados a Rails (`/configurations/users`, tab "Lista de usuarios")
+
+La pantalla quedó **sin tabs**: es la lista de usuarios. Todo lo que se le concede a un
+usuario —rol, permisos globales y compañías— vive en los tres sub-tabs del panel
+"Gestionar accesos", que es una acción de fila.
+
+**Ya no toca el .NET en absoluto.** Son nativos `GET|POST /api/users`,
+`GET|PATCH /api/users/:id`, `GET|PUT /api/users/:id/companies`,
+`GET|PUT /api/users/:id/role`, `GET|PUT /api/users/:id/permissions`,
+`GET /api/companies/assignable` y `GET /api/permissions/catalog?type=global`.
+`users_controller.js` se quedó con un solo cliente HTTP (`#railsFetch`): el `#apiFetch`
+que armaba el Bearer para el proxy se borró con el último tab que lo usaba.
+
+- [x] **⚠️ CAMBIO DE UI: el tab "Completar registro" desapareció, y con él
+      `/configurations/users/register`.** El tab activaba usuarios pendientes de
+      confirmar su correo y reenviaba el correo de confirmación; la página era el alta
+      que ya había reemplazado el panel lateral del listado (quedó huérfana: nada la
+      enlazaba). Los dos dejaron de tener sentido con el IdP — no hay contraseña propia
+      ni correo que confirmar, y el alta nace activa.
+      Se eliminaron: el tab, la barra de tabs entera, `users#register` con su ruta y su
+      vista, y `users_register_controller.js` con su registro en `index.js`.
+      Dejaron de tener consumidor tres endpoints del .NET: `GET /api/User/GetInactiveUsers`,
+      `PATCH /api/User/activate` y `POST /api/User/email-confirmations`.
+      El permiso `S_CompUser`, que gateaba el tab, queda huérfano: se sigue sembrando
+      porque el catálogo replica el del origen, pero ya nadie lo evalúa y **no tiene
+      sucesor** — está registrado como tal en `db/permission_name_map.yml`.
+
+- [x] **`/configurations/users/edit` se eliminó igual que `register`** — vista, acción,
+      ruta y `users_edit_controller.js`. Estaba huérfana (la edición es el panel lateral)
+      y rota: llamaba `GET /api/User/information`, `GET /api/User/companies`,
+      `PATCH /api/User` y `POST /api/SapConnections/validate-credentials`, endpoints del
+      .NET ya migrados que hoy caen al proxy y responden 401.
+      `Configurations::UsersController` quedó con una sola acción, `index`.
+
+- [x] **El rename y las bajas ya se aplican sobre la tabla, no solo en el seed** —
+      `db/migrate/20260812130000_apply_permission_catalog_changes.rb`. Hacía falta porque
+      `db:seed` **borra y recrea el catálogo entero**: sirve para levantar un ambiente de
+      cero, no para una base con datos reales, donde eso se lleva puestas las asignaciones
+      de `role_permissions` y `user_permissions`. Un cambio de catálogo en una base viva es
+      una migración.
+      La migración es reversible e idempotente (no renombra si el destino ya existe), y
+      deja el mismo estado final que un seed desde cero: 88 activos + 4 de baja.
+
+- [ ] **Renombrado de permisos: existe `db/permission_name_map.yml`.** Los nombres `S_*`
+      del origen describen dónde estaba el botón en el menú Angular, no qué autorizan, así
+      que se renombran a la convención §4.4. La equivalencia con el nombre de origen vive
+      en ese archivo, y **la tarea de importación DEBE leerlo y traducir antes de
+      insertar**: las filas de `PermissionByRol` siguen apuntando al nombre viejo, y sin
+      traducir crearían un permiso huérfano y los roles reales perderían el acceso en
+      silencio.
+      **Pendiente:** agregar una entrada cada vez que se renombre otro, y resolver el caso
+      anotado de `S_RegUser`, que **no** es un rename puro — los dos nombres existen en el
+      catálogo de origen (Id 7 y 64), así que hay que decidir cuál sobrevive antes de
+      importar.
+
+- [x] **`db:seed` reventaba con `FOREIGN KEY constraint failed`** — encontrado al aplicar
+      el rename. `RolePermission.delete_all` respeta el `default_scope` de `SoftDeletable`,
+      así que borraba solo las filas activas: las revocadas sobrevivían apuntando a
+      `permissions` y el `Permission.delete_all` siguiente chocaba contra la FK. Bastaba
+      con haber revocado un permiso de un rol alguna vez. Resuelto con `unscoped` en los
+      tres `delete_all`, y agregando `UserPermission` a la limpieza (faltaba desde que se
+      creó la tabla).
+
+- [x] **⚠️ CAMBIO DE UI: el tab "Asignación de compañías" desapareció.** Era un segundo
+      buscador de usuarios —un autocomplete que solo matcheaba por correo y cortaba a 50
+      resultados— compitiendo con la tabla de la Lista, que tiene búsqueda por nombre y
+      correo, paginación y estado. Y dejaba la asignación de compañías separada del rol y
+      de los permisos globales, que ya eran acción de fila.
+      Ahora es el sub-tab "Compañías" del panel de accesos, con checkboxes en vez de la
+      lista dual con drag & drop (en un panel de 512px el arrastre queda apretado, y de
+      fondo esto es un multi-select).
+      Se cayeron con el tab: `GET /api/users/assignable` (sin consumidor — el usuario sale
+      de la tabla) y el `GET /api/User/for-assignments` que reemplazaba.
+
+- [x] **⚠️ CAMBIO DE COMPORTAMIENTO: el alcance de la asignación es el del administrador.**
+      `GET /api/companies/assignable` devuelve las compañías del solicitante, no todas las
+      de la instalación; `PUT /api/users/:id/companies` rechaza con 403 lo que esté fuera
+      de ese alcance. Cierra una incoherencia: `POST /api/users` ya validaba
+      `Company.assigned_to(Current.user.id)`, así que crear un usuario en una compañía
+      ajena estaba prohibido pero asignárselo después, permitido.
+      La vía de escape es `Configurations_Companies_ViewGroupCompanies` (ya en el catálogo;
+      bajo §31 "las compañías del grupo" son las de la instalación), necesaria para poder
+      asignarle su primera compañía a alguien en una sociedad donde el administrador no
+      opera.
+      **El reemplazo completo NO revoca lo que está fuera de alcance** — sin ese filtro, el
+      administrador de una sociedad le sacaría al usuario el acceso a otra sin enterarse.
+      La UI las muestra marcadas y deshabilitadas con su motivo (§26).
+      **Pendiente:** confirmar con el negocio quién debería tener
+      `Configurations_Companies_ViewGroupCompanies`. Hoy el seed se lo da a todos.
+
+- [ ] **El permiso de asignación se llama `S_AsigUser` y no sigue la convención §4.4.**
+      Debería ser `Configurations_Users_AssignCompanies`, pero ese nombre **no existe en
+      el catálogo** — a diferencia de `S_RegUser`, que sí tenía su equivalente moderno
+      (`Configurations_Users_Create`) y por eso se pudo cambiar. Inventar un permiso que
+      no está en el origen rompería la importación de `PermissionByRol`.
+      **Pendiente:** al arreglar el catálogo (ver la entrada de permisos incompletos más
+      arriba), renombrarlo junto con `S_CompUser`. Son los dos que quedan con el nombre
+      viejo.
+
+- [x] **Los permisos globales por usuario ya tienen dónde guardarse** — resuelto:
+      `db/migrate/20260812120000_create_user_permissions.rb` crea la tabla puente
+      usuario↔permiso, **sin `company_id`** (un permiso global aplica a nivel de
+      aplicación; atarlo a una compañía obligaría a repetir la fila por cada una).
+      Es la **segunda y última** vía de concesión del producto, y está acotada a los
+      permisos `type = 'global'` por una validación del modelo, no del controller.
+      La concesión **surte efecto de verdad**: `Api::AuthorizedController#permission?` la
+      evalúa además de la vía por rol, y `GET /api/permissions` devuelve la unión de las
+      dos. `AuthorizationService` solo conoce la vía por rol —vive en un submódulo y no
+      se toca (§27)—, así que la unión se arma del lado de la app. Ver `CLAUDE.md` §28.
+      CLAVISCO-PLATFORM-STANDARDS §4.1 no la lista porque describe el mínimo obligatorio
+      (permisos por rol), no un tope.
+
+- [ ] **`user_permissions` nace vacía: nadie tiene permisos globales todavía.** La tabla
+      existe y los endpoints funcionan, pero las concesiones reales viven en
+      `PermissionByUser` del .NET y no se importaron.
+      **Pendiente:** incluirla en la tarea de importación desde SQL Server, junto con
+      `Rol` / `PermissionByRol` / `RolByUser`. Ojo con dos cosas: (a) el origen puede
+      tener concedidos permisos que acá son `type = 'normal'` —la validación los va a
+      rechazar y hay que decidir caso por caso si el permiso estaba mal clasificado o la
+      concesión estaba de más—, y (b) el índice único no excluye inactivos, así que
+      importar duplicados con distinto `is_active` va a chocar.
+
+- [ ] **`db/seeds.rb` no siembra ninguna concesión global.** El rol `Administrador`
+      recibe los 92 permisos —incluidos los 25 `global`— por la vía del rol, así que en
+      desarrollo el sub-tab se ve pero no cambia nada observable: el permiso ya venía
+      concedido por otro lado.
+      **Pendiente:** para probar la vía directa de verdad hay que sembrar un usuario sin
+      esos permisos en su rol. Hoy se cubre solo en specs.
+
+- [x] **⚠️ CAMBIO DE COMPORTAMIENTO: el usuario nuevo nace ACTIVO.** El .NET lo creaba con
+      `Active: false` a la espera de que confirmara su correo, y el tab "Completar registro"
+      lo activaba. Ese paso lo reemplazó el IdP: no hay contraseña propia ni correo que
+      confirmar. Además, crear inactivo lo volvería **invisible** — el `default_scope` de
+      `SoftDeletable` lo escondería del listado apenas se guarda.
+      Confirmado: el tab se eliminó (ver la entrada de arriba). Dar de baja y reactivar
+      sigue siendo posible desde el panel de edición, con el check "Activo".
+
+- [ ] **⚠️ CAMBIO DE COMPORTAMIENTO: el botón "Nuevo Usuario" ahora exige
+      `Configurations_Users_Create` y ya no `S_RegUser`.** Los dos permisos existen en el
+      seed; se eligió el primero porque es el que sigue la convención §4.4 del estándar
+      (`{Módulo}_{Recurso}_{Acción}`) y es el que exige `POST /api/users`. Hoy no rompe nada
+      porque el seed le da los 80 permisos a todo el mundo.
+      **Pendiente:** al importar `PermissionByRol` desde SQL Server, revisar si algún rol
+      real tiene `S_RegUser` y no `Configurations_Users_Create` — ese rol perdería el botón.
+      Anotado en `db/permission_name_map.yml`, que es de donde la importación tiene que
+      leer las equivalencias.
+
+- [ ] **Campos eliminados del formulario por no tener columna.** Siguiendo la regla de que
+      manda la tabla: `Correo Confirmado` (columna de la tabla), `Identificación` (panel de
+      edición), `Cédula` y `Cuenta` / grupo (panel de creación). Los tres primeros venían de
+      ASP.NET Identity y no los reemplaza nada acá; el último dependía de una tabla `groups`
+      que no existe.
+      **Pendiente:** confirmar con el negocio que la cédula del usuario no hace falta en
+      ningún reporte. Si hiciera falta, primero la migración que agrega `users.identification`
+      y la razón, nunca un campo que se manda al API "por compatibilidad".
+
+- [x] **El alcance del listado.** `GET /api/users` devuelve los usuarios de la compañía
+      activa, o **todos** si el solicitante tiene
+      `Configurations_Users_ViewAllApplicationUsers`. El tercer alcance del .NET,
+      `Configurations_Users_ViewGroupUsers`, **no se implementa y no es deuda**: "los
+      usuarios de mi grupo" es idéntico a "los de la instalación" cuando cada cliente tiene
+      su propia instancia (`CLAUDE.md` §31). Quien tenga solo ese permiso ve el alcance de
+      compañía.
+
+- [ ] **La búsqueda no ignora acentos.** El `LIKE` de SQLite solo ignora la caja en ASCII:
+      buscar `SOLÍ` no encuentra a `Solís` (sí lo encuentra `solí`). Aplica igual a
+      `Connection.search`. No se corrigió porque `LOWER()` tampoco cubre acentos sin la
+      extensión ICU.
+      **Pendiente:** se resuelve solo al pasar a SQL Server, cuya collation por defecto es
+      case e accent insensitive. Verificarlo ahí en vez de meter un workaround en Ruby.
+
+- [x] **La tabla "Completar registro" mostraba "Correo Confirmado"** — se fue con el tab.
+
+---
+
+## Grupos de compañías — código muerto por decisión de producto
+
+Esta versión se despliega **una instancia por cliente / grupo económico**, así que el
+concepto de grupo desapareció: el aislamiento entre clientes lo da el despliegue, no una
+columna. La regla completa está en `CLAUDE.md` §31. Lo que quedó sin limpiar:
+
+- [ ] **La pantalla `/configurations/group` sigue existiendo entera.** Vista
+      (`app/views/configurations/group/index.html.erb`), controller
+      (`app/controllers/configurations/group_controller.rb`), `group_controller.js` y su
+      registro en `app/javascript/controllers/index.js`. Consume `/api/Group/*` vía proxy.
+      **Pendiente:** borrarla junto con su ruta y su nodo de menú. Es una tarea aparte
+      —borrar una pantalla completa no se hace de pasada dentro de otra migración— y hay
+      que confirmar antes que ningún cliente en producción dependa de verla.
+
+- [ ] **Quedan llamadas a `/api/Group/*` en dos controllers JS.**
+      `companies_controller.js` y `company_form_controller.js` (selector de grupo en el
+      formulario de compañías). El tercero, `users_register_controller.js`, se eliminó
+      junto con la página de alta de usuarios.
+      **Pendiente:** eliminarlas al migrar esas pantallas, con el mismo criterio que se usó
+      acá — el filtro se va junto con la consulta que lo alimentaba (§24), no se conserva
+      mandando un valor por defecto.
+
+- [ ] **Seis permisos de grupos siguen activos porque los evalúa la pantalla que falta
+      borrar.** `S_Groups` (nodo de menú) y los cinco `Configurations_Groups_*` que lee
+      `group_controller.js`. Darlos de baja ahora dejaría la pantalla inalcanzable sin
+      que nadie lo haya decidido.
+      **Pendiente:** al borrar `/configurations/group`, agregarlos a `DEACTIVATE` de una
+      migración nueva y a `DEACTIVATED` en `db/seeds.rb` — las dos listas tienen que
+      coincidir. Están anotados en `db/permission_name_map.yml` con `deactivated: false`.
+
+- [x] **Los tres permisos de grupos que ya nadie evaluaba se dieron de baja** —
+      `Configurations_Users_ViewGroupUsers`, `Configurations_Companies_ChangeGroup` y
+      `Configurations_Groups_ViewAllApplicationGroups`, junto con `S_CompUser`.
+      Baja lógica (`is_active = false`), no `DELETE`: §2.2 lo prohíbe y borrar la fila
+      arrastraría las de `role_permissions` / `user_permissions` que la referencien.
+
+> ⚠️ `Configurations_Companies_ViewGroupCompanies` **no** es huérfano, aunque tenga
+> "Group" en el nombre: es la vía de escape del alcance de asignación de compañías
+> (`AssignableCompanies::SEE_ALL_COMPANIES`). Sin grupos, "las compañías del grupo" son
+> las de la instalación, que es exactamente lo que habilita.
 
 ---
 

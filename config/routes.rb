@@ -8,7 +8,12 @@ Rails.application.routes.draw do
   # Nombrado REST: el verbo va en el método HTTP, no en el path — `GET /api/companies`
   # en vez de `GET /api/Companies/GetCompanies`.
   namespace :api do
-    resources :companies, only: [:index]
+    # `assignable` son TODAS las compañías de la instalación (lista dual del tab de
+    # asignación); `index` son solo las del usuario de la sesión. Reemplaza
+    # GET /api/Companies/for-assignment?groupId=N — sin groupId, no hay grupos (§31).
+    resources :companies, only: [:index] do
+      get :assignable, on: :collection
+    end
 
     # `index` son los permisos EFECTIVOS del usuario de la sesión; `catalog` es
     # el catálogo completo que pinta la pantalla de seguridad. Ver la nota del
@@ -23,6 +28,19 @@ Rails.application.routes.draw do
     # y se reemplaza entero con PUT.
     resources :roles, only: %i[index create update] do
       resource :permissions, only: %i[show update], module: :roles
+    end
+
+    # Usuarios (tab "Lista de usuarios"). Reemplaza GET /api/User/accessible,
+    # GET /api/User/information, POST /api/User y PATCH /api/User.
+    # `companies` es la subcolección que alimenta el selector de la prueba de
+    # credenciales; `role` es singular porque un usuario tiene UN rol por
+    # compañía, y la compañía la pone la sesión, no el path.
+    resources :users, only: %i[index show create update] do
+      # Los tres son conjuntos que pertenecen al usuario y se reemplazan enteros:
+      # `resource` singular (sin id propio) + PUT. Ver CLAUDE.md §28.
+      resource :companies,   only: %i[show update], module: :users
+      resource :role,        only: %i[show update], module: :users
+      resource :permissions, only: %i[show update], module: :users
     end
 
     # Perfil del usuario de la sesión. Singular: no lleva id porque siempre es el
@@ -91,10 +109,10 @@ Rails.application.routes.draw do
     # Reemplaza la ruta Angular /emailInbox
     get 'email-senders', to: 'email_senders#index', as: :email_senders
 
-    # Users — Gestión de usuarios (Lista, Completar Registro, Asignación)
-    get 'users',          to: 'users#index',    as: :users
-    get 'users/register', to: 'users#register', as: :users_register
-    get 'users/edit',     to: 'users#edit',     as: :users_edit
+    # Users — Gestión de usuarios. Pantalla única: el alta, la edición y los
+    # accesos son paneles laterales del listado. `users/register` y `users/edit`
+    # se eliminaron.
+    get 'users', to: 'users#index', as: :users
   end
 
   namespace :documents do

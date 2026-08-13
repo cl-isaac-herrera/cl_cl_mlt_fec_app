@@ -1,48 +1,60 @@
 /**
  * UsersController — Gestión de Usuarios (/configurations/users)
  *
- * Migración de /configurations/users (Angular UsersComponent + 3 tabs):
- *   Tab 0 - Lista de Usuarios      (perm: Configurations_Users_ListAccess)
- *   Tab 1 - Completar Registro     (perm: S_CompUser)
- *   Tab 2 - Asignación de compañías (perm: S_AsigUser)
+ * Pantalla sin tabs: ES la lista de usuarios (perm: Configurations_Users_ListAccess).
+ * Todo lo que se le concede a un usuario —rol, permisos globales y compañías— vive
+ * en el panel "Gestionar accesos", que es una acción de fila.
  *
- * Rutas relacionadas:
- *   /configurations/users/register  → users-register controller
- *   /configurations/users/edit      → users-edit controller
+ * De los tres tabs del Angular original quedó uno:
+ *   · "Completar registro" activaba usuarios pendientes de confirmar su correo.
+ *     Lo resuelve el IdP: no hay contraseña propia ni correo que confirmar, y el
+ *     alta nace activa. Se eliminó junto con `/configurations/users/register`.
+ *   · "Asignación de compañías" era un segundo buscador de usuarios, peor que esta
+ *     tabla. Es el sub-tab "Compañías" del panel de accesos.
+ *
+ * ── Endpoints ────────────────────────────────────────────────────────────────
+ * Todos nativos, con nombrado REST (CLAUDE.md §28). La pantalla ya NO toca el .NET.
+ *   - GET   /api/users?name=&email=&page=&per_page=   (listado paginado)
+ *   - GET   /api/users/:id                            (detalle)
+ *   - POST  /api/users                                (alta)
+ *   - PATCH /api/users/:id                            (edición)
+ *   - GET   /api/users/:id/companies                  (compañías del usuario)
+ *   - PUT   /api/users/:id/companies                  (reemplazar sus compañías)
+ *   - GET   /api/users/:id/role                       (rol en la compañía activa)
+ *   - PUT   /api/users/:id/role                       (asignar rol)
+ *   - GET   /api/users/:id/permissions                (permisos globales del usuario)
+ *   - PUT   /api/users/:id/permissions                (reemplazar sus permisos globales)
+ *   - GET   /api/permissions/catalog?type=global      (catálogo de permisos globales)
+ *   - GET   /api/companies                            (compañías del administrador)
+ *   - GET   /api/companies/assignable                 (las que puede asignar)
+ *   - GET   /api/roles                                (catálogo de roles)
+ *   - POST  /api/sap_credential_validations           (probar credenciales de SAP)
  */
 
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
-import { Storage, SStore } from 'vendor/clavisco/core';
+import { SStore, getApiHeaders } from 'vendor/clavisco/core';
 import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 // ── Compañías que requieren campo Tipo de OC ──────────────────────────────────
 const COMPANIES_WITH_OC = new Set([186, 1206]);
 
+// Sub-tabs del panel "Gestionar accesos". El label se usa en el diálogo de
+// cambios sin guardar; el orden acá no importa.
+const ACCESS_TAB_LABELS = {
+  roles:     'Roles',
+  global:    'Permisos globales',
+  companies: 'Compañías',
+};
+
 export default class extends TabulatorController {
   static targets = [
     ...TabulatorController.targets,
-    // Tabs nav
-    'tabBtn', 'tabContent',
-    // Tab Lista
+    // Toolbar de la lista
     'searchName', 'searchEmail', 'createBtn', 'createBtnWrap',
-    // Tab Completar Registro
-    'completeTable',
-    // Tab Asignación
-    'userInput', 'userDropdown',
-    'groupInput', 'groupDropdown',
-    'unassignedList', 'assignedList',
-    'emptyUnassigned', 'emptyAssigned',
-    'unassignedCount', 'assignedCount',
-    'changesBadge', 'changesBadgeValue',
-    'changesSummary', 'assignSummaryRow', 'unassignSummaryRow',
-    'assignCount', 'unassignCount',
-    'emptyState', 'assignmentPanel', 'assignmentLoader',
-    'applyBtn', 'cancelBtn',
     // Edit panel
     'editPanel', 'editBackdrop', 'editLoadingOverlay',
     'editFullName', 'editFullNameError',
-    'editIdentification', 'editIdentificationError',
     'editSapUser', 'editSapUserError',
     'editSapPass', 'editPassIcon',
     'editCredentialCompany',
@@ -51,9 +63,8 @@ export default class extends TabulatorController {
     'editSubmitBtn',
     // Create panel
     'createPanel', 'createBackdrop', 'createLoadingOverlay',
-    'createCompanySelect', 'createGroupSelect',
+    'createCompanySelect',
     'createFullName', 'createFullNameError',
-    'createIdentification', 'createIdentificationError',
     'createEmail', 'createEmailError',
     'createOcTypeWrapper', 'createOcType', 'createOcTypeError',
     'createSubmitBtn',
@@ -62,58 +73,42 @@ export default class extends TabulatorController {
     'accessTabBtn', 'accessTabContent',
     'accessRoleSearch', 'accessRoleList', 'accessRoleEmpty', 'accessRoleError',
     'accessGlobalSearch', 'accessGlobalSelectAll',
-    'accessGlobalList', 'accessGlobalEmpty', 'accessGlobalCount',
-    'accessSaveBtn',
+    'accessGlobalList', 'accessGlobalEmpty',
+    'accessCompanySearch', 'accessCompanySelectAll',
+    'accessCompanyList', 'accessCompanyEmpty',
+    'accessFooterNote', 'accessSaveBtn',
   ];
 
   // ── Estado ──────────────────────────────────────────────────────────────────
 
-  #companyId    = null;
+  // La compañía activa ya no se guarda acá: los endpoints nativos la leen de la
+  // session cookie, y `getApiHeaders()` arma el `cl-company-id` cuando hace falta.
   #permissions  = [];
-  #activeTab    = null;
-  #visibleTabs  = [];
 
-  // Lista tab
-  // (tabla principal gestionada por TabulatorController)
-
-  // Completar Registro tab
-  #completeTabulator = null;
+  // Tabla principal: la gestiona TabulatorController.
+  // Total real de filas que reporta el servidor. Tabulator solo conoce `last_page`,
+  // así que sin esto el contador miente en la última página (CLAUDE.md §17).
+  #totalRecords = 0;
 
   // Edit panel
+  // Ya no se guarda el registro completo: el PATCH manda solo los campos
+  // editables y el id va en el path, así que no hay nada que re-enviar tal cual.
   #editUserId           = null;
-  #editUserInfo         = null;
   #credentialsDirty     = false;
   #credentialsValidated = false;
 
   // Create panel
   #createDataLoaded = false;
 
-  // Asignación tab
-  #usersList         = [];
-  #usersFiltered     = [];
-  #groupsList        = [];
-  #groupsFiltered    = [];
-  #allCompanies      = [];
-  #assignedCompanies = [];
-  #unassignedCompanies = [];
-  #initialAssignedIds = new Set();
-  #currentAssignedIds = new Set();
-  #selectedUserId     = null;
-  #selectedGroupId    = -1;
-  #toAssign           = [];
-  #toUnassign         = [];
-  #draggedCompanyId   = null;
-  #draggedFromZone    = null;
-
   // Gestionar accesos (panel por usuario)
   #globalAccessAllowed   = false;   // permiso para el tab de permisos globales
+  #companyAccessAllowed  = false;   // permiso para el tab de compañías
   #accessUser            = null;    // usuario seleccionado (fila de la tabla)
   #accessActiveTab       = 'roles';
   // Roles tab
   #accessRoles           = [];
   #accessInitialRolId    = null;
   #accessCurrentRolId    = null;
-  #accessRolByUser       = 0;       // id de la asignación existente (0 = nueva)
   #accessRoleFilter      = '';
   // Permisos globales tab
   #accessGlobalPerms     = [];      // catálogo global (cacheado entre usuarios)
@@ -121,46 +116,50 @@ export default class extends TabulatorController {
   #accessGlobalCurrent   = new Set();
   #accessGlobalFilter    = '';
   #accessGlobalLoaded    = false;   // asignados del usuario actual ya cargados
+  // Compañías tab
+  #accessCompanies       = [];      // catálogo asignable (cacheado entre usuarios)
+  #accessCompaniesInitial = new Set();
+  #accessCompaniesCurrent = new Set();
+  // Compañías que el usuario tiene asignadas pero que YO no administro: se
+  // muestran marcadas y deshabilitadas (§26 — no se ocultan) y nunca viajan en el
+  // guardado, porque el servidor tampoco las toca.
+  #accessCompaniesLocked = [];
+  #accessCompanyFilter   = '';
+  #accessCompaniesLoaded = false;
 
   // ── Lifecycle ────────────────────────────────────────────────────────────────
 
   connect() {
-    const company = SStore.get('CurrentCompany');
-    this.#companyId  = company?.companyId ? parseInt(company.companyId) : null;
     this.#permissions = SStore.get('Permissions') || [];
-    this.#globalAccessAllowed = this.#hasPerm('Configurations_Permissions_GlobalAccess');
+    this.#globalAccessAllowed  = this.#hasPerm('Configurations_Permissions_GlobalAccess');
+    this.#companyAccessAllowed = this.#hasPerm('Configurations_Users_CompanyAssignment');
 
-    this.#buildVisibleTabs();
-
-    if (this.#visibleTabs.length === 0) {
+    // Sin tabs: el permiso de la pantalla es el de la lista. Antes lo gateaba el
+    // `data-perm` del botón del tab; ahora se verifica acá directamente.
+    if (!this.#hasPerm('Configurations_Users_ListAccess')) {
       Turbo.visit('/home');
       return;
     }
 
-    // Botón "Nuevo Usuario": habilitado solo con permiso S_RegUser; si no, queda
+    // Botón "Nuevo Usuario": habilitado solo con permiso; si no, queda
     // deshabilitado con tooltip explicativo (ver CLAUDE.md §26).
+    // El permiso es `Configurations_Users_Create` y ya no `S_RegUser`: es el que
+    // exige POST /api/users y el que sigue la convención §4.4 del estándar.
     if (this.hasCreateBtnTarget) {
-      if (this.#hasPerm('S_RegUser')) {
+      if (this.#hasPerm('Configurations_Users_Create')) {
         this.#enableCreateButton();
       } else if (this.hasCreateBtnWrapTarget) {
         this.#attachTooltip(this.createBtnWrapTarget);
       }
     }
 
-    // Activar el tab ANTES de super.connect() para que Tabulator inicialice
-    // en un contenedor visible (evita null en offsetWidth / elVisible)
-    this.#activateTab(this.#visibleTabs[0]);
-
-    // TabulatorController inicializa la tabla en el target "table"
+    // TabulatorController inicializa la tabla en el target "table". Ya no hace
+    // falta activar un tab antes: el contenedor siempre está visible, que era el
+    // motivo del orden anterior (Tabulator daba null en offsetWidth si nacía oculto).
     super.connect();   // construye la tabla y dispara la carga vía ajaxRequestFunc
   }
 
-  disconnect() {
-    this.#completeTabulator?.destroy();
-    super.disconnect?.();
-  }
-
-  // ── Configuración Tabulator (Tab Lista) ─────────────────────────────────────
+  // ── Configuración Tabulator ─────────────────────────────────────────────────
 
   getTableConfig() {
     return {
@@ -171,18 +170,25 @@ export default class extends TabulatorController {
       layout: 'fitColumns',
       placeholder: 'No hay usuarios',
       pagination: true,
+      paginationMode: 'remote',
       paginationSize: 10,
       paginationSizeSelector: [10, 25, 50],
-      paginationCounter: 'rows',
+      // El total real lo reporta el servidor; `'rows'` lo inferiría de
+      // last_page × pageSize y mentiría en la última página (CLAUDE.md §17).
+      paginationCounter: (pageSize, currentRow) => {
+        const total = this.#totalRecords;
+        if (!total) return '';
+        const to = Math.min(currentRow + pageSize - 1, total);
+        return `Mostrando ${currentRow.toLocaleString('es-CR')}-${to.toLocaleString('es-CR')} de ${total.toLocaleString('es-CR')} filas`;
+      },
       locale: TABULATOR_LOCALE,
       langs: TABULATOR_LANGS,
       dataLoaderLoading: TABULATOR_LOADING_HTML,
       columnDefaults: { headerSort: true },
       columns: this.getColumns(),
-      // Carga via el data-loader de Tabulator (igual que companies): dataLoaderLoading
-      // muestra el spinner a nivel de tabla durante el fetch. Paginacion local.
-      ajaxURL: '/api/User/accessible',
-      ajaxRequestFunc: () => this.#loadListData(),
+      // Paginación remota: el servidor recorta la página y devuelve el total.
+      ajaxURL: '/api/users',
+      ajaxRequestFunc: (_url, _config, params) => this.#fetchPage(params),
       ajaxResponse:    (_url, _params, response) => response,
     };
   }
@@ -200,12 +206,8 @@ export default class extends TabulatorController {
         flexGrow: 1, minWidth: 150,
         formatter: (cell) => this.#formatDateTime(cell.getValue()),
       },
-      {
-        title: 'Correo Confirmado',
-        field: 'EmailConfirmed',
-        width: 185, hozAlign: 'center',
-        formatter: (cell) => this.#boolIcon(cell.getValue()),
-      },
+      // "Correo Confirmado" se eliminó: `users` no tiene esa columna. El correo lo
+      // verifica el proveedor OIDC, no esta aplicación.
       {
         title: 'Estado',
         field: 'Active',
@@ -258,79 +260,36 @@ export default class extends TabulatorController {
     </span>`;
   }
 
-  // ── Tabs ─────────────────────────────────────────────────────────────────────
+  // ── Carga de datos ────────────────────────────────────────────────────────────
 
-  #buildVisibleTabs() {
-    this.tabBtnTargets.forEach(btn => {
-      const perm = btn.dataset.perm;
-      if (!perm || this.#hasPerm(perm)) {
-        this.#visibleTabs.push(btn.dataset.tabName);
-      } else {
-        btn.classList.add('hidden');
-      }
-    });
-  }
-
-  switchTab(event) {
-    const name = event.currentTarget.dataset.tabName;
-    if (name === this.#activeTab) return;
-    this.#activateTab(name);
-    this.#loadTabData(name);
-  }
-
-  #activateTab(name) {
-    this.#activeTab = name;
-
-    // Update tab buttons
-    this.tabBtnTargets.forEach(btn => {
-      const isActive = btn.dataset.tabName === name;
-      btn.classList.toggle('border-blue-600', isActive);
-      btn.classList.toggle('text-blue-600',   isActive);
-      btn.classList.toggle('border-transparent', !isActive);
-      btn.classList.toggle('text-gray-500',   !isActive);
-    });
-
-    // Show/hide content
-    this.tabContentTargets.forEach(panel => {
-      const visible = panel.dataset.tab === name;
-      panel.classList.toggle('hidden', !visible);
-      panel.classList.toggle('flex',   visible);
-    });
-
-    // Redraw solo en tab switches posteriores al init (this.table es null durante el init inicial)
-    if (name === 'list' && this.table) {
-      setTimeout(() => { try { this.table.redraw(true); } catch (_) {} }, 50);
-    } else if (name === 'complete-registration' && this.#completeTabulator) {
-      setTimeout(() => { try { this.#completeTabulator.redraw(true); } catch (_) {} }, 50);
-    }
-  }
-
-  #loadTabData(name) {
-    if (name === 'list')                   this.table?.setData();
-    if (name === 'complete-registration')  this.#loadCompleteRegData();
-    if (name === 'assignment')             this.#loadAssignmentInitialData();
-  }
-
-  // ── Tab Lista — carga de datos ────────────────────────────────────────────────
-
-  // Retorna el array de usuarios. Lo invoca ajaxRequestFunc, de modo que Tabulator
+  // Trae una página del servidor. Lo invoca ajaxRequestFunc, de modo que Tabulator
   // muestra dataLoaderLoading (spinner a nivel de tabla) durante el fetch.
-  async #loadListData() {
+  async #fetchPage(params) {
+    const size  = params?.size ?? 10;
+    const query = new URLSearchParams({ page: params?.page ?? 1, per_page: size });
+
     const name  = this.searchNameTarget.value.trim();
     const email = this.searchEmailTarget.value.trim();
+    if (name)  query.set('name',  name);
+    if (email) query.set('email', email);
+
     try {
-      const data = await this.#apiFetch(
-        `/api/User/accessible?fullName=${encodeURIComponent(name)}&email=${encodeURIComponent(email)}&activeOnly=false`
-      );
-      const rows = data.Data || [];
-      if (!rows.length) showToast(data.Message || 'No se encontraron usuarios.', 'warning');
-      return rows;
+      const json  = await this.#railsFetch(`/api/users?${query}`);
+      const total = json.Data?.Total ?? 0;
+      const items = json.Data?.Items ?? [];
+
+      this.#totalRecords = total;
+      if (!total) showToast('No se encontraron usuarios.', 'warning');
+
+      return { data: items, last_page: Math.max(1, Math.ceil(total / size)) };
     } catch (err) {
+      this.#totalRecords = 0;
       showToast(err.message || 'Error al cargar usuarios.', 'error');
-      return [];
+      return { data: [], last_page: 1 };
     }
   }
 
+  // setData() recarga desde el servidor y vuelve a la página 1.
   searchUsers() {
     this.table?.setData();
   }
@@ -357,23 +316,21 @@ export default class extends TabulatorController {
     this.editPanelTarget.classList.add('translate-x-full');
     this.editBackdropTarget.classList.add('hidden');
     document.body.style.overflow = '';
-    this.#editUserId   = null;
-    this.#editUserInfo = null;
+    this.#editUserId = null;
   }
 
   async #loadEditUser(userId) {
     this.editLoadingOverlayTarget.classList.remove('hidden');
     try {
       const [userRes, companiesRes] = await Promise.all([
-        this.#apiFetch(`/api/User/information?userId=${encodeURIComponent(userId)}`),
-        this.#apiFetch(`/api/User/companies?userId=${encodeURIComponent(userId)}`),
+        this.#railsFetch(`/api/users/${encodeURIComponent(userId)}`),
+        this.#railsFetch(`/api/users/${encodeURIComponent(userId)}/companies`),
       ]);
       if (!userRes.Data) {
         showAlert({ type: ALERT_TYPES.ERROR, title: 'Error', message: 'No se encontró el usuario.' });
         this.closeEditPanel();
         return;
       }
-      this.#editUserInfo = userRes.Data;
       this.#fillEditForm(userRes.Data);
       this.#populateEditCompanies(companiesRes.Data || []);
     } catch (err) {
@@ -385,15 +342,13 @@ export default class extends TabulatorController {
   }
 
   #fillEditForm(user) {
-    this.editFullNameTarget.value       = user.FullName       || '';
-    this.editIdentificationTarget.value = user.Identification || '';
-    this.editSapUserTarget.value        = user.SapUser        || '';
+    this.editFullNameTarget.value       = user.FullName || '';
+    this.editSapUserTarget.value        = user.SapUser  || '';
     this.editSapPassTarget.value        = '';
     this.editActiveCheckTarget.checked  = !!user.Active;
     this.#credentialsDirty     = false;
     this.#credentialsValidated = false;
     this.editFullNameErrorTarget.classList.add('hidden');
-    this.editIdentificationErrorTarget.classList.add('hidden');
     this.editSapUserErrorTarget.classList.add('hidden');
     this.#updateEditTestCredBtn();
     this.#updateEditSubmitBtn();
@@ -404,7 +359,7 @@ export default class extends TabulatorController {
     companies.forEach(c => {
       const opt = document.createElement('option');
       opt.value = c.Id;
-      opt.textContent = c.EmsrNombreComercial || c.EmsrNombre;
+      opt.textContent = c.Name;
       this.editCredentialCompanyTarget.appendChild(opt);
     });
   }
@@ -467,9 +422,14 @@ export default class extends TabulatorController {
     this.editTestCredLabelTarget.textContent = 'Probando...';
 
     try {
-      const res = await this.#apiFetch('/api/Connections/validate-user-credentials', {
+      // `UserId` distingue este caso del perfil propio: son las credenciales de
+      // OTRO usuario, así que el endpoint exige `Configurations_Users_Update` y
+      // valida la compañía contra las asignaciones de ese usuario, no las mías.
+      const res = await this.#railsFetch('/api/sap_credential_validations', {
         method: 'POST',
-        body: JSON.stringify({ SapUser: sapUser, SapPass: sapPass, CompanyId: companyId }),
+        body: JSON.stringify({
+          UserId: this.#editUserId, SapUser: sapUser, SapPass: sapPass, CompanyId: companyId,
+        }),
       });
       if (res.Data === true) {
         this.#credentialsValidated = true;
@@ -493,18 +453,19 @@ export default class extends TabulatorController {
     this.editLoadingOverlayTarget.classList.remove('hidden');
     this.editSubmitBtnTarget.disabled = true;
 
+    // Solo los campos editables: el id va en el path y `SapPass` en blanco
+    // significa "no la cambies" — el servidor no la toca si no viene con valor.
     const payload = {
-      ...this.#editUserInfo,
-      Id:             this.#editUserId,
-      FullName:       this.editFullNameTarget.value.trim(),
-      Identification: this.editIdentificationTarget.value.trim(),
-      SapUser:        this.editSapUserTarget.value.trim(),
-      SapPass:        this.editSapPassTarget.value || '',
-      Active:         this.editActiveCheckTarget.checked,
+      FullName: this.editFullNameTarget.value.trim(),
+      SapUser:  this.editSapUserTarget.value.trim(),
+      SapPass:  this.editSapPassTarget.value || '',
+      Active:   this.editActiveCheckTarget.checked,
     };
 
     try {
-      await this.#apiFetch('/api/User', { method: 'PATCH', body: JSON.stringify(payload) });
+      await this.#railsFetch(`/api/users/${encodeURIComponent(this.#editUserId)}`, {
+        method: 'PATCH', body: JSON.stringify(payload),
+      });
       showToast('Usuario actualizado con éxito', 'success');
       this.closeEditPanel();
       this.table?.setData();
@@ -523,9 +484,8 @@ export default class extends TabulatorController {
       errorTarget.classList.toggle('hidden', ok);
       if (!ok) valid = false;
     };
-    check(this.editFullNameTarget,       this.editFullNameErrorTarget,       () => !!this.editFullNameTarget.value.trim());
-    check(this.editIdentificationTarget, this.editIdentificationErrorTarget, () => !!this.editIdentificationTarget.value.trim());
-    check(this.editSapUserTarget,        this.editSapUserErrorTarget,        () => !!this.editSapUserTarget.value.trim());
+    check(this.editFullNameTarget, this.editFullNameErrorTarget, () => !!this.editFullNameTarget.value.trim());
+    check(this.editSapUserTarget,  this.editSapUserErrorTarget,  () => !!this.editSapUserTarget.value.trim());
     return valid;
   }
 
@@ -534,7 +494,7 @@ export default class extends TabulatorController {
   openCreatePanel() {
     // Defensa en profundidad: el botón se deshabilita sin permiso, pero
     // reverificamos aquí (ver CLAUDE.md §26).
-    if (!this.#hasPerm('S_RegUser')) {
+    if (!this.#hasPerm('Configurations_Users_Create')) {
       showToast('No cuenta con permisos para crear usuarios.', 'info');
       return;
     }
@@ -551,31 +511,24 @@ export default class extends TabulatorController {
     document.body.style.overflow = '';
   }
 
+  // Compañías del administrador: son las únicas a las que puede asignar al usuario
+  // nuevo, y es lo mismo que valida POST /api/users.
+  //
+  // El .NET pedía además `GET /api/Group/GetGroupsByUser` para el select "Cuenta".
+  // No se migró: no hay grupos en esta versión (CLAUDE.md §31), así que el campo se
+  // eliminó del formulario junto con la consulta que lo alimentaba (CLAUDE.md §24).
   async #loadCreateData() {
     this.createLoadingOverlayTarget.classList.remove('hidden');
     try {
-      const [companiesRes, groupsRes] = await Promise.all([
-        this.#apiFetch(`/api/Companies/GetCompaniesByUserGroup?companyId=${this.#companyId}`),
-        this.#apiFetch(`/api/Group/GetGroupsByUser?companyId=${this.#companyId}`),
-      ]);
-
-      const companies = companiesRes.Data || [];
-      const groups    = groupsRes.Data || [];
+      const companiesRes = await this.#railsFetch('/api/companies');
+      const companies    = companiesRes.Data || [];
 
       this.createCompanySelectTarget.innerHTML = '';
       companies.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.Id;
-        opt.textContent = c.EmsrNombre;
+        opt.textContent = c.Name;
         this.createCompanySelectTarget.appendChild(opt);
-      });
-
-      this.createGroupSelectTarget.innerHTML = '';
-      groups.forEach(g => {
-        const opt = document.createElement('option');
-        opt.value = g.Id;
-        opt.textContent = g.GroupName;
-        this.createGroupSelectTarget.appendChild(opt);
       });
 
       if (companies.length) this.#toggleCreateOCType(parseInt(companies[0].Id));
@@ -613,22 +566,18 @@ export default class extends TabulatorController {
 
     const valid =
       this.createFullNameTarget.value.trim() &&
-      this.createIdentificationTarget.value.trim() &&
       emailRegex.test(this.createEmailTarget.value.trim()) &&
       this.createCompanySelectTarget.value &&
-      this.createGroupSelectTarget.value &&
       (!isOCVisible || this.createOcTypeTarget.value);
 
     this.createSubmitBtnTarget.disabled = !valid;
   }
 
   #resetCreateForm() {
-    this.createFullNameTarget.value       = '';
-    this.createIdentificationTarget.value = '';
-    this.createEmailTarget.value          = '';
-    this.createOcTypeTarget.value         = '';
+    this.createFullNameTarget.value = '';
+    this.createEmailTarget.value    = '';
+    this.createOcTypeTarget.value   = '';
     this.createFullNameErrorTarget.classList.add('hidden');
-    this.createIdentificationErrorTarget.classList.add('hidden');
     this.createEmailErrorTarget.classList.add('hidden');
     this.createOcTypeErrorTarget.classList.add('hidden');
     this.createSubmitBtnTarget.disabled = true;
@@ -640,28 +589,21 @@ export default class extends TabulatorController {
     this.createLoadingOverlayTarget.classList.remove('hidden');
     this.createSubmitBtnTarget.disabled = true;
 
+    // Solo lo que existe como columna. El .NET recibía además `UserName`,
+    // `EmailConfirmed`, `Owner`, `passwordHash`/`password` y `Active: false`: la
+    // contraseña y la confirmación de correo las resuelve ahora el proveedor OIDC,
+    // y el usuario nace activo (si naciera inactivo, el default_scope de
+    // SoftDeletable lo escondería del listado apenas se guarda).
     const isOCVisible = !this.createOcTypeWrapperTarget.classList.contains('hidden');
     const payload = {
-      Id:                  '',
-      CompanyIdDB:         parseInt(this.createCompanySelectTarget.value),
-      GroupIdDB:           parseInt(this.createGroupSelectTarget.value),
+      CompanyId:           parseInt(this.createCompanySelectTarget.value),
       FullName:            this.createFullNameTarget.value.trim(),
-      Identification:      this.createIdentificationTarget.value.trim(),
-      UserName:            this.createEmailTarget.value.trim(),
       Email:               this.createEmailTarget.value.trim(),
-      EmailConfirmed:      false,
-      Owner:               false,
-      CreateDate:          new Date().toISOString(),
-      Active:              false,
-      passwordHash:        '',
-      sapUser:             '',
-      sapPass:             '',
-      password:            '',
       DocNumberPreference: isOCVisible ? (this.createOcTypeTarget.value || '') : '',
     };
 
     try {
-      await this.#apiFetch('/api/User', { method: 'POST', body: JSON.stringify(payload) });
+      await this.#railsFetch('/api/users', { method: 'POST', body: JSON.stringify(payload) });
       showToast('Usuario registrado exitosamente', 'success');
       this.closeCreatePanel();
       this.table?.setData();
@@ -684,540 +626,29 @@ export default class extends TabulatorController {
       if (!ok) valid = false;
     };
 
-    check(this.createFullNameErrorTarget,       () => !!this.createFullNameTarget.value.trim());
-    check(this.createIdentificationErrorTarget, () => !!this.createIdentificationTarget.value.trim());
-    check(this.createEmailErrorTarget,          () => emailRegex.test(this.createEmailTarget.value.trim()));
+    check(this.createFullNameErrorTarget, () => !!this.createFullNameTarget.value.trim());
+    check(this.createEmailErrorTarget,    () => emailRegex.test(this.createEmailTarget.value.trim()));
     if (isOCVisible) check(this.createOcTypeErrorTarget, () => !!this.createOcTypeTarget.value);
 
     return valid;
   }
 
-  // ── Tab Completar Registro ───────────────────────────────────────────────────
-
-  async #loadCompleteRegData() {
-    if (!this.#completeTabulator) {
-      await this.#initCompleteTable();   // su ajaxRequestFunc dispara la carga inicial (loader de tabla)
-      return;
-    }
-    this.#completeTabulator.setData();   // recarga via ajaxRequestFunc (loader a nivel de tabla)
-  }
-
-  // Retorna usuarios inactivos. Lo invoca ajaxRequestFunc => dataLoaderLoading (loader de tabla).
-  async #fetchInactiveUsers() {
-    try {
-      const data = await this.#apiFetch(`/api/User/GetInactiveUsers?companyId=${this.#companyId}`);
-      const rows = (data.Data || []).map(u => ({
-        ...u,
-        _activeLabel:    u.Active         ? 'Sí' : 'No',
-        _confirmedLabel: u.EmailConfirmed ? 'Sí' : 'No',
-      }));
-      if (!rows.length) showToast(data.Message || 'No hay usuarios pendientes de activación.', 'info');
-      return rows;
-    } catch (err) {
-      showToast(err.message || 'Error al cargar usuarios inactivos.', 'error');
-      return [];
-    }
-  }
-
-  async #initCompleteTable() {
-    const { TabulatorFull } = await import('tabulator-tables');
-    this.#completeTabulator = new TabulatorFull(this.completeTableTarget, {
-      height: '100%',
-      maxHeight: undefined,
-      layout: 'fitColumns',
-      placeholder: 'No hay usuarios pendientes',
-      locale: TABULATOR_LOCALE,
-      langs: TABULATOR_LANGS,
-      dataLoaderLoading: TABULATOR_LOADING_HTML,
-      ajaxURL: '/api/User/GetInactiveUsers',
-      ajaxRequestFunc: () => this.#fetchInactiveUsers(),
-      ajaxResponse:    (_url, _params, response) => response,
-      pagination: true,
-      paginationSize: 10,
-      paginationSizeSelector: [5, 10, 25],
-      paginationCounter: 'rows',
-      columnDefaults: { headerSort: false },
-      columns: [
-        { title: 'Nombre',         field: 'FullName',       flexGrow: 2, minWidth: 150 },
-        { title: 'Correo',         field: 'Email',          flexGrow: 2, minWidth: 180 },
-        {
-          title: 'Correo Confirmado', field: 'EmailConfirmed', width: 185, hozAlign: 'center',
-          formatter: (cell) => this.#boolIcon(cell.getValue()),
-        },
-        {
-          title: 'Estado', field: 'Active', width: 100, hozAlign: 'center',
-          formatter: (cell) => this.#statusBadge(cell.getValue() ? 'active' : 'inactive'),
-        },
-        {
-          title: 'Acciones', field: '_actions', width: 120,
-          hozAlign: 'center', headerSort: false,
-          formatter: () => `
-            <button type="button" data-action-type="activate" data-tooltip="Activar Usuario"
-                    class="p-1.5 text-blue-600 rounded hover:bg-blue-50 transition-colors cursor-pointer mr-1">
-              <span class="material-icons text-base">how_to_reg</span>
-            </button>
-            <button type="button" data-action-type="resend" data-tooltip="Reenviar Correo Confirmación"
-                    class="p-1.5 text-blue-600 rounded hover:bg-blue-50 transition-colors cursor-pointer">
-              <span class="material-icons text-base">send</span>
-            </button>`,
-          cellClick: (e, cell) => {
-            const btn = e.target.closest('button[data-action-type]');
-            if (!btn) return;
-            const row = cell.getRow().getData();
-            if (btn.dataset.actionType === 'activate')  this.#activateUser(row);
-            if (btn.dataset.actionType === 'resend')    this.#resendConfirmation(row);
-          },
-        },
-      ],
-    });
-    // Setup tooltip para la segunda tabla (setupTooltip() base usa this.tableTarget;
-    // replicamos la delegación directamente sobre completeTableTarget)
-    if (!document.getElementById('cl-tabulator-tooltip')) this.setupTooltip?.();
-    const tip = document.getElementById('cl-tabulator-tooltip');
-    if (tip) {
-      let activeBtn = null;
-      this.completeTableTarget.addEventListener('mouseover', (e) => {
-        const btn = e.target.closest('[data-tooltip]');
-        if (btn && btn !== activeBtn) { activeBtn = btn; tip.textContent = btn.dataset.tooltip; tip.style.opacity = '1'; }
-        else if (!btn) { activeBtn = null; tip.style.opacity = '0'; }
-      });
-      this.completeTableTarget.addEventListener('mousemove', (e) => {
-        if (!activeBtn) return;
-        tip.style.left = (e.clientX + 10) + 'px';
-        tip.style.top  = (e.clientY - 32) + 'px';
-      });
-      this.completeTableTarget.addEventListener('mouseleave', () => { activeBtn = null; tip.style.opacity = '0'; });
-    }
-  }
-
-  async #activateUser(user) {
-    this.#completeTabulator?.alert(TABULATOR_LOADING_HTML);
-    try {
-      await this.#apiFetch(`/api/User/activate?userId=${encodeURIComponent(user.Id)}`, { method: 'PATCH' });
-      showToast('El usuario se activó con éxito', 'success');
-      this.#completeTabulator?.clearAlert();
-      await this.#loadCompleteRegData();
-    } catch (err) {
-      this.#completeTabulator?.clearAlert();
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al activar usuario', message: err.message });
-    }
-  }
-
-  async #resendConfirmation(user) {
-    this.#completeTabulator?.alert(TABULATOR_LOADING_HTML);
-    try {
-      await this.#apiFetch(`/api/User/email-confirmations?userId=${encodeURIComponent(user.Id)}`, { method: 'POST' });
-      showToast('El correo de confirmación ha sido enviado con éxito', 'success');
-    } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al reenviar correo', message: err.message });
-    } finally {
-      this.#completeTabulator?.clearAlert();
-    }
-  }
-
-  // ── Tab Asignación — carga inicial ──────────────────────────────────────────
-
-  #showAssignmentLoader() { if (this.hasAssignmentLoaderTarget) this.assignmentLoaderTarget.classList.remove('hidden'); }
-  #hideAssignmentLoader() { if (this.hasAssignmentLoaderTarget) this.assignmentLoaderTarget.classList.add('hidden'); }
-
-  async #loadAssignmentInitialData() {
-    if (this.#usersList.length) return; // ya cargado
-
-    this.#showAssignmentLoader();
-    try {
-      const [usersRes, groupsRes, companiesRes] = await Promise.all([
-        this.#apiFetch('/api/User/for-assignments'),
-        this.#apiFetch('/api/Group/for-assignments'),
-        this.#apiFetch('/api/Companies/for-assignment?groupId=-1'),
-      ]);
-
-      this.#usersList     = usersRes.Data || [];
-      this.#usersFiltered = [...this.#usersList];
-
-      const allGroup = { Id: -1, GroupName: 'Todos' };
-      this.#groupsList    = [allGroup, ...(groupsRes.Data || [])];
-      this.#groupsFiltered = [...this.#groupsList];
-
-      this.#allCompanies = companiesRes.Data || [];
-    } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al cargar datos', message: err.message });
-    } finally {
-      this.#hideAssignmentLoader();
-    }
-  }
-
-  // ── Autocomplete Usuario ─────────────────────────────────────────────────────
-
-  showUserDropdown() {
-    this.#usersFiltered = [...this.#usersList];
-    this.#renderUserDropdown();
-  }
-
-  filterUsers() {
-    const q = this.userInputTarget.value.toLowerCase();
-    this.#usersFiltered = q
-      ? this.#usersList.filter(u => u.Email.toLowerCase().includes(q))
-      : [...this.#usersList];
-    this.#renderUserDropdown();
-  }
-
-  #renderUserDropdown() {
-    const ul = this.userDropdownTarget;
-    ul.innerHTML = '';
-    this.#usersFiltered.slice(0, 50).forEach(u => {
-      const li = document.createElement('li');
-      li.textContent = u.Email;
-      li.className = 'px-3 py-2 hover:bg-blue-50 cursor-pointer';
-      li.addEventListener('mousedown', () => {
-        this.userInputTarget.value = u.Email;
-        ul.classList.add('hidden');
-        this.#onUserSelected(u);
-      });
-      ul.appendChild(li);
-    });
-    ul.classList.toggle('hidden', this.#usersFiltered.length === 0);
-
-    const hide = () => ul.classList.add('hidden');
-    this.userInputTarget.addEventListener('blur', hide, { once: true });
-  }
-
-  async #onUserSelected(user) {
-    this.#selectedUserId = user.Id;
-    this.#clearCompanyLists();
-
-    this.#showAssignmentLoader();
-    try {
-      const res = await this.#apiFetch(
-        `/api/User/assigned-companies?userId=${encodeURIComponent(user.Id)}`
-      );
-      const assignedIds = new Set((res.Data || []).map(c => c.Id));
-
-      this.#allCompanies.forEach(c => {
-        if (assignedIds.has(c.Id)) {
-          this.#assignedCompanies.push(c);
-          this.#initialAssignedIds.add(c.Id);
-          this.#currentAssignedIds.add(c.Id);
-        } else {
-          this.#unassignedCompanies.push(c);
-        }
-      });
-
-      this.#renderLists();
-      this.emptyStateTarget.classList.add('hidden');
-      this.assignmentPanelTarget.classList.remove('hidden');
-      this.assignmentPanelTarget.classList.add('flex');
-    } catch (err) {
-      showToast(err.message || 'Error al cargar las compañías del usuario.', 'error');
-    } finally {
-      this.#hideAssignmentLoader();
-    }
-  }
-
-  // ── Autocomplete Grupo ───────────────────────────────────────────────────────
-
-  showGroupDropdown() {
-    this.#groupsFiltered = [...this.#groupsList];
-    this.#renderGroupDropdown();
-  }
-
-  filterGroups() {
-    const q = this.groupInputTarget.value.toLowerCase();
-    this.#groupsFiltered = q
-      ? this.#groupsList.filter(g => g.GroupName.toLowerCase().includes(q))
-      : [...this.#groupsList];
-    this.#renderGroupDropdown();
-  }
-
-  #renderGroupDropdown() {
-    const ul = this.groupDropdownTarget;
-    ul.innerHTML = '';
-    this.#groupsFiltered.forEach(g => {
-      const li = document.createElement('li');
-      li.textContent = g.GroupName;
-      li.className = 'px-3 py-2 hover:bg-blue-50 cursor-pointer';
-      li.addEventListener('mousedown', () => {
-        this.groupInputTarget.value = g.GroupName;
-        ul.classList.add('hidden');
-        this.#onGroupSelected(g);
-      });
-      ul.appendChild(li);
-    });
-    ul.classList.toggle('hidden', this.#groupsFiltered.length === 0);
-
-    const hide = () => ul.classList.add('hidden');
-    this.groupInputTarget.addEventListener('blur', hide, { once: true });
-  }
-
-  async #onGroupSelected(group) {
-    this.#selectedGroupId = group.Id ?? -1;
-
-    this.#showAssignmentLoader();
-    try {
-      const res = await this.#apiFetch(`/api/Companies/for-assignment?groupId=${this.#selectedGroupId}`);
-      this.#allCompanies = res.Data || [];
-
-      if (this.#selectedUserId) {
-        await this.#onUserSelected(
-          this.#usersList.find(u => u.Id === this.#selectedUserId)
-        );
-      }
-    } catch (err) {
-      showToast(err.message || 'Error al cargar compañías del grupo.', 'error');
-    } finally {
-      this.#hideAssignmentLoader();
-    }
-  }
-
-  // ── Dual list ─────────────────────────────────────────────────────────────────
-
-  #renderLists() {
-    this.#renderSingleList(this.unassignedListTarget, this.emptyUnassignedTarget, this.#unassignedCompanies, 'unassigned');
-    this.#renderSingleList(this.assignedListTarget,   this.emptyAssignedTarget,   this.#assignedCompanies,   'assigned');
-    this.unassignedCountTarget.textContent = this.#unassignedCompanies.length;
-    this.assignedCountTarget.textContent   = this.#assignedCompanies.length;
-  }
-
-  #renderSingleList(listEl, emptyEl, companies, zone) {
-    // Remove all draggable items, keep the empty state div
-    Array.from(listEl.children).forEach(child => {
-      if (child !== emptyEl) child.remove();
-    });
-
-    if (companies.length === 0) {
-      emptyEl.classList.remove('hidden');
-      return;
-    }
-    emptyEl.classList.add('hidden');
-
-    const isAssigned = zone === 'assigned';
-    companies.forEach(c => {
-      const div = document.createElement('div');
-      div.draggable = true;
-      div.className = `flex items-center gap-3 p-3 mb-2 bg-white border rounded-lg cursor-move
-        transition-all hover:shadow-md hover:-translate-y-0.5
-        ${isAssigned ? 'border-l-4 border-l-blue-400 border-gray-200' : 'border-gray-200'}`;
-      div.innerHTML = `
-        <span class="material-icons text-sm text-gray-400">drag_indicator</span>
-        <span class="flex-1 text-sm text-gray-700">${c.ComercialName || c.LegalName}</span>
-        <span class="text-xs text-gray-400">#${c.Id}</span>`;
-      div.addEventListener('dragstart', () => {
-        this.#draggedCompanyId = c.Id;
-        this.#draggedFromZone  = zone;
-        div.classList.add('opacity-50');
-      });
-      div.addEventListener('dragend', () => {
-        div.classList.remove('opacity-50');
-      });
-      listEl.appendChild(div);
-    });
-  }
-
-  // ── Drag & drop ───────────────────────────────────────────────────────────────
-
-  onDragOver(event) {
-    event.preventDefault();
-    event.currentTarget.classList.add('border-blue-400', 'bg-blue-50');
-  }
-
-  onDragLeave(event) {
-    event.currentTarget.classList.remove('border-blue-400', 'bg-blue-50');
-  }
-
-  onDrop(event) {
-    event.preventDefault();
-    event.currentTarget.classList.remove('border-blue-400', 'bg-blue-50');
-    const targetZone = event.currentTarget.dataset.dropZone;
-    if (!this.#draggedCompanyId || this.#draggedFromZone === targetZone) return;
-
-    const companyId = this.#draggedCompanyId;
-    if (targetZone === 'assigned') {
-      const idx = this.#unassignedCompanies.findIndex(c => c.Id === companyId);
-      if (idx !== -1) {
-        const [company] = this.#unassignedCompanies.splice(idx, 1);
-        this.#assignedCompanies.push(company);
-        this.#currentAssignedIds.add(companyId);
-      }
-    } else {
-      const idx = this.#assignedCompanies.findIndex(c => c.Id === companyId);
-      if (idx !== -1) {
-        const [company] = this.#assignedCompanies.splice(idx, 1);
-        this.#unassignedCompanies.push(company);
-        this.#currentAssignedIds.delete(companyId);
-      }
-    }
-    this.#draggedCompanyId = null;
-    this.#draggedFromZone  = null;
-    this.#calculateChanges();
-    this.#renderLists();
-  }
-
-  #transferCompany(company, fromZone) {
-    if (fromZone === 'unassigned') {
-      this.#unassignedCompanies = this.#unassignedCompanies.filter(c => c.Id !== company.Id);
-      this.#assignedCompanies.push(company);
-      this.#currentAssignedIds.add(company.Id);
-    } else {
-      this.#assignedCompanies = this.#assignedCompanies.filter(c => c.Id !== company.Id);
-      this.#unassignedCompanies.push(company);
-      this.#currentAssignedIds.delete(company.Id);
-    }
-    this.#calculateChanges();
-    this.#renderLists();
-  }
-
-  assignAll() {
-    this.#unassignedCompanies.forEach(c => {
-      this.#assignedCompanies.push(c);
-      this.#currentAssignedIds.add(c.Id);
-    });
-    this.#unassignedCompanies = [];
-    this.#calculateChanges();
-    this.#renderLists();
-  }
-
-  unassignAll() {
-    this.#assignedCompanies.forEach(c => {
-      this.#unassignedCompanies.push(c);
-      this.#currentAssignedIds.delete(c.Id);
-    });
-    this.#assignedCompanies = [];
-    this.#calculateChanges();
-    this.#renderLists();
-  }
-
-  #calculateChanges() {
-    this.#toAssign   = [];
-    this.#toUnassign = [];
-
-    this.#currentAssignedIds.forEach(id => {
-      if (!this.#initialAssignedIds.has(id)) this.#toAssign.push(id);
-    });
-    this.#initialAssignedIds.forEach(id => {
-      if (!this.#currentAssignedIds.has(id)) this.#toUnassign.push(id);
-    });
-
-    const hasChanges = this.#toAssign.length > 0 || this.#toUnassign.length > 0;
-    const total      = this.#toAssign.length + this.#toUnassign.length;
-
-    this.applyBtnTarget.disabled  = !hasChanges;
-    this.cancelBtnTarget.disabled = !hasChanges;
-
-    if (hasChanges) {
-      this.changesBadgeTarget.classList.remove('hidden');
-      this.changesBadgeTarget.classList.add('flex');
-      this.changesBadgeValueTarget.textContent = total;
-    } else {
-      this.changesBadgeTarget.classList.add('hidden');
-      this.changesBadgeTarget.classList.remove('flex');
-    }
-
-    this.#updateSummary();
-  }
-
-  #updateSummary() {
-    const hasChanges = this.#toAssign.length > 0 || this.#toUnassign.length > 0;
-    this.changesSummaryTarget.classList.toggle('hidden', !hasChanges);
-
-    if (this.#toAssign.length > 0) {
-      this.assignSummaryRowTarget.classList.remove('hidden');
-      this.assignSummaryRowTarget.classList.add('flex');
-      this.assignCountTarget.textContent = this.#toAssign.length;
-    } else {
-      this.assignSummaryRowTarget.classList.add('hidden');
-      this.assignSummaryRowTarget.classList.remove('flex');
-    }
-
-    if (this.#toUnassign.length > 0) {
-      this.unassignSummaryRowTarget.classList.remove('hidden');
-      this.unassignSummaryRowTarget.classList.add('flex');
-      this.unassignCountTarget.textContent = this.#toUnassign.length;
-    } else {
-      this.unassignSummaryRowTarget.classList.add('hidden');
-      this.unassignSummaryRowTarget.classList.remove('flex');
-    }
-  }
-
-  #clearCompanyLists() {
-    this.#assignedCompanies   = [];
-    this.#unassignedCompanies = [];
-    this.#initialAssignedIds.clear();
-    this.#currentAssignedIds.clear();
-    this.#toAssign          = [];
-    this.#toUnassign        = [];
-    this.#draggedCompanyId  = null;
-    this.#draggedFromZone   = null;
-    this.applyBtnTarget.disabled  = true;
-    this.cancelBtnTarget.disabled = true;
-    this.changesBadgeTarget.classList.add('hidden');
-    this.changesBadgeTarget.classList.remove('flex');
-    this.changesSummaryTarget.classList.add('hidden');
-  }
-
-  async applyChanges() {
-    if (!this.#selectedUserId) {
-      showToast('Debe seleccionar un usuario.', 'warning');
-      return;
-    }
-    if (!this.#toAssign.length && !this.#toUnassign.length) {
-      showToast('No hay cambios para aplicar.', 'info');
-      return;
-    }
-
-    const selectedUser = this.#usersList.find(u => u.Id === this.#selectedUserId);
-    if (!selectedUser) return;
-
-    this.#showAssignmentLoader();
-    try {
-      const requests = [];
-      if (this.#toAssign.length) {
-        requests.push(this.#apiFetch('/api/User/bulk-assign-companies', {
-          method: 'POST',
-          body: JSON.stringify({ User: selectedUser.Email, CompanyIds: this.#toAssign }),
-        }));
-      }
-      if (this.#toUnassign.length) {
-        requests.push(this.#apiFetch('/api/User/bulk-unassign-companies', {
-          method: 'POST',
-          body: JSON.stringify({ User: selectedUser.Email, CompanyIds: this.#toUnassign }),
-        }));
-      }
-      await Promise.all(requests);
-
-      showToast('Cambios aplicados exitosamente', 'success');
-
-      // Actualizar estado inicial
-      this.#initialAssignedIds.clear();
-      this.#currentAssignedIds.forEach(id => this.#initialAssignedIds.add(id));
-      this.#toAssign   = [];
-      this.#toUnassign = [];
-      this.#calculateChanges();
-    } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al aplicar cambios', message: err.message });
-    } finally {
-      this.#hideAssignmentLoader();
-    }
-  }
-
-  async cancelChanges() {
-    if (this.#selectedUserId) {
-      const user = this.#usersList.find(u => u.Id === this.#selectedUserId);
-      if (user) {
-        this.#clearCompanyLists();
-        await this.#onUserSelected(user);
-      }
-    } else {
-      this.#clearCompanyLists();
-    }
-  }
-
   // ── Gestionar accesos (panel por usuario) ──────────────────────────────────────
   //
-  // Tab "Roles": asignación de un rol por usuario y compañía.
-  //   - GET  /api/Rol/GetRoles?companyId            → roles de la compañía
-  //   - GET  /api/Rol/GetRolUserCompAssign?rolId=0  → asignación actual del usuario
-  //   - POST /api/Rol/AssignRolByUserComp           → crear/editar asignación
+  // Tab "Roles" (nativo): un rol por usuario y compañía.
+  //   - GET /api/roles                → catálogo de roles del producto
+  //   - GET /api/users/:id/role       → rol del usuario en la compañía activa
+  //   - PUT /api/users/:id/role       → asignar (reemplaza el rol anterior)
+  // La compañía la pone la sesión: ya no viaja como parámetro, y el servidor
+  // resuelve solo si el guardado es alta o cambio (el .NET exigía mandarle el id
+  // de la asignación existente en `RolByUser`).
   //
-  // Tab "Permisos globales" (solo si Configurations_Permissions_GlobalAccess):
+  // Tab "Permisos globales" (nativo, solo si Configurations_Permissions_GlobalAccess):
+  //   - GET /api/permissions/catalog?type=global → catálogo de permisos globales
+  //   - GET /api/users/:id/permissions           → asignados al usuario
+  //   - PUT /api/users/:id/permissions           → reemplaza el conjunto completo
+  // El .NET obligaba a calcular el delta acá y mandar DOS peticiones (POST de
+  // altas + DELETE de bajas) que podían quedar a medias si la segunda fallaba.
   //   - GET    /api/Permission/global-permissions       → catálogo global
   //   - GET    /api/User/global-permissions?userId=X     → asignados al usuario
   //   - POST   /api/Permission/bulk-global-permissions   → asignar
@@ -1230,6 +661,7 @@ export default class extends TabulatorController {
     this.#accessUser = row;
     this.#accessActiveTab = 'roles';
     this.#accessGlobalFilter = '';
+    this.#accessCompanyFilter = '';
     this.#accessRoleFilter = '';
 
     // Estado por-usuario: reiniciar al abrir para otro usuario (evita asteriscos
@@ -1240,15 +672,24 @@ export default class extends TabulatorController {
     this.#accessGlobalCurrent = new Set();
     this.#accessGlobalLoaded  = false;
     this.accessGlobalListTarget.innerHTML = '';
+    this.#accessCompaniesInitial = new Set();
+    this.#accessCompaniesCurrent = new Set();
+    this.#accessCompaniesLocked  = [];
+    this.#accessCompaniesLoaded  = false;
+    this.accessCompanyListTarget.innerHTML = '';
 
     this.accessUserLabelTarget.textContent = row.FullName || row.Email || '';
     this.accessGlobalSearchTarget.value = '';
+    this.accessCompanySearchTarget.value = '';
     this.accessRoleSearchTarget.value = '';
 
-    // Mostrar el tab de permisos globales solo si el usuario actual tiene el permiso
+    // Cada tab opcional se muestra solo si el usuario actual tiene su permiso.
     this.accessTabBtnTargets.forEach(btn => {
       if (btn.dataset.accessTab === 'global') {
         btn.classList.toggle('hidden', !this.#globalAccessAllowed);
+      }
+      if (btn.dataset.accessTab === 'companies') {
+        btn.classList.toggle('hidden', !this.#companyAccessAllowed);
       }
     });
 
@@ -1263,7 +704,7 @@ export default class extends TabulatorController {
   }
 
   // Cierre por X o backdrop (puede ser accidental): confirma si hay cambios sin
-  // guardar en cualquiera de los dos tabs.
+  // guardar en CUALQUIERA de los tabs.
   async requestCloseAccessPanel() {
     if (this.#anyAccessChanges()) {
       const ok = await confirm(
@@ -1276,13 +717,16 @@ export default class extends TabulatorController {
   }
 
   // Cancelar es un descarte explícito del tab activo: no confirma por esos
-  // cambios. Solo confirma si el OTRO tab tiene cambios que también se perderían.
+  // cambios. Solo confirma por los OTROS tabs, que se perderían sin que el
+  // usuario los estuviera mirando — y los nombra, para que sepa qué está por
+  // tirar. Con tres tabs ya no alcanza con mirar "el otro".
   async cancelAccessPanel() {
-    const otherTab = this.#accessActiveTab === 'roles' ? 'global' : 'roles';
-    if (this.#tabHasChanges(otherTab)) {
-      const label = otherTab === 'global' ? 'Permisos globales' : 'Roles';
+    const pending = this.#tabsWithChanges().filter(name => name !== this.#accessActiveTab);
+
+    if (pending.length) {
+      const labels = pending.map(name => ACCESS_TAB_LABELS[name]).join(' y ');
       const ok = await confirm(
-        `Hay cambios sin guardar en ${label} que se perderán si cierra el panel. ¿Desea cerrar de todos modos?`,
+        `Hay cambios sin guardar en ${labels} que se perderán si cierra el panel. ¿Desea cerrar de todos modos?`,
         'Cambios sin guardar'
       );
       if (!ok) return;
@@ -1302,10 +746,10 @@ export default class extends TabulatorController {
     if (name === this.#accessActiveTab) return;
     this.#activateAccessTab(name);
 
-    // Cargar asignados del usuario al entrar al tab global (una vez por usuario)
-    if (name === 'global' && !this.#accessGlobalLoaded) {
-      this.#loadAccessGlobalPerms();
-    }
+    // Carga perezosa: los datos del tab se traen la primera vez que se entra,
+    // una vez por usuario.
+    if (name === 'global'    && !this.#accessGlobalLoaded)    this.#loadAccessGlobalPerms();
+    if (name === 'companies' && !this.#accessCompaniesLoaded) this.#loadAccessCompanies();
   }
 
   #activateAccessTab(name) {
@@ -1323,11 +767,6 @@ export default class extends TabulatorController {
       panel.classList.toggle('hidden', panel.dataset.accessTab !== name);
     });
 
-    // El contador de globales solo es relevante en el tab de permisos globales
-    if (this.hasAccessGlobalCountTarget) {
-      this.accessGlobalCountTarget.parentElement.classList.toggle('invisible', name !== 'global');
-    }
-
     this.#updateAccessSaveBtn();
   }
 
@@ -1338,18 +777,16 @@ export default class extends TabulatorController {
     this.accessRoleErrorTarget.classList.add('hidden');
 
     try {
-      const [rolesRes, assignsRes] = await Promise.all([
-        this.#apiFetch(`/api/Rol/GetRoles?companyId=${this.#companyId}`),
-        this.#apiFetch(`/api/Rol/GetRolUserCompAssign?rolId=0&companyId=${this.#companyId}`),
+      const [rolesRes, assignRes] = await Promise.all([
+        this.#railsFetch('/api/roles'),
+        this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/role`),
       ]);
 
       this.#accessRoles = (rolesRes.Data || []).filter(r => r.Active && r.Name !== 'OWNER');
 
-      // Asignación actual del usuario (un rol por compañía)
-      const assigns = assignsRes.Data || [];
-      const mine = assigns.find(a => String(a.UserId) === String(this.#accessUser.Id));
-      this.#accessRolByUser    = mine ? mine.RolByUser : 0;
-      this.#accessInitialRolId = mine ? String(mine.RolId) : '';
+      // Asignación actual del usuario en la compañía activa (Data es null si no tiene)
+      const assigned = assignRes.Data;
+      this.#accessInitialRolId = assigned ? String(assigned.RoleId) : '';
       this.#accessCurrentRolId = this.#accessInitialRolId;
 
       this.#renderAccessRoleList();
@@ -1414,23 +851,19 @@ export default class extends TabulatorController {
       return;
     }
 
-    const payload = {
-      RolId:     parseInt(this.#accessCurrentRolId),
-      UserId:    this.#accessUser.Id,
-      CompanyId: this.#companyId,
-      RolByUser: this.#accessRolByUser || 0,
-    };
-
     this.accessLoaderTarget.classList.remove('hidden');
     try {
-      await this.#apiFetch('/api/Rol/AssignRolByUserComp/', {
-        method: 'POST',
-        body: JSON.stringify(payload),
+      // PUT: el cuerpo lleva el estado final (un rol) y reemplaza el anterior.
+      // Ni el id del usuario ni el de la compañía viajan en el cuerpo: uno está en
+      // el path y la otra sale de la sesión.
+      await this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/role`, {
+        method: 'PUT',
+        body: JSON.stringify({ RoleId: parseInt(this.#accessCurrentRolId) }),
       });
       showToast('Asignación realizada correctamente.', 'success');
       this.#accessInitialRolId = this.#accessCurrentRolId;
       this.#updateAccessSaveBtn();
-      this.#afterAccessSave('global');
+      this.#afterAccessSave();
     } catch (err) {
       showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar la asignación', message: err.message });
     } finally {
@@ -1445,10 +878,11 @@ export default class extends TabulatorController {
 
     try {
       const requests = [
-        this.#apiFetch(`/api/User/global-permissions?userId=${encodeURIComponent(this.#accessUser.Id)}`),
+        this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/permissions`),
       ];
+      // El catálogo es el mismo para todos: se pide una sola vez por sesión.
       if (this.#accessGlobalPerms.length === 0) {
-        requests.push(this.#apiFetch('/api/Permission/global-permissions'));
+        requests.push(this.#railsFetch('/api/permissions/catalog?type=global'));
       }
 
       const [assignedRes, catalogRes] = await Promise.all(requests);
@@ -1550,37 +984,193 @@ export default class extends TabulatorController {
   }
 
   async #saveAccessGlobal() {
-    const toAssign = [];
-    const toUnassign = [];
-    this.#accessGlobalCurrent.forEach(id => { if (!this.#accessGlobalInitial.has(id)) toAssign.push(id); });
-    this.#accessGlobalInitial.forEach(id => { if (!this.#accessGlobalCurrent.has(id)) toUnassign.push(id); });
-
-    if (toAssign.length === 0 && toUnassign.length === 0) {
+    if (!this.#tabHasChanges('global')) {
       showToast('No hay cambios para guardar', 'info');
       return;
     }
 
     this.accessLoaderTarget.classList.remove('hidden');
     try {
-      const requests = [];
-      if (toAssign.length > 0) {
-        requests.push(this.#apiFetch('/api/Permission/bulk-global-permissions', {
-          method: 'POST',
-          body: JSON.stringify({ UserId: this.#accessUser.Id, PermissionIds: toAssign }),
-        }));
-      }
-      if (toUnassign.length > 0) {
-        requests.push(this.#apiFetch('/api/Permission/bulk-global-permissions', {
-          method: 'DELETE',
-          body: JSON.stringify({ UserId: this.#accessUser.Id, PermissionIds: toUnassign }),
-        }));
-      }
-      await Promise.all(requests);
+      // Un solo PUT con el conjunto final: el servidor calcula el delta en una
+      // transacción. Antes eran dos peticiones (altas y bajas) y si la segunda
+      // fallaba el usuario quedaba con la mitad de los cambios aplicados.
+      await this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/permissions`, {
+        method: 'PUT',
+        body: JSON.stringify({ PermissionIds: [...this.#accessGlobalCurrent] }),
+      });
 
       showToast('Permisos globales actualizados exitosamente', 'success');
       this.#accessGlobalInitial = new Set(this.#accessGlobalCurrent);
       this.#updateAccessSaveBtn();
-      this.#afterAccessSave('roles');
+      this.#afterAccessSave();
+    } catch (err) {
+      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al aplicar cambios', message: err.message });
+    } finally {
+      this.accessLoaderTarget.classList.add('hidden');
+    }
+  }
+
+  // ── Tab Compañías ─────────────────────────────────────────────────────────────
+  //
+  // Reemplaza al tab "Asignación de compañías", que era un segundo buscador de
+  // usuarios peor que la tabla de la Lista. Acá el usuario ya está elegido.
+  //
+  //   - GET /api/companies/assignable → las que YO puedo asignar (no todas)
+  //   - GET /api/users/:id/companies  → las que el usuario tiene hoy
+  //   - PUT /api/users/:id/companies  → reemplaza el conjunto
+  //
+  // El catálogo se cachea entre usuarios; las asignadas no, obviamente.
+
+  async #loadAccessCompanies() {
+    this.accessLoaderTarget.classList.remove('hidden');
+
+    try {
+      const requests = [
+        this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/companies`),
+      ];
+      if (this.#accessCompanies.length === 0) {
+        requests.push(this.#railsFetch('/api/companies/assignable'));
+      }
+
+      const [assignedRes, catalogRes] = await Promise.all(requests);
+
+      if (catalogRes) {
+        this.#accessCompanies = catalogRes.Data || [];
+        if (this.#accessCompanies.length === 0) {
+          showToast('No hay compañías que usted pueda asignar.', 'warning');
+        }
+      }
+
+      // Las asignadas que NO están en el catálogo son de compañías fuera de mi
+      // alcance: se muestran marcadas y deshabilitadas para que el administrador
+      // sepa que existen (§26: no se ocultan, se explica por qué no se tocan) y
+      // quedan fuera del conjunto editable.
+      const assigned    = assignedRes.Data || [];
+      const catalogIds  = new Set(this.#accessCompanies.map(c => c.Id));
+      const editableIds = assigned.filter(c => catalogIds.has(c.Id)).map(c => c.Id);
+
+      this.#accessCompaniesLocked  = assigned.filter(c => !catalogIds.has(c.Id));
+      this.#accessCompaniesInitial = new Set(editableIds);
+      this.#accessCompaniesCurrent = new Set(editableIds);
+      this.#accessCompaniesLoaded  = true;
+
+      this.#renderAccessCompanyList();
+      this.#updateAccessSaveBtn();
+    } catch (err) {
+      showToast(err.message || 'Error al cargar las compañías del usuario', 'error');
+    } finally {
+      this.accessLoaderTarget.classList.add('hidden');
+    }
+  }
+
+  #filteredAccessCompanies() {
+    const q = this.#accessCompanyFilter.trim().toLowerCase();
+    if (!q) return this.#accessCompanies;
+    return this.#accessCompanies.filter(c => (c.Name || '').toLowerCase().includes(q));
+  }
+
+  #renderAccessCompanyList() {
+    const companies = this.#filteredAccessCompanies();
+    const locked    = this.#accessCompanyFilter.trim()
+      ? this.#accessCompaniesLocked.filter(c =>
+          (c.Name || '').toLowerCase().includes(this.#accessCompanyFilter.trim().toLowerCase()))
+      : this.#accessCompaniesLocked;
+
+    this.accessCompanyListTarget.innerHTML = '';
+
+    if (companies.length === 0 && locked.length === 0) {
+      this.accessCompanyEmptyTarget.classList.remove('hidden');
+      this.accessCompanyEmptyTarget.classList.add('flex');
+      return;
+    }
+    this.accessCompanyEmptyTarget.classList.add('hidden');
+    this.accessCompanyEmptyTarget.classList.remove('flex');
+
+    companies.forEach(company => {
+      const checked = this.#accessCompaniesCurrent.has(company.Id);
+      const label = document.createElement('label');
+      label.className = this.#accessRowClass(checked);
+      label.innerHTML = `
+        <input type="checkbox" data-action="change->users#toggleAccessCompany" data-company-id="${company.Id}"
+               ${checked ? 'checked' : ''}
+               class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer">
+        <div class="flex flex-col flex-1 gap-0.5 min-w-0">
+          <span class="font-medium text-gray-800 text-sm">${this.#escapeHtml(company.Name)}</span>
+        </div>`;
+      this.accessCompanyListTarget.appendChild(label);
+    });
+
+    // Asignadas fuera de mi alcance: visibles, marcadas y bloqueadas.
+    locked.forEach(company => {
+      const div = document.createElement('div');
+      div.className = 'flex items-center gap-3 p-3 border border-gray-200 rounded-lg bg-gray-50';
+      div.setAttribute('data-tooltip',
+        'Ya tiene acceso a esta compañía, pero usted no la administra y no puede quitársela');
+      div.innerHTML = `
+        <input type="checkbox" checked disabled
+               class="h-4 w-4 rounded border-gray-300 text-gray-400 cursor-not-allowed">
+        <div class="flex flex-col flex-1 gap-0.5 min-w-0">
+          <span class="font-medium text-gray-500 text-sm">${this.#escapeHtml(company.Name)}</span>
+          <span class="text-[11px] text-gray-400">Fuera de su alcance</span>
+        </div>
+        <span class="material-icons text-base text-gray-400">lock</span>`;
+      this.accessCompanyListTarget.appendChild(div);
+    });
+  }
+
+  #accessRowClass(checked) {
+    return 'flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-colors ' +
+      (checked ? 'border-blue-200 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50');
+  }
+
+  toggleAccessCompany(event) {
+    const id = parseInt(event.target.dataset.companyId, 10);
+    if (Number.isNaN(id)) return;
+
+    if (event.target.checked) this.#accessCompaniesCurrent.add(id);
+    else this.#accessCompaniesCurrent.delete(id);
+
+    const label = event.target.closest('label');
+    if (label) label.className = this.#accessRowClass(event.target.checked);
+
+    this.#updateAccessSaveBtn();
+  }
+
+  onAccessCompanySearch(event) {
+    this.#accessCompanyFilter = event.target.value || '';
+    this.#renderAccessCompanyList();
+    this.#updateAccessSaveBtn();
+  }
+
+  toggleAccessCompanyAll(event) {
+    const select = event.target.checked;
+    this.#filteredAccessCompanies().forEach(company => {
+      if (select) this.#accessCompaniesCurrent.add(company.Id);
+      else this.#accessCompaniesCurrent.delete(company.Id);
+    });
+    this.#renderAccessCompanyList();
+    this.#updateAccessSaveBtn();
+  }
+
+  async #saveAccessCompanies() {
+    if (!this.#tabHasChanges('companies')) {
+      showToast('No hay cambios para guardar', 'info');
+      return;
+    }
+
+    this.accessLoaderTarget.classList.remove('hidden');
+    try {
+      // Solo viaja lo editable: las compañías fuera de alcance no van en el cuerpo
+      // y el servidor tampoco las revoca — si viajaran, las rechazaría con 403.
+      await this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/companies`, {
+        method: 'PUT',
+        body: JSON.stringify({ CompanyIds: [...this.#accessCompaniesCurrent] }),
+      });
+
+      showToast('Compañías actualizadas exitosamente', 'success');
+      this.#accessCompaniesInitial = new Set(this.#accessCompaniesCurrent);
+      this.#updateAccessSaveBtn();
+      this.#afterAccessSave();
     } catch (err) {
       showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al aplicar cambios', message: err.message });
     } finally {
@@ -1591,33 +1181,50 @@ export default class extends TabulatorController {
   // ── Guardar (despacha según el tab activo) ────────────────────────────────────
 
   saveAccess() {
-    if (this.#accessActiveTab === 'roles') this.#saveAccessRole();
-    else this.#saveAccessGlobal();
+    if (this.#accessActiveTab === 'roles')     return this.#saveAccessRole();
+    if (this.#accessActiveTab === 'companies') return this.#saveAccessCompanies();
+    return this.#saveAccessGlobal();
   }
 
-  // Cambios pendientes de un tab específico ('roles' | 'global').
+  // Cambios pendientes de un tab específico ('roles' | 'global' | 'companies').
   #tabHasChanges(name) {
     if (name === 'roles') {
       return !!this.#accessCurrentRolId && this.#accessCurrentRolId !== this.#accessInitialRolId;
     }
     if (name === 'global') {
-      if (this.#accessGlobalInitial.size !== this.#accessGlobalCurrent.size) return true;
-      for (const id of this.#accessGlobalCurrent) {
-        if (!this.#accessGlobalInitial.has(id)) return true;
-      }
-      return false;
+      return this.#setsDiffer(this.#accessGlobalInitial, this.#accessGlobalCurrent);
+    }
+    if (name === 'companies') {
+      return this.#setsDiffer(this.#accessCompaniesInitial, this.#accessCompaniesCurrent);
     }
     return false;
   }
 
-  #anyAccessChanges() {
-    return this.#tabHasChanges('roles') || this.#tabHasChanges('global');
+  // Dos conjuntos difieren si cambió el tamaño o si alguno del segundo no está en
+  // el primero: con tamaños iguales e inclusión en un sentido, son idénticos.
+  #setsDiffer(initial, current) {
+    if (initial.size !== current.size) return true;
+    for (const id of current) {
+      if (!initial.has(id)) return true;
+    }
+    return false;
   }
 
-  // Tras guardar un tab: cierra el panel solo si el OTRO tab no tiene cambios
-  // pendientes. Si los tiene, lo deja abierto (el asterisco rojo ya lo indica).
-  #afterAccessSave(otherTab) {
-    if (!this.#tabHasChanges(otherTab)) {
+  #tabsWithChanges() {
+    return Object.keys(ACCESS_TAB_LABELS).filter(name => this.#tabHasChanges(name));
+  }
+
+  #anyAccessChanges() {
+    return this.#tabsWithChanges().length > 0;
+  }
+
+  // Tras guardar un tab: cierra el panel solo si NINGÚN otro tab quedó con
+  // cambios pendientes. Si los tiene, lo deja abierto — el asterisco rojo ya
+  // indica cuál. Antes recibía "el otro tab"; con tres hay que mirarlos todos, y
+  // el tab recién guardado ya no tiene cambios, así que basta con preguntar por
+  // los que quedan.
+  #afterAccessSave() {
+    if (!this.#anyAccessChanges()) {
       this.closeAccessPanel();
     }
   }
@@ -1631,17 +1238,37 @@ export default class extends TabulatorController {
   }
 
   #updateAccessSaveBtn() {
-    // Contador de globales asignados + estado del "Seleccionar todos"
-    if (this.hasAccessGlobalCountTarget) {
-      this.accessGlobalCountTarget.textContent = this.#accessGlobalCurrent.size;
-    }
+    // Estado del "Seleccionar todos/todas" de cada tab: marcado solo si TODO lo
+    // visible bajo el filtro actual está seleccionado.
     if (this.hasAccessGlobalSelectAllTarget) {
       const visible = this.#filteredAccessGlobal();
       this.accessGlobalSelectAllTarget.checked =
         visible.length > 0 && visible.every(p => this.#accessGlobalCurrent.has(p.Id));
     }
+    if (this.hasAccessCompanySelectAllTarget) {
+      const visible = this.#filteredAccessCompanies();
+      this.accessCompanySelectAllTarget.checked =
+        visible.length > 0 && visible.every(c => this.#accessCompaniesCurrent.has(c.Id));
+    }
+
+    this.#updateAccessFooterNote();
     this.accessSaveBtnTarget.disabled = !this.#tabHasChanges(this.#accessActiveTab);
     this.#updateAccessTabIndicators();
+  }
+
+  // El pie cuenta lo del tab activo. En Roles no hay nada que contar (es uno solo).
+  #updateAccessFooterNote() {
+    if (!this.hasAccessFooterNoteTarget) return;
+
+    const locked  = this.#accessCompaniesLocked.length;
+    const lockedNote = locked ? ` (+${locked} fuera de su alcance)` : '';
+
+    const notes = {
+      roles:     '',
+      global:    `${this.#accessGlobalCurrent.size} permiso(s) global(es) asignado(s)`,
+      companies: `${this.#accessCompaniesCurrent.size} compañía(s) asignada(s)${lockedNote}`,
+    };
+    this.accessFooterNoteTarget.textContent = notes[this.#accessActiveTab] ?? '';
   }
 
   #escapeHtml(str) {
@@ -1727,12 +1354,6 @@ export default class extends TabulatorController {
     </span>`;
   }
 
-  #boolIcon(value) {
-    return value
-      ? `<span class="material-icons text-base" style="color:#1a56db;">check_circle_outline</span>`
-      : `<span class="material-icons" style="color:#9ca3af;">radio_button_unchecked</span>`;
-  }
-
   #formatDateTime(dateStr) {
     if (!dateStr) return '';
     const d = new Date(dateStr);
@@ -1741,43 +1362,34 @@ export default class extends TabulatorController {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 
-  // ── apiFetch ──────────────────────────────────────────────────────────────────
+  // ── fetch ─────────────────────────────────────────────────────────────────────
+  //
+  // Un solo cliente: la pantalla ya no habla con el .NET. Los endpoints nativos
+  // autentican con la session cookie, así que NO llevan `Authorization` ni el
+  // header `API` del proxy (CLAUDE.md §28). El `#apiFetch` que armaba el Bearer se
+  // borró con el último tab que lo usaba.
 
-  async #apiFetch(url, options = {}) {
-    const session   = Storage.get('Session') || {};
-    const token     = session.access_token;
-    const company   = SStore.get('CurrentCompany');
-    const companyId = company?.companyId ?? this.#companyId;
-
+  async #railsFetch(url, options = {}) {
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type':             'application/json',
-        'API':                      'ApiAppUrl',
-        'X-Skip-Error-Interceptor': 'true',
-        ...(token     ? { Authorization:    `Bearer ${token}` }  : {}),
-        ...(companyId ? { 'Cl-Company-Id': String(companyId) }   : {}),
+        'Accept': 'application/json',
+        ...getApiHeaders(),
         ...(options.headers || {}),
       },
     });
 
-    const clMessage = response.headers.get('cl-message');
-    const decodedMessage = clMessage ? (() => {
-      try { return decodeURIComponent(clMessage); } catch { return clMessage; }
-    })() : null;
-
     if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(decodedMessage || text || `HTTP ${response.status}`);
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.Message || `HTTP ${response.status}`);
     }
 
+    // Las escrituras pueden responder 204 sin cuerpo: parsear a ciegas revienta
+    // con "Unexpected end of JSON input" aunque la operación haya salido bien.
     const hasBody = response.status !== 204 &&
                     response.headers.get('content-length') !== '0' &&
                     response.headers.get('content-type')?.includes('application/json');
-    if (!hasBody) return { Message: decodedMessage || null };
-
-    const json = await response.json();
-    if (decodedMessage && !json.Message) json.Message = decodedMessage;
-    return json;
+    return hasBody ? response.json() : { Message: null };
   }
+
 }

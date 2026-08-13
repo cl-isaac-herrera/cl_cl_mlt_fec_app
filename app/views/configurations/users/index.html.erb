@@ -1,50 +1,20 @@
 <% content_for :title, "Gestión de Usuarios" %>
 <% content_for :page_title, "Gestión de Usuarios" %>
 
-<%# Users — migración de /configurations/users (3 tabs: Lista, Completar Registro, Asignación) %>
+<%# Users — /configurations/users.
+    Sin tabs: la pantalla ES la lista de usuarios. Los otros dos que tenía la
+    versión Angular ya no existen —
+      · "Completar registro": activaba usuarios pendientes de confirmar su correo.
+        Ese paso lo resuelve el IdP: no hay contraseña propia ni correo que
+        confirmar, y el alta nace activa.
+      · "Asignación de compañías": era un segundo buscador de usuarios, peor que
+        esta tabla. Ahora es el sub-tab "Compañías" del panel "Gestionar accesos".
+    Todo lo que se le concede a un usuario (rol, permisos globales, compañías)
+    vive en ese panel, que es una acción de fila. %>
 <div data-controller="users"
      class="p-6 flex flex-col h-full">
 
-  <%# ── Tab navigation ─────────────────────────────────────────────────── %>
-  <div class="mb-4 flex-shrink-0 border-b border-gray-200">
-    <nav class="-mb-px flex gap-4" aria-label="Tabs">
-
-      <button type="button"
-              data-users-target="tabBtn"
-              data-tab-name="list"
-              data-perm="Configurations_Users_ListAccess"
-              data-action="click->users#switchTab"
-              class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors whitespace-nowrap">
-        Lista de usuarios
-      </button>
-
-      <button type="button"
-              data-users-target="tabBtn"
-              data-tab-name="complete-registration"
-              data-perm="S_CompUser"
-              data-action="click->users#switchTab"
-              class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors whitespace-nowrap">
-        Completar registro
-      </button>
-
-      <button type="button"
-              data-users-target="tabBtn"
-              data-tab-name="assignment"
-              data-perm="S_AsigUser"
-              data-action="click->users#switchTab"
-              class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors whitespace-nowrap">
-        Asignación de compañías
-      </button>
-
-    </nav>
-  </div>
-
-  <%# ══════════════════════════════════════════════════════════════════════ %>
-  <%# TAB 0 — Lista de Usuarios                                             %>
-  <%# ══════════════════════════════════════════════════════════════════════ %>
-  <div data-users-target="tabContent"
-       data-tab="list"
-       class="hidden flex-col flex-1 min-h-0 gap-4">
+  <div class="flex flex-col flex-1 min-h-0 gap-4">
 
     <%# Toolbar %>
     <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex-shrink-0">
@@ -97,213 +67,6 @@
 
   </div>
 
-  <%# ══════════════════════════════════════════════════════════════════════ %>
-  <%# TAB 1 — Completar Registro                                            %>
-  <%# ══════════════════════════════════════════════════════════════════════ %>
-  <div data-users-target="tabContent"
-       data-tab="complete-registration"
-       class="hidden flex-col flex-1 min-h-0">
-
-    <div class="flex-1 min-h-0 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-      <div data-users-target="completeTable" class="h-full"></div>
-    </div>
-
-  </div>
-
-  <%# ══════════════════════════════════════════════════════════════════════ %>
-  <%# TAB 2 — Asignación de compañías                                       %>
-  <%# ══════════════════════════════════════════════════════════════════════ %>
-  <div data-users-target="tabContent"
-       data-tab="assignment"
-       class="hidden flex-col gap-4 flex-1 min-h-0 relative">
-
-    <%# Loader a nivel de sección (sin texto) %>
-    <div data-users-target="assignmentLoader"
-         class="hidden absolute inset-0 z-30 flex items-center justify-center bg-white/60 rounded-xl">
-      <svg width="40" height="40" viewBox="0 0 50 50" aria-hidden="true">
-        <circle cx="25" cy="25" r="20" fill="none" stroke="#e5e7eb" stroke-width="5"></circle>
-        <circle cx="25" cy="25" r="20" fill="none" stroke="#2563eb" stroke-width="5"
-                stroke-linecap="round" stroke-dasharray="80 200">
-          <animateTransform attributeName="transform" attributeType="XML" type="rotate"
-                            from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"></animateTransform>
-        </circle>
-      </svg>
-    </div>
-
-    <%# Filtros de búsqueda %>
-    <div class="flex-shrink-0 bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-      <div class="flex flex-wrap gap-4 items-end">
-
-        <%# Autocomplete Usuario %>
-        <div class="flex flex-col gap-1 flex-1 min-w-[240px]">
-          <label class="text-xs font-medium text-gray-600">Buscar Usuario</label>
-          <div class="relative">
-            <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-white">
-              <input type="text"
-                     data-users-target="userInput"
-                     data-action="input->users#filterUsers focus->users#showUserDropdown"
-                     placeholder="Escribe para buscar..."
-                     autocomplete="off"
-                     class="flex-1 px-3 py-2 text-sm outline-none bg-transparent">
-              <span class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-400 flex-shrink-0">
-                <span class="material-icons text-base leading-none">search</span>
-              </span>
-            </div>
-            <ul data-users-target="userDropdown"
-                class="hidden absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto text-sm">
-            </ul>
-          </div>
-        </div>
-
-        <%# Autocomplete Grupo %>
-        <div class="flex flex-col gap-1 flex-1 min-w-[240px]">
-          <label class="text-xs font-medium text-gray-600">Buscar Grupo de Compañías</label>
-          <div class="relative">
-            <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-white">
-              <input type="text"
-                     data-users-target="groupInput"
-                     data-action="input->users#filterGroups focus->users#showGroupDropdown"
-                     placeholder="Escribe para buscar..."
-                     autocomplete="off"
-                     class="flex-1 px-3 py-2 text-sm outline-none bg-transparent">
-              <span class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-400 flex-shrink-0">
-                <span class="material-icons text-base leading-none">search</span>
-              </span>
-            </div>
-            <ul data-users-target="groupDropdown"
-                class="hidden absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto text-sm">
-            </ul>
-          </div>
-        </div>
-
-        <%# Badge cambios pendientes %>
-        <div data-users-target="changesBadge"
-             class="hidden items-center gap-2 bg-gray-100 rounded-full px-4 py-2">
-          <span class="text-xs text-gray-500">Cambios pendientes:</span>
-          <span data-users-target="changesBadgeValue"
-                class="font-bold text-gray-400 text-sm min-w-6 text-center">0</span>
-        </div>
-
-      </div>
-    </div>
-
-    <%# Estado vacío %>
-    <div data-users-target="emptyState"
-         class="flex-1 flex flex-col items-center justify-center bg-white rounded-xl shadow-sm border border-gray-200 text-gray-400">
-      <span class="material-icons text-6xl mb-3">person_search</span>
-      <h2 class="text-lg font-semibold text-gray-600">Selecciona un usuario</h2>
-      <p class="text-sm mt-1">Elige un usuario para gestionar sus compañías asignadas</p>
-    </div>
-
-    <%# Panel dual-list (visible solo cuando hay usuario seleccionado) %>
-    <div data-users-target="assignmentPanel"
-         class="hidden flex-1 min-h-0 flex flex-col gap-3">
-
-      <%# Dual list %>
-      <div class="flex-1 min-h-0 grid grid-cols-[1fr_auto_1fr] gap-6">
-
-        <%# Compañías Disponibles %>
-        <div class="flex flex-col min-h-0">
-          <div class="flex items-center gap-3 px-4 py-3 rounded-t-lg text-white flex-shrink-0"
-               style="background: linear-gradient(135deg, #4db8e8 0%, #0082c0 100%)">
-            <span class="material-icons text-xl">business</span>
-            <h3 class="flex-1 text-sm font-medium m-0">Compañías Disponibles</h3>
-            <span data-users-target="unassignedCount"
-                  class="bg-white/30 px-3 py-0.5 rounded-full text-xs font-bold">0</span>
-            <button type="button"
-                    data-action="click->users#assignAll"
-                    data-tooltip="Asignar todas"
-                    class="text-white hover:bg-white/20 rounded p-0.5 transition-colors">
-              <span class="material-icons">chevron_right</span>
-            </button>
-          </div>
-          <div data-users-target="unassignedList"
-               data-drop-zone="unassigned"
-               data-action="dragover->users#onDragOver dragleave->users#onDragLeave drop->users#onDrop"
-               class="flex-1 min-h-0 border-2 border-dashed border-gray-200 border-t-0 rounded-b-lg p-3 bg-gray-50 overflow-y-auto transition-colors">
-            <div data-users-target="emptyUnassigned"
-                 class="flex flex-col items-center justify-center h-full text-gray-400 py-10">
-              <span class="material-icons text-5xl opacity-40 mb-3">check_circle</span>
-              <p class="text-xs">Todas las compañías están asignadas</p>
-            </div>
-          </div>
-        </div>
-
-        <%# Indicador central %>
-        <div class="flex flex-col items-center justify-center gap-2 py-5">
-          <span class="material-icons text-5xl text-gray-300 animate-pulse">swap_horiz</span>
-        </div>
-
-        <%# Compañías Asignadas %>
-        <div class="flex flex-col min-h-0">
-          <div class="flex items-center gap-3 px-4 py-3 rounded-t-lg text-white flex-shrink-0"
-               style="background: linear-gradient(135deg, #0082c0 0%, #005a85 100%)">
-            <button type="button"
-                    data-action="click->users#unassignAll"
-                    data-tooltip="Desasignar todas"
-                    class="text-white hover:bg-white/20 rounded p-0.5 transition-colors">
-              <span class="material-icons">chevron_left</span>
-            </button>
-            <span class="material-icons text-xl">assignment_turned_in</span>
-            <h3 class="flex-1 text-sm font-medium m-0">Compañías Asignadas</h3>
-            <span data-users-target="assignedCount"
-                  class="bg-white/30 px-3 py-0.5 rounded-full text-xs font-bold">0</span>
-          </div>
-          <div data-users-target="assignedList"
-               data-drop-zone="assigned"
-               data-action="dragover->users#onDragOver dragleave->users#onDragLeave drop->users#onDrop"
-               class="flex-1 min-h-0 border-2 border-dashed border-gray-200 border-t-0 rounded-b-lg p-3 bg-gray-50 overflow-y-auto transition-colors">
-            <div data-users-target="emptyAssigned"
-                 class="flex flex-col items-center justify-center h-full text-gray-400 py-10">
-              <span class="material-icons text-5xl opacity-40 mb-3">inbox</span>
-              <p class="text-xs">No hay compañías asignadas</p>
-            </div>
-          </div>
-        </div>
-
-      </div>
-
-      <%# Resumen de cambios %>
-      <div data-users-target="changesSummary"
-           class="hidden flex-shrink-0 border-t border-gray-100 pt-4">
-        <div class="flex flex-col gap-3">
-          <div data-users-target="assignSummaryRow"
-               class="hidden items-center gap-3 text-sm">
-            <span class="material-icons text-green-500 text-xl">add_circle</span>
-            <span><strong data-users-target="assignCount">0</strong> compañía(s) para asignar</span>
-          </div>
-          <div data-users-target="unassignSummaryRow"
-               class="hidden items-center gap-3 text-sm">
-            <span class="material-icons text-red-500 text-xl">remove_circle</span>
-            <span><strong data-users-target="unassignCount">0</strong> compañía(s) para desasignar</span>
-          </div>
-        </div>
-      </div>
-
-      <%# Acciones %>
-      <div class="flex-shrink-0 flex justify-end gap-3 pt-4 border-t border-gray-100">
-        <button type="button"
-                data-action="click->users#cancelChanges"
-                data-users-target="cancelBtn"
-                disabled
-                class="flex items-center gap-2 px-5 py-2 rounded-lg border border-red-300 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-          <span class="material-icons text-base">close</span>
-          Cancelar Cambios
-        </button>
-        <button type="button"
-                data-action="click->users#applyChanges"
-                data-users-target="applyBtn"
-                disabled
-                class="flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-          <span class="material-icons text-base">check</span>
-          Aplicar Cambios
-        </button>
-      </div>
-
-    </div>
-
-  </div>
-
   <%# ── Create user — panel lateral ───────────────────────────────────────── %>
   <div data-users-target="createBackdrop"
        data-action="click->users#closeCreatePanel"
@@ -315,7 +78,7 @@
 
     <%# Header %>
     <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-      <h3 class="text-base font-semibold text-gray-800">Nuevo Usuario</h3>
+      <h3 class="text-base font-semibold text-gray-800">Nuevo usuario</h3>
       <button type="button" data-action="click->users#closeCreatePanel"
               class="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors">
         <span class="material-icons text-xl">close</span>
@@ -347,16 +110,6 @@
         </select>
       </div>
 
-      <%# Cuenta (Grupo) %>
-      <div>
-        <label class="text-xs font-medium text-gray-600">Cuenta <span class="text-red-500">*</span></label>
-        <select data-users-target="createGroupSelect"
-                disabled
-                class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed">
-          <option value="">Cargando...</option>
-        </select>
-      </div>
-
       <%# Nombre Completo %>
       <div>
         <label class="text-xs font-medium text-gray-600">Nombre Completo <span class="text-red-500">*</span></label>
@@ -365,17 +118,6 @@
                placeholder="Nombre Completo"
                class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         <p data-users-target="createFullNameError" class="hidden mt-1 text-xs text-red-600">El nombre completo es requerido.</p>
-      </div>
-
-      <%# Cédula %>
-      <div>
-        <label class="text-xs font-medium text-gray-600">Cédula <span class="text-red-500">*</span></label>
-        <input type="text" data-users-target="createIdentification"
-               data-action="input->users#validateCreateForm"
-               inputmode="numeric"
-               placeholder="Identificación"
-               class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p data-users-target="createIdentificationError" class="hidden mt-1 text-xs text-red-600">La identificación es requerida.</p>
       </div>
 
       <%# Usuario (correo) %>
@@ -434,7 +176,7 @@
 
     <%# Header %>
     <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-      <h3 class="text-base font-semibold text-gray-800">Editar Usuario</h3>
+      <h3 class="text-base font-semibold text-gray-800">Editar usuario</h3>
       <button type="button" data-action="click->users#closeEditPanel"
               class="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors">
         <span class="material-icons text-xl">close</span>
@@ -462,14 +204,6 @@
         <input type="text" data-users-target="editFullName"
                class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         <p data-users-target="editFullNameError" class="hidden mt-1 text-xs text-red-600">Campo requerido</p>
-      </div>
-
-      <%# Identificación %>
-      <div>
-        <label class="text-xs font-medium text-gray-600">Identificación <span class="text-red-500">*</span></label>
-        <input type="text" data-users-target="editIdentification"
-               class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p data-users-target="editIdentificationError" class="hidden mt-1 text-xs text-red-600">Campo requerido</p>
       </div>
 
       <%# Usuario SAP %>
@@ -584,6 +318,13 @@
                 class="hidden px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors whitespace-nowrap">
           Permisos globales<sup data-access-dot class="hidden text-red-500 font-bold ml-0.5" title="Cambios sin guardar">*</sup>
         </button>
+        <button type="button"
+                data-users-target="accessTabBtn"
+                data-access-tab="companies"
+                data-action="click->users#switchAccessTab"
+                class="hidden px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors whitespace-nowrap">
+          Compañías<sup data-access-dot class="hidden text-red-500 font-bold ml-0.5" title="Cambios sin guardar">*</sup>
+        </button>
       </nav>
     </div>
 
@@ -663,13 +404,51 @@
         </div>
       </div>
 
+      <%# === TAB: COMPAÑÍAS === %>
+      <%# Reemplaza al tab "Asignación de compañías". Lista de checkboxes y no la
+          lista dual con drag & drop de antes: en un panel de 512px el arrastre
+          queda apretado, y en el fondo esto es un multi-select. %>
+      <div data-users-target="accessTabContent" data-access-tab="companies" class="hidden">
+        <%# Toolbar: buscar + seleccionar todos %>
+        <div class="flex items-center gap-3 mb-3">
+          <div class="relative flex-1">
+            <input type="text"
+                   data-users-target="accessCompanySearch"
+                   data-action="input->users#onAccessCompanySearch"
+                   placeholder="Buscar compañía..."
+                   autocomplete="off"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+            <span class="material-icons absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-lg pointer-events-none">search</span>
+          </div>
+          <label class="flex items-center gap-2 text-xs font-medium text-gray-600 cursor-pointer whitespace-nowrap">
+            <input type="checkbox"
+                   data-users-target="accessCompanySelectAll"
+                   data-action="change->users#toggleAccessCompanyAll"
+                   class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer">
+            Seleccionar todas
+          </label>
+        </div>
+
+        <div data-users-target="accessCompanyList" class="flex flex-col gap-2"></div>
+
+        <div data-users-target="accessCompanyEmpty"
+             class="hidden flex-col items-center justify-center text-gray-400 py-16 text-center">
+          <span class="material-icons text-5xl opacity-30 mb-3">search_off</span>
+          <p class="text-sm">No se encontraron compañías</p>
+        </div>
+
+        <p class="mt-3 text-xs text-gray-400">
+          Solo se listan las compañías que usted puede asignar.
+        </p>
+      </div>
+
     </div>
 
     <%# Footer %>
     <div class="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3 flex-shrink-0">
-      <span class="text-xs text-gray-500">
-        <strong data-users-target="accessGlobalCount">0</strong> permiso(s) global(es) asignado(s)
-      </span>
+      <%# Contador del tab activo. Lo escribe entero el controller: cada tab cuenta
+          otra cosa (permisos, compañías) y en Roles no hay nada que contar. %>
+      <span data-users-target="accessFooterNote" class="text-xs text-gray-500"></span>
       <div class="flex gap-3">
         <button type="button"
                 data-action="click->users#cancelAccessPanel"
