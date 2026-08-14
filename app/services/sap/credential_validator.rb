@@ -10,26 +10,43 @@ module Sap
   # en el primer request, contra el pool de sesiones singleton, tal como exige la
   # regla «Nunca crear sesiones SAP por request».
   #
-  # Por eso la validación es un GET cualquiera. **El recurso da igual**: lo que se
+  # Por eso la validación es un GET de sondeo. **El recurso da igual**: lo que se
   # está probando es el `/Login` que el Client hace antes, y ese falla con
   # `AuthenticationError` mucho antes de tocar el recurso. Si el login sí funcionó,
   # las credenciales son válidas aunque el GET falle después por permisos de ese
   # usuario dentro de SAP — de ahí que solo `AuthenticationError` cuente como
   # credenciales inválidas.
   #
-  # La sesión NO se cierra al terminar: queda en el pool con la llave
-  # `session_owner_id|company_db|username`, así que si el usuario guarda estas
-  # credenciales, el trabajo real las reutiliza en vez de volver a autenticarse.
-  # Cerrarla sería volver a "una sesión por request", justo lo que §2.7 prohíbe.
+  # Cuál es ese GET lo dice el catálogo (`sl_resources`), no esta clase: la fila
+  # `qsValidateSapCredentials` ya existía en el producto .NET para esto mismo. Se
+  # resuelve con `Sap::ResourceQuery`, que es el único lugar que traduce código
+  # funcional → path de SAP.
+  #
+  # ⚠️ La sesión de esta validación es DESECHABLE, y es lo único que hace que la
+  # respuesta sea confiable. El pool del Client indexa por
+  # `session_owner_id|company_db|username` — **sin la contraseña** — y
+  # `LoadBalancer#get_node` tiene un fast path que devuelve la sesión existente sin
+  # pasar por `/Login`. Con una llave compartida, una sesión viva de ese usuario
+  # (dejada por el trabajo real o por una validación anterior correcta) hacía que el
+  # sondeo pasara con **cualquier** contraseña: reportaba "credenciales válidas" sin
+  # haberlas probado. Reproducido antes de arreglarlo.
+  #
+  # Por eso `session_owner_id` es único por intento (`#session_owner_id`) y la
+  # sesión se cierra al terminar (`#discard_session!`). Es la excepción deliberada a
+  # «nunca cerrar la sesión» de §2.7: esa regla existe para que las operaciones
+  # normales reutilicen sesión, y acá reutilizar es justamente el defecto. Dejarla
+  # abierta sería además retener una licencia de SAP 20 minutos por cada click.
+  #
+  # Lo que se pierde: la sesión de la validación ya no la hereda el trabajo
+  # posterior. Era una optimización menor y era el origen del falso positivo.
   #
   # Nunca levanta: cualquier fallo (conexión mal configurada, red caída, rechazo de
   # SAP) sale como un Result inválido con el motivo, porque para la pantalla todos
   # significan lo mismo — esas credenciales no sirven.
   class CredentialValidator
-    # Recurso barato solo para forzar el login. Ver el comentario de la clase: no
-    # se lee la respuesta, solo importa si la autenticación previa funcionó.
-    PROBE_RESOURCE = 'BusinessPartners'
-    PROBE_PARAMS   = { '$top' => 1, '$select' => 'CardCode' }.freeze
+    # Consulta del catálogo que existe para esto (viene del producto .NET). No se
+    # lee la respuesta: solo importa si la autenticación previa funcionó.
+    PROBE_CODE = 'qsValidateSapCredentials'
 
     Result = Struct.new(:valid, :message, keyword_init: true) do
       def valid? = valid
@@ -46,21 +63,50 @@ module Sap
       missing = missing_prerequisite
       return failure(missing) if missing
 
-      client.get(PROBE_RESOURCE, params: PROBE_PARAMS)
+      probe!
       success
     rescue Clavisco::ServiceLayer::Client::AuthenticationError => e
       # SAP rechazó el /Login: es el caso que prueba que las credenciales están mal.
       failure(sap_reason(e) || 'Las credenciales no son válidas.')
+    rescue Sap::ResourceQuery::Error => e
+      # El catálogo está mal: no se llegó a hablar con SAP, así que esto no dice
+      # nada sobre las credenciales.
+      #
+      # ⚠️ Va ANTES del rescue genérico y no puede caer en él: ese consulta el pool
+      # de sesiones para desambiguar, y una sesión vieja de este mismo usuario lo
+      # haría reportar "credenciales válidas" sin haber sondeado nunca.
+      failure("No se pudo preparar la consulta de validación: #{e.message}")
     rescue Clavisco::ServiceLayer::Client::ServiceLayerError, StandardError => e
       # Todo lo demás es ambiguo: el error puede venir del recurso de prueba (con el
       # login ya hecho) o del login mismo caído por red/timeout, que el Client
       # envuelve en un ServiceLayerError genérico. El pool es lo único que lo sabe.
+      #
+      # Preguntarle al pool solo es concluyente porque la llave es única por intento:
+      # si hay sesión, la abrió ESTE `/Login`. Con una llave compartida podía ser de
+      # antes y la respuesta era un falso positivo.
       session_established? ? success : failure("No se pudo contactar al Service Layer de SAP: #{e.message}")
+    ensure
+      discard_session!
     end
 
     private
 
     attr_reader :company, :sap_user, :sap_password
+
+    # Fuerza el `/Login` con la consulta que el catálogo define para esto.
+    #
+    # El verbo lo elige el llamador: `ResourceQuery` solo arma el path (acá es una
+    # lectura; `Drafts` o los `/Close` del catálogo son POST).
+    #
+    # Se loguea el path en `info`, no en `debug`: validar credenciales lo dispara
+    # una persona desde una pantalla, no es tráfico de fondo, y cuando falla lo
+    # primero que hay que saber es contra qué endpoint se probó. Esta consulta no
+    # lleva marcadores, así que el path no contiene datos de negocio.
+    def probe!
+      path = Sap::ResourceQuery.path_for(PROBE_CODE)
+      Rails.logger.info("[Sap::CredentialValidator] sondeo de login: GET #{path}")
+      client.get(path)
+    end
 
     # El Client valida sus argumentos con ArgumentError; se chequea antes para poder
     # devolver un motivo que le sirva a quien está llenando el formulario.
@@ -85,10 +131,36 @@ module Sap
         company_db:       company_db,
         username:         sap_user,
         password:         sap_password,
-        # Quién consume la sesión. Con la misma llave, el trabajo posterior de este
-        # usuario reutiliza la sesión que abrió esta validación.
-        session_owner_id: Current.user&.id || 'credential-validation'
+        session_owner_id: session_owner_id
       )
+    end
+
+    # Único por intento, y esa unicidad ES la validación: la llave del pool no
+    # incluye la contraseña, así que compartirla con otra sesión del mismo usuario
+    # deja que `get_node` devuelva la sesión existente sin hacer `/Login` — y
+    # cualquier contraseña pasaría. Con un UUID, la llave no puede colisionar y el
+    # `/Login` se ejecuta siempre.
+    #
+    # No usa `Current.user.id`: dos validaciones del mismo usuario ya colisionaban
+    # entre sí, y con `Current.user` nil (jobs, consola) TODAS compartían la llave
+    # `credential-validation|...`.
+    def session_owner_id
+      @session_owner_id ||= "credential-validation:#{SecureRandom.uuid}"
+    end
+
+    # Cierra la sesión que abrió este intento. Se llama en el `ensure` de `#call`,
+    # después de que el Result ya se calculó (`#session_established?` necesita el
+    # pool intacto para desambiguar).
+    #
+    # Acá cerrar SÍ corresponde, al contrario de lo que pide §2.7 para las
+    # operaciones normales: la llave es desechable, nadie va a reutilizar esta
+    # sesión, y dejarla abierta retiene una licencia de SAP hasta que expire.
+    #
+    # Nunca levanta: el Result ya está decidido y un fallo al cerrar no lo cambia.
+    def discard_session!
+      @client&.logout
+    rescue StandardError => e
+      Rails.logger.warn("[Sap::CredentialValidator] no se pudo cerrar la sesión de sondeo: #{e.message}")
     end
 
     # ¿Quedó una sesión viva en el pool para estas credenciales? Si la hay, el

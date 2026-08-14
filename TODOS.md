@@ -201,13 +201,34 @@ pendiente:
 - [x] **`Sap::CredentialValidator` usaba Faraday a mano y abría una sesión por request** —
       resuelto: ahora pasa por `Clavisco::ServiceLayer::Client` y su pool singleton.
 
-- [ ] **La validación fuerza el login con un GET de sondeo a `BusinessPartners`.** El Client
-      no expone un `login` suelto: se autentica solo en el primer request. Funciona y está
-      documentado en la clase, pero es un rodeo — la prueba real es el `/Login`, no el
-      recurso.
+- [ ] **`OdataFilter#format_value` es `private` — el literal OData se formatea en la app.**
+      `Sap::ResourceQuery#odata_literal` duplica esas reglas (string entre comillas simples
+      duplicando las internas, números crudos, `null`, fechas ISO) porque el submódulo las
+      expone solo a través de `eq`/`ne`/`contains`, que además arman la condición completa
+      —y acá el `$filter` ya viene escrito en `sl_resources.query_params`, solo hay que
+      sustituirle los marcadores `@Nombre`.
+      **Pendiente submódulo (`cl-sap-servicelayer-ruby`):** hacer público
+      `OdataFilter.format_value(value)` (o exponerlo como `OdataFilter.literal`). Al llegar,
+      se borra `#odata_literal` y se llama al submódulo.
+
+- [ ] **`Client#get(resource, params:)` no sirve para una query OData cruda.** Serializa con
+      `URI.encode_www_form`, que manda `%24filter=%28A+eq+%27B%27%29`: el `$` escapado (el
+      Service Layer no lo reconoce como opción de sistema) y los espacios como `+`. Por eso
+      `Sap::ResourceQuery#path` pega la query al recurso y llama `client.get(path)` sin
+      `params:` — `execute_request` hace `URI("#{base_url}#{resource}")` y ahí solo se escapan
+      los caracteres ilegales (espacios a `%20`), dejando `$`, `=`, `&` y los paréntesis.
+      **Pendiente submódulo:** un `params:` que serialice sin form-encoding (o un
+      `query:` que acepte el string crudo), para que el llamador no tenga que armar el path.
+
+- [ ] **La validación fuerza el login con un GET de sondeo.** El Client no expone un `login`
+      suelto: se autentica solo en el primer request. Funciona y está documentado en la clase,
+      pero es un rodeo — la prueba real es el `/Login`, no el recurso. El recurso ya sale del
+      catálogo (`sl_resources.qsValidateSapCredentials`, vía `Sap::ResourceQuery`) en vez de
+      estar hardcodeado, pero el rodeo sigue.
       **Pendiente submódulo (`cl-sap-servicelayer-ruby`):** un método explícito
       (`Client#login` / `#authenticated?`) que fuerce la creación de la sesión y devuelva si
-      funcionó. Con eso desaparecen `PROBE_RESOURCE`, `PROBE_PARAMS` y `#session_established?`.
+      funcionó. Con eso desaparecen `PROBE_CODE`, `#probe!` y `#session_established?`, y la
+      fila `qsValidateSapCredentials` del catálogo deja de tener consumidor.
 
 - [ ] **`#session_established?` consulta el pool para desambiguar los errores.** Cuando el
       Client levanta un `ServiceLayerError` genérico no hay forma de saber si falló el login

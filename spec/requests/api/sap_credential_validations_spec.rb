@@ -20,7 +20,19 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
   before do
     Clavisco::ServiceLayer::LoadBalancer.instance.instance_variable_set(:@sessions, {})
     UsersByCompany.create!(user: user, company: acme)
+
+    # El recurso del sondeo sale del catálogo (`sl_resources`), no del código: por
+    # eso hace falta la fila. Ya no hay sondeo de emergencia — si falta, la
+    # validación responde que no pudo armar la consulta, en vez de probar contra
+    # otro endpoint a la espalda de quien configuró el catálogo.
+    SlResource.create!(code: 'qsValidateSapCredentials', resource: 'BusinessPartners',
+                       query_params: '$top=1&$select=CardCode', page_size: 0, is_standard: true)
   end
+
+  # La sesión del sondeo es desechable y se cierra al terminar: la llave del pool
+  # es única por intento, así que nadie la va a reutilizar y dejarla abierta
+  # retendría una licencia de SAP. Ver `Sap::CredentialValidator#discard_session!`.
+  before { stub_request(:post, %r{/b1s/v1/Logout\z}).to_return(status: 204) }
 
   def stub_successful_login
     stub_request(:post, login_url)
