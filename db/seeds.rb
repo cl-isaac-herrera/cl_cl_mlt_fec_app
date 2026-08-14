@@ -179,6 +179,25 @@ CODE_ONLY = [
 ].freeze
 
 # ---------------------------------------------------------------------------
+# 3b. Permisos GLOBALES nuevos de este producto (no vienen de ningún export).
+#
+#     Son `global` por el mismo motivo que los `Configurations_Connections_*`:
+#     `sl_resources` no lleva `company_id` — las consultas son de la
+#     instalación, no de una compañía —, así que el permiso no puede depender de
+#     la compañía activa.
+#
+#     Sus Id siguen la serie de CODE_ONLY (1000+) porque tampoco tienen Id de
+#     origen. Tienen que coincidir con `ADD` de
+#     `db/migrate/20260814140000_add_sl_resources_permissions.rb`: esta lista es
+#     para la base que se crea de cero, la migración para la que ya existe, y las
+#     dos deben dejar el mismo estado final.
+# ---------------------------------------------------------------------------
+CODE_ONLY_GLOBAL = [
+  [1013, 'Configurations_SlResources_Access', 'Acceso a la vista de recursos de Service Layer'],
+  [1014, 'Configurations_SlResources_Update', 'Permite modificar consultas de Service Layer']
+].freeze
+
+# ---------------------------------------------------------------------------
 # 4. DADOS DE BAJA — se siembran INACTIVOS.
 #
 #    Se siguen sembrando (y con su Id de origen) porque el catálogo replica el
@@ -218,9 +237,10 @@ ActiveRecord::Base.transaction do
   UserPermission.unscoped.delete_all
   Permission.unscoped.delete_all
 
-  rows = CATALOG.map        { |id, name, desc| [id, name, desc, 'normal'] } +
-         GLOBAL_CATALOG.map { |id, name, desc| [id, name, desc, 'global'] } +
-         CODE_ONLY.map      { |id, name, desc| [id, name, desc, 'normal'] }
+  rows = CATALOG.map          { |id, name, desc| [id, name, desc, 'normal'] } +
+         GLOBAL_CATALOG.map   { |id, name, desc| [id, name, desc, 'global'] } +
+         CODE_ONLY.map        { |id, name, desc| [id, name, desc, 'normal'] } +
+         CODE_ONLY_GLOBAL.map { |id, name, desc| [id, name, desc, 'global'] }
 
   rows.each do |id, name, description, type|
     Permission.create!(id: id, name: name, description: description, type: type,
@@ -228,7 +248,7 @@ ActiveRecord::Base.transaction do
   end
   puts "Permisos: #{Permission.count} activos " \
        "(#{Permission.normal.count} normal / #{Permission.global.count} global; " \
-       "#{CODE_ONLY.size} sin Id de origen) " \
+       "#{CODE_ONLY.size + CODE_ONLY_GLOBAL.size} sin Id de origen) " \
        "+ #{DEACTIVATED.size} dados de baja"
 
   # 2. Rol Administrador con el catálogo completo.
@@ -255,4 +275,226 @@ ActiveRecord::Base.transaction do
     user_role.save!
   end
   puts "Asignaciones usuario-rol-compañía: #{UserRole.count}"
+end
+
+# ---------------------------------------------------------------------------
+# 5. Consultas al Service Layer (`sl_resources`).
+#
+#    Cada fila es una lectura a SAP definida como dato: recurso, query OData y
+#    tamaño de página. Ver `SlResource`.
+#
+#    El `resource` de una VISTA (calculation/semantic view) no es el mismo texto
+#    en los dos motores, así que no se puede sembrar literal: el prefijo y —en
+#    HANA— la caja del nombre dependen de `SERVER_TYPE`. Eso lo resuelve
+#    `SlResourceSeed.qualify`; las entidades estándar de SAP (`Orders`,
+#    `BusinessPartners`) se siembran tal cual.
+# ---------------------------------------------------------------------------
+
+# Calificador del `resource` según el motor de la base. Es el único lugar del
+# seed que conoce la diferencia entre HANA y SQL.
+module SlResourceSeed
+  # El prefijo va SIEMPRE en minúsculas, incluso cuando el nombre de la vista se
+  # pasa a mayúsculas por HANA. Es parte del path del Service Layer, no del
+  # nombre del objeto de base.
+  PREFIXES = { 'HANA' => 'sml.svc/', 'SQL' => 'view.svc/' }.freeze
+
+  module_function
+
+  # Motor de la instalación. Levanta si no está definido o no es uno de los dos
+  # válidos: sembrar con el prefijo equivocado deja las consultas apuntando a un
+  # path que no existe, y el error recién aparecería al primer request a SAP.
+  def server_type
+    raw   = ENV['SERVER_TYPE'].to_s.strip
+    value = raw.upcase # tolera 'hana'/'sql'; cualquier otra cosa no pasa
+    return value if PREFIXES.key?(value)
+
+    detail = raw.empty? ? 'no está definida' : "tiene el valor #{raw.inspect}"
+    raise "SERVER_TYPE #{detail}. Valores válidos: #{PREFIXES.keys.join(' | ')}. " \
+          'Definila antes de correr bin/rails db:seed — sin ella no se puede ' \
+          'saber si las vistas van bajo sml.svc/ (HANA) o view.svc/ (SQL).'
+  end
+
+  # Devuelve el `resource` listo para guardar.
+  #
+  # ⚠️ El orden importa: primero se pasa el NOMBRE a mayúsculas (solo HANA) y
+  # recién después se concatena el prefijo. Al revés, el `upcase` se llevaría
+  # puesto el prefijo y quedaría 'SML.SVC/…', que no resuelve.
+  def qualify(resource, server_type)
+    return resource unless resource.to_s.match?(/#{Regexp.escape(SlResource::VIEW_MARKER)}/i)
+
+    name = server_type == 'HANA' ? resource.upcase : resource
+    "#{PREFIXES.fetch(server_type)}#{name}"
+  end
+end
+
+# Export de la tabla de consultas del .NET (32 filas), en el orden del origen.
+# Columnas: code, description, resource, query_params, page_size.
+#
+# Las 32 son `is_standard` (el export las trae todas en 1), así que la bandera se
+# aplica en el loop en vez de repetirla por fila — mismo criterio que
+# `CATALOG`/`GLOBAL_CATALOG` con `type`. Una consulta propia del cliente iría en
+# una constante aparte con `is_standard: false`.
+#
+# Cuatro cosas que son DATOS del origen y no se corrigen acá:
+#   - `resource` va SIN prefijo y con la caja original: los agrega
+#     `SlResourceSeed.qualify` según el motor.
+#   - `page_size` en 0 significa "sin paginación" (ver `SlResource#paginated?`).
+#   - `nil` en `query_params` es el `NULL` del export: la consulta no lleva query.
+#   - Los `@Param` y los `#DocumentEntry#` son marcadores que el consumidor
+#     sustituye en tiempo de ejecución. No son parte del path.
+#
+# ⚠️ El `Id` del origen NO se preserva: nada referencia esta tabla por id —la app
+# pide las consultas por `code`, que es la llave funcional y tiene índice único.
+# Si alguna importación posterior necesitara los ids, hay que fijarlos acá.
+SL_RESOURCES = [
+  ['GetSuppliers', 'Obtiene los proveedores de SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_SUPPLIERS_B1SLQuery',
+   '$select=*', 999],
+  ['GetTaxes', 'Obtiene un listado de impuestos de SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_TAXCODES_B1SLQuery',
+   '$select=*', 999],
+  ['GetUdfs', 'Obtiene la informacion de los UDFS en SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_UDFS_B1SLQuery',
+   '$filter=(TableID eq @TableID)', 0],
+  ['GetItems', 'Obtiene la informacion de los items desde SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_ITEMS_B1SLQuery',
+   '$select=*', 0],
+  ['GetDimAndCenterCost', 'Obtiene la informacion de dimensiones y centros de costo de SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_DIMENSIONS_AND_CNTERCOST_B1SLQuery',
+   '$select=*', 999],
+  ['GetAdditionalFreights', 'Obtiene un listado de cargos adicionales de SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_ADDITIONALFREIGHTS_B1SLQuery',
+   '$select=*', 999],
+  ['GetDocTypeBase', 'Obtiene los tipos de bases de los documentos de SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_DOCTYPEBASE_B1SLQuery',
+   '$select=*', 999],
+  ['GetAccounts', 'Obtiene todas las cuentas de SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_ACCOUNTS_B1SLQuery',
+   '$select=*', 999],
+  ['GetWarehouses', 'Obtiene un listado de almacenes de SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_WAREHOUSES_B1SLQuery',
+   '$select=*', 999],
+  ['CheckIfExistApInvoice', 'Revisa si ya existe el ApInvoice',
+   'CL_D_CL_MLT_FEC_APP_SLT_CHECKIFEXISTAPINVOICE_B1SLQuery',
+   '$filter=(U_FeNumProvRef eq @Clave)', 999],
+  ['GetUdfsValues', 'Obtiene los valores de los Udfs',
+   'CL_D_CL_MLT_FEC_APP_SLT_UDFSVALUES_B1SLQuery',
+   '$select=*', 999],
+  ['GetTaxesForAutomatic', 'Obtiene los impuestos para la creacion automatica',
+   'CL_D_CL_MLT_FEC_APP_SLT_TAXCODEBYAMOUNT_B1SLQuery',
+   '$filter=(contains(TaxCode, @TaxCodeVm) and contains(TaxCode,@TaxCodeContains))', 999],
+  ['Drafts', 'Crea un documento borrador en SAP',
+   'Drafts',
+   nil, 0],
+  ['PurchaseInvoices', 'Crea un ApInvoice en SAP',
+   'PurchaseInvoices',
+   nil, 0],
+  ['GetMatchAutomaticOne',
+   'Obtiene match automaticos, se utiliza este para el filtrado del case 1 en el flujo',
+   'CL_D_CL_MLT_FEC_APP_SLT_MATCHAUTOMATIC_B1SLQuery',
+   '$filter=(CardCode eq @CardCode and XmlCode eq @XmlCode)', 999],
+  ['GetMatchAutomaticTwo', 'Obtiene match automaticos con los filtrados del case 1',
+   'CL_D_CL_MLT_FEC_APP_SLT_MATCHAUTOMATIC_B1SLQuery',
+   '$filter=(XmlCode eq @XmlCode)', 999],
+  ['GetMatchAutomaticUdt', 'Obtiene match automaticos desde UDF',
+   'CL_D_CL_MLT_FEC_APP_SLT_MATCHAUTOMATICUDT_B1SLQuery',
+   '$filter=(CardCode eq @CardCode and XmlCode eq @XmlCode)', 999],
+  ['CheckIfFileExist', 'Verifica si ya existe el archivo en SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_CHECKIFATTACHMENTEXIST_B1SLQuery',
+   '$filter=(FileName eq @FileName)', 999],
+  ['GetExchangeRate', 'Obtiene el tipo de cambio',
+   'CL_D_CL_MLT_FEC_APP_SLT_EXCHANGERATE_B1SLQuery',
+   nil, 0],
+  ['Attachments2', 'Guarda adjuntos en SAP',
+   'Attachments2',
+   nil, 0],
+  ['GetMatchAutomaticOthersOne', 'Obtiene match automatico con datos de otro receptor',
+   'CL_CL_MLT_FEC_SLT_MATCHAUTOMATICORDER_B1SLQuery',
+   '$filter=(CardCode eq @CardCode and XmlCode eq @XmlCode and DocNum eq @DocNum ' \
+   'and TableName eq @TableName)', 2],
+  ['GetMatchAutomaticOthersTwo', 'Obtiene match automatico con datos de otro receptor',
+   'CL_CL_MLT_FEC_SLT_MATCHAUTOMATICORDER_B1SLQuery',
+   '$filter=(XmlCode eq @XmlCode and DocNum eq @DocNum and TableName eq @TableName)', 2],
+  ['GetProjects', 'Obtiene la lista de projyectos de SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_PROJECTS_B1SLQuery',
+   nil, 0],
+  ['CheckIfExistApInvoiceByNumAtCard', 'Revisa si ya existe el ApInvoice por NumAtCard',
+   'CL_D_CL_MLT_FEC_APP_SLT_CHECKIFEXISTAPINVOICE_B1SLQuery',
+   '$filter=(NumAtCard eq @Clave)', 999],
+  ['swUploadAttachment2', 'Carga adjuntos en el servidor remoto mediante service layer',
+   'Attachments2',
+   nil, 0],
+  ['GetSapDocuments', 'Obtiene los documentos de SAP',
+   'CL_D_CL_MLT_FEC_APP_SLT_DOCUMENTS_B1SLQuery',
+   '$filter=DocType eq @DocType and contains(SearchCriteria, @SearchCriteria)', 0],
+  ['ClosePurchaseOrders', 'Endpoint para cerrar documentos de referencia de ordenes de compra',
+   'PurchaseOrders(#DocumentEntry#)/Close',
+   nil, 0],
+  ['ClosePurchaseDeliveryNotes',
+   'Endpoint para cerrar documentos de referencia de entradas de mercancias de compra',
+   'PurchaseDeliveryNotes(#DocumentEntry#)/Close',
+   nil, 0],
+  ['ClosePurchaseQuotations',
+   'Endpoint para cerrar documentos de referencia de solicitudes de compra',
+   'PurchaseQuotations(#DocumentEntry#)/Close',
+   nil, 0],
+  ['qsGetCurrencies', 'Obtiene las monedas de la compañía mediante service layer',
+   'Currencies',
+   '$select=Code,Name', 0],
+  # Descripción en inglés en el origen. Se deja verbatim, como las erratas del
+  # catálogo de permisos: es dato importado, no texto redactado en este repo.
+  ['qsGetCompanyLocalCurrency', 'Retrieve the code of the local currency of the company',
+   'CompanyService_GetAdminInfo',
+   nil, 0],
+  # ⚠️ ÚNICA fila que NO se siembra como venía en el export. El origen apuntaba a
+  # `Users?$top=1&$select=UserCode`; se cambió a `BusinessPartners` por experiencia
+  # de campo: casi todo usuario de SAP tiene permiso para consultar socios de
+  # negocio, pero varios NO lo tienen sobre `Users`, y entonces el sondeo fallaba
+  # con un error de permisos que se leía como "credenciales inválidas" aunque el
+  # `/Login` hubiera funcionado.
+  #
+  # El recurso da igual para lo que se está probando —el `/Login` que el Client
+  # hace antes, ver `Sap::CredentialValidator`—, así que conviene el que menos
+  # permisos exige.
+  ['qsValidateSapCredentials', 'Valida las credenciales de licencia de SAP',
+   'BusinessPartners',
+   '$top=1&$select=CardCode', 0]
+].freeze
+
+ActiveRecord::Base.transaction do
+  # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
+  # sin haber escrito ninguna fila.
+  server_type = SlResourceSeed.server_type
+
+  preserved = 0
+
+  SL_RESOURCES.each do |code, description, resource, query_params, page_size|
+    # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
+    # El índice único de `code` no excluye a las inactivas, así que sin esto el
+    # `find_or_initialize_by` no la encontraría e intentaría insertar otra igual.
+    record = SlResource.unscoped.find_or_initialize_by(code: code)
+
+    # ⚠️ Una consulta que el cliente editó (`is_standard = false`, lo marca
+    # `PATCH /api/sl_resources/:id`) NO se vuelve a escribir: el seed le pisaría
+    # el ajuste y encima la devolvería a "Estándar". Es la razón de ser de la
+    # bandera. Efecto secundario asumido: si se cambia `SERVER_TYPE`, estas filas
+    # se quedan con el prefijo del motor anterior y hay que corregirlas desde la
+    # pantalla — preservar el trabajo del cliente pesa más que recalificarlas.
+    if record.persisted? && !record.is_standard
+      preserved += 1
+      next
+    end
+
+    record.description  = description
+    record.resource     = SlResourceSeed.qualify(resource, server_type)
+    record.query_params = query_params
+    record.page_size    = page_size
+    record.is_standard  = true
+    record.is_active    = true
+    record.save!
+  end
+
+  puts "Consultas de Service Layer (#{server_type}): #{SlResource.count} " \
+       "(#{SlResource.views.count} vistas" \
+       "#{preserved.positive? ? "; #{preserved} personalizadas, sin tocar" : ''})"
 end

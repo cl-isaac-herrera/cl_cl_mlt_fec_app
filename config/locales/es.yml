@@ -64,6 +64,9 @@ es:
       user_permission:
         one: Permiso del usuario
         other: Permisos del usuario
+      sl_resource:
+        one: Consulta de Service Layer
+        other: Consultas de Service Layer
 
     attributes:
       connection:
@@ -98,3 +101,9 @@ es:
       users_by_company:
         company: "La compañía"
         user: "El usuario"
+      sl_resource:
+        code: "El código"
+        description: "La descripción"
+        resource: "El recurso"
+        query_params: "Los parámetros de la consulta"
+        page_size: "El tamaño de página"

@@ -1,0 +1,175 @@
+<% content_for :title, "Recursos Service Layer" %>
+<% content_for :page_title, "Recursos Service Layer" %>
+
+<div data-controller="sl-resources"
+     data-testid="sl-resources-page"
+     class="p-6 flex flex-col h-full">
+
+  <%# ---------------------------------------------------------------- %>
+  <%# FILTRO: code + resource + is_standard %>
+  <%# ---------------------------------------------------------------- %>
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4 flex-shrink-0">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+
+      <%# Código %>
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Código</label>
+        <input type="text"
+               data-sl-resources-target="inputCode"
+               data-testid="input-code"
+               data-action="keydown.enter->sl-resources#search"
+               placeholder="GetSuppliers"
+               class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+
+      <%# Recurso %>
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Recurso</label>
+        <input type="text"
+               data-sl-resources-target="inputResource"
+               data-testid="input-resource"
+               data-action="keydown.enter->sl-resources#search"
+               placeholder="view.svc/ o Orders"
+               class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+
+      <%# Tipo (is_standard) — terciario: vacío no filtra %>
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Tipo</label>
+        <select data-sl-resources-target="inputIsStandard"
+                data-testid="input-is-standard"
+                class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">Todos</option>
+          <option value="true">Estándar</option>
+          <option value="false">Personalizado</option>
+        </select>
+      </div>
+
+      <%# Consultar %>
+      <div class="flex">
+        <button type="button"
+                data-testid="btn-search"
+                data-action="click->sl-resources#search"
+                class="w-full inline-flex items-center justify-center gap-1 px-4 py-2 border border-blue-600 text-blue-600 text-sm font-medium rounded-lg hover:bg-blue-50 transition-colors">
+          <span class="material-icons text-base">filter_alt</span>
+          Consultar
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <%# ---------------------------------------------------------------- %>
+  <%# TABLA (Tabulator full-height, paginación remota) %>
+  <%# ---------------------------------------------------------------- %>
+  <div class="flex-1 min-h-0 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <div data-sl-resources-target="table" data-testid="sl-resources-table" class="h-full"></div>
+  </div>
+
+  <%# ================================================================ %>
+  <%# PANEL LATERAL DERECHO — Editar consulta (CLAUDE.md §8) %>
+  <%# ================================================================ %>
+
+  <%# Backdrop %>
+  <div data-sl-resources-target="panelBackdrop"
+       data-action="click->sl-resources#closePanel"
+       class="hidden fixed inset-0 z-40 bg-black/40"></div>
+
+  <div data-sl-resources-target="panel"
+       data-testid="sl-resource-panel"
+       data-action="input->sl-resources#refreshSubmitState change->sl-resources#refreshSubmitState"
+       class="fixed top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl z-50
+              translate-x-full transition-transform duration-300 ease-in-out flex flex-col">
+
+    <%# Header %>
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
+      <h3 class="text-base font-semibold text-gray-800">Editar consulta de Service Layer</h3>
+      <button type="button"
+              data-action="click->sl-resources#closePanel"
+              data-testid="sl-resource-panel-close"
+              class="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors">
+        <span class="material-icons text-xl">close</span>
+      </button>
+    </div>
+
+    <%# Cuerpo %>
+    <div class="flex-1 overflow-y-auto px-6 py-5">
+      <div class="flex flex-col gap-4">
+
+        <%# Código — no editable: es la llave con la que la app pide la consulta %>
+        <div class="flex flex-col gap-1">
+          <label class="text-xs font-medium text-gray-600">Código</label>
+          <input type="text" readonly
+                 data-sl-resources-target="fCode"
+                 data-testid="panel-input-code"
+                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 cursor-default outline-none">
+          <span class="text-xs text-gray-500">
+            El código no se puede modificar: es la llave con la que la aplicación pide esta consulta.
+          </span>
+        </div>
+
+        <%# Recurso %>
+        <div class="flex flex-col gap-1">
+          <label class="text-xs font-medium text-gray-600">Recurso <span class="text-red-500">*</span></label>
+          <input type="text"
+                 data-sl-resources-target="fResource"
+                 data-testid="panel-input-resource"
+                 placeholder="view.svc/CL_D_..._B1SLQuery"
+                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <span data-sl-resources-target="fResourceError" class="hidden text-xs text-red-500">El recurso es requerido.</span>
+        </div>
+
+        <%# Query params — lista clave/valor %>
+        <div class="flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-medium text-gray-600">Parámetros de la consulta</label>
+            <button type="button"
+                    data-action="click->sl-resources#addParam"
+                    data-testid="panel-btn-add-param"
+                    class="inline-flex items-center gap-1 px-2.5 py-1 border border-blue-600 text-blue-600 text-xs font-medium rounded-lg hover:bg-blue-50 transition-colors">
+              <span class="material-icons text-sm">add</span>
+              Agregar parámetro
+            </button>
+          </div>
+
+          <%# Filas clave/valor renderizadas por el controller %>
+          <div data-sl-resources-target="paramsList" data-testid="panel-params-list" class="flex flex-col gap-2"></div>
+
+          <p data-sl-resources-target="paramsEmpty" class="hidden text-xs text-gray-500 italic">
+            Esta consulta no lleva parámetros.
+          </p>
+
+          <%# Vista previa de lo que se va a guardar en query_params %>
+          <div class="flex flex-col gap-1 mt-1">
+            <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Se guardará como</label>
+            <code data-sl-resources-target="paramsPreview"
+                  data-testid="panel-params-preview"
+                  class="block break-all rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-xs text-gray-700 min-h-[2.25rem]"></code>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <%# Footer %>
+    <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 flex-shrink-0">
+      <button type="button"
+              data-action="click->sl-resources#closePanel"
+              data-testid="panel-btn-cancel"
+              class="inline-flex items-center gap-1 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
+        <span class="material-icons text-base">cancel</span>
+        Cancelar
+      </button>
+      <button type="button"
+              data-action="click->sl-resources#savePanel"
+              data-sl-resources-target="submitBtn"
+              data-testid="panel-btn-submit"
+              class="inline-flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        <span class="material-icons text-base">autorenew</span>
+        Actualizar
+      </button>
+    </div>
+
+  </div>
+
+</div>

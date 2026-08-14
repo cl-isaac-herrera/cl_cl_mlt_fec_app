@@ -59,6 +59,11 @@ Rails.application.routes.draw do
       get :assignable, on: :collection
     end
 
+    # Consultas al Service Layer (pantalla de mantenimiento). Sin `create` ni
+    # `destroy`: el catálogo lo define `db/seeds.rb`, la pantalla solo ajusta el
+    # recurso y la query de las consultas que la app ya sabe consumir.
+    resources :sl_resources, only: %i[index show update]
+
     put 'session/company', to: 'sessions#update_company'
   end
 
@@ -96,6 +101,9 @@ Rails.application.routes.draw do
 
     # Group
     get 'group', to: 'group#index', as: :group
+
+    # Recursos de Service Layer — mantenimiento de las consultas a SAP.
+    get 'sl-resources', to: 'sl_resources#index', as: :sl_resources
 
     # Connections
     get 'connections',          to: 'connections#index', as: :connections

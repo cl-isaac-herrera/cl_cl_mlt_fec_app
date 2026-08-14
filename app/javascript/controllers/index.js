@@ -14,6 +14,7 @@ import CompaniesController        from 'controllers/companies_controller'
 import CompanyFormController      from 'controllers/company_form_controller'
 import ConnectionsController      from 'controllers/connections_controller'
 import ConnectionFormController   from 'controllers/connection_form_controller'
+import SlResourcesController      from 'controllers/sl_resources_controller'
 import NumberingController        from 'controllers/numbering_controller'
 import GroupController            from 'controllers/group_controller'
 import BranchesController         from 'controllers/branches_controller'
@@ -45,6 +46,7 @@ application.register('companies',         CompaniesController)
 application.register('company-form',      CompanyFormController)
 application.register('connections',       ConnectionsController)
 application.register('connection-form',   ConnectionFormController)
+application.register('sl-resources',      SlResourcesController)
 application.register('numbering',         NumberingController)
 application.register('group',             GroupController)
 application.register('branches',          BranchesController)

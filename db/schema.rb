@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_12_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_14_140000) do
   create_table "companies", force: :cascade do |t|
     t.integer "connection_id"
     t.datetime "created_at", null: false
@@ -65,6 +65,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_12_130000) do
     t.string "name", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
+  end
+
+  create_table "sl_resources", force: :cascade do |t|
+    t.string "code", limit: 100, null: false
+    t.datetime "created_at", null: false
+    t.string "created_by"
+    t.string "description"
+    t.boolean "is_active", default: true, null: false
+    t.boolean "is_standard", default: false, null: false
+    t.integer "page_size"
+    t.text "query_params"
+    t.text "resource", null: false
+    t.datetime "updated_at", null: false
+    t.string "updated_by"
+    t.index ["code"], name: "index_sl_resources_on_code", unique: true
   end
 
   create_table "user_permissions", force: :cascade do |t|
