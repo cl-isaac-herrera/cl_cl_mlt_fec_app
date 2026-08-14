@@ -1,0 +1,16 @@
+[
+  {
+    "name": "COMPANIA_CR",
+    "base_url": "https://sl.ejemplo.com:50000/b1s/v1/",
+    "company_db": "SBO_EJEMPLO_CR",
+    "username": "manager",
+    "password": "REEMPLAZAR"
+  },
+  {
+    "name": "COMPANIA_GT",
+    "base_url": "https://sl.ejemplo.com:50000/b1s/v1/",
+    "company_db": "SBO_EJEMPLO_GT",
+    "username": "manager",
+    "password": "REEMPLAZAR"
+  }
+]

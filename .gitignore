@@ -100,3 +100,8 @@ yarn-debug.log*
 
 # Repo legacy Angular — no incluir en este repo
 legacy/
+
+# Archivo de conexiones de sap_udfs — lleva credenciales reales de SAP por compañía.
+# El shape vive en config/sap_connections.example.json (ficticio, sí se commitea).
+/config/sap_connections*.json
+!/config/sap_connections.example.json

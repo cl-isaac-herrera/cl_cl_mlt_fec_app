@@ -2013,3 +2013,83 @@ columna.
 llamadas a `/api/Group/*` que quedan en `companies_controller.js`, `company_form_controller.js`
 y `users_register_controller.js`. Es código muerto por esta decisión, pero **borrar una
 pantalla completa es una tarea aparte** — está anotado en `TODOS.md` → Grupos.
+
+---
+
+## 32. UDTs y UDFs en SAP — SIEMPRE por schema declarativo + `rake sap:schema:*`
+
+La estructura (UDTs y UDFs) que este producto necesita en SAP se declara en
+`config/sap_schemas/*.json` y se aplica con las rake tasks del submódulo
+`vendor/clavisco/sap_udfs`. Es la regla de CLAVISCO-PLATFORM-STANDARDS §2.8:
+
+> **Estado:** el submódulo está cableado y las tasks corren, pero todavía **no hay ningún
+> schema declarado** — `config/sap_schemas/` está vacío a propósito. La base queda lista para
+> el día que el producto necesite su primera UDT/UDF; lo de abajo es el procedimiento a seguir
+> desde ese momento.
+
+> **Nunca crear ni modificar UDTs/UDFs manualmente en SAP ni con código imperativo.**
+> Todo cambio de estructura pasa por un JSON schema + sync.
+
+Eso incluye crearlos a mano desde la ventana de SAP B1, con un script SQL contra la base de
+la compañía, o con un `client.post('UserTablesMD', …)` desde la app. Si la estructura no está
+en `config/sap_schemas`, para efectos de esta app **no existe**: una instalación nueva no la
+va a tener y nadie se va a enterar hasta que un documento falle en producción.
+
+### DDL vs. datos — la división que NO se cruza
+
+| Qué | Con qué | Cuándo |
+|---|---|---|
+| Crear/actualizar la UDT o el UDF (estructura) | `sap_udfs`, `rake sap:schema:sync` | Deploy / alta de compañía, fuera de la app |
+| Leer/escribir **filas** de la UDT o el **valor** de un UDF | `Clavisco::ServiceLayer::Client` (§29) | Runtime, dentro del request |
+
+`sap_udfs` es solo DDL y no se carga en el boot de Rails — por eso `clavisco_submodules.rb`
+**no** lo requiere: sus rake tasks hacen su propio `require`. Escribir el valor de un UDF es
+una llamada normal de Service Layer con el prefijo `U_` puesto a mano
+(`U_APEmail_FE: bandeja`), igual que cualquier otro campo del documento.
+
+### El archivo de conexiones NUNCA se commitea
+
+Las tasks reciben la ruta a un JSON con las credenciales reales de SAP, un objeto por
+compañía. El shape está en `config/sap_connections.example.json` (ficticio, sí se commitea);
+el real está ignorado por `.gitignore` (`/config/sap_connections*.json`) y en CI/CD debe venir
+como secreto inyectado, no como archivo en el repo.
+
+```bash
+rake "sap:schema:diff[config/sap_connections.json]"                        # dry-run
+rake "sap:schema:sync[config/sap_connections.json,tmp/reporte.csv]"        # aplica + CSV
+rake "sap:schema:sync_one[nombre_del_schema,config/sap_connections.json]"  # un solo schema
+rake sap:schema:check_lock                                                 # drift, sin tocar SAP
+```
+
+**Siempre `diff` antes de `sync`**, y con más razón en producción. El lock (`config/sync.lock`)
+es todo-o-nada: si una sola compañía del arreglo falla, no se escribe y el task sale con código
+≠ 0 — así el pipeline nunca cree que quedó todo sincronizado.
+
+### Declarar un campo que YA existe en SAP — primero `diff`, después el schema
+
+La mayoría de los UDFs de este producto (`U_FeNumProvRef`, `U_APEmail_FE`, `U_XmlCode`, …)
+**ya existen** en las instalaciones vivas: los creó el instalador .NET legacy. Al declararlos
+acá, el schema tiene que describir **lo que ya está**, no lo que uno supone.
+
+El motivo es que `Size` solo se puede incrementar: si el schema declara un tamaño **menor** al
+que el campo tiene en SAP, la herramienta igual lo reporta como diff, manda el PATCH, SAP lo
+rechaza y el campo queda en `update_failed` — lo que además impide que se escriba el lock.
+Lo mismo con `Type`, que SAP no deja cambiar nunca (ODBC -1029): la salida es crear un campo
+nuevo, no editar el existente.
+
+> **Procedimiento:** para un campo preexistente, correr `sap:schema:diff` contra una compañía
+> real y escribir el schema con los valores que reporta como actuales. El schema queda correcto
+> cuando `diff` no muestra ningún cambio para ese campo. Recién ahí sirve para instalar una
+> compañía nueva desde cero.
+
+### Convenciones del schema
+
+- Un archivo por tabla, nombre en `snake_case` (es el que recibe `sync_one`).
+- `IsUDT` es obligatorio y sin default. `true` → UDT propia, y `table_name` lleva el `@`
+  escrito (`@CL_FEC_…`). `false` → tabla nativa de SAP, y `table_name` va **sin** `@` (`OPCH`);
+  la herramienta no crea la tabla, solo le agrega/actualiza campos.
+- `Name` de cada columna va **sin** el prefijo `U_` — SAP lo agrega. Las referencias posteriores
+  (payloads, `$filter`) sí lo llevan.
+- Nombre lógico de UDT propia: `CL_<PRODUCTO>_<MODULO>` (ej. `CL_FEC_MATCH_AUTOMATIC`).
+- `Size` no aplica a `db_Memo` ni `db_Date`.
+- La herramienta **no borra** nada: dar de baja un campo es a mano en SAP y con criterio.

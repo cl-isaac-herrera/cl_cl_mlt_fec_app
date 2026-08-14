@@ -13,3 +13,6 @@
 [submodule "vendor/clavisco/service_layer"]
 	path = vendor/clavisco/service_layer
 	url = https://github.com/ClavisCo/cl-sap-servicelayer-ruby.git
+[submodule "vendor/clavisco/sap_udfs"]
+	path = vendor/clavisco/sap_udfs
+	url = https://github.com/ClavisCo/cl-sap-udfs-ruby.git
