@@ -4,7 +4,7 @@ require 'rails_helper'
 
 RSpec.describe 'PUT /api/session/company', type: :request do
   let(:user) { User.create!(email: 'switch@example.com') }
-  let(:acme) { Company.create!(name: 'ACME', sap_db_code: 'SBO_ACME') }
+  let(:acme) { Company.create!(name: 'ACME', sap_db: 'SBO_ACME') }
   let(:ajena) { Company.create!(name: 'Ajena') }
 
   it 'guarda la compañía en la sesión de servidor cuando está asignada' do

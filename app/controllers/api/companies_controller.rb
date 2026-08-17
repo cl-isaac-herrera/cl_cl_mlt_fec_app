@@ -56,7 +56,7 @@ module Api
         Uuid:         company.uuid,
         Name:         company.name,
         ConnectionId: company.connection_id,
-        SapDbCode:    company.sap_db_code
+        SapDbCode:    company.sap_db
       }
     end
   end

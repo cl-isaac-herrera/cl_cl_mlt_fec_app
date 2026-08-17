@@ -10,17 +10,32 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_14_140000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_17_220100) do
   create_table "companies", force: :cascade do |t|
+    t.boolean "auto_send_ap_inv", default: false, null: false
+    t.datetime "cert_expires_at"
+    t.string "cert_path"
+    t.string "cert_pin"
+    t.string "client_id"
     t.integer "connection_id"
     t.datetime "created_at", null: false
     t.string "created_by"
+    t.integer "email_sender_type", default: 0, null: false
+    t.integer "environment_id"
+    t.integer "freight_type", default: 1, null: false
+    t.string "grant_type"
     t.boolean "is_active", default: true, null: false
+    t.string "logo_path"
     t.string "name", null: false
-    t.string "sap_db_code"
+    t.string "print_format_path"
+    t.string "sap_db"
+    t.string "token_password"
+    t.string "token_user"
     t.datetime "updated_at", null: false
     t.string "updated_by"
+    t.boolean "use_ap_invoice", default: false, null: false
     t.string "uuid"
+    t.index ["environment_id"], name: "index_companies_on_environment_id"
     t.index ["uuid"], name: "index_companies_on_uuid", unique: true
   end
 
@@ -33,6 +48,20 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_14_140000) do
     t.string "sl_url", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
+  end
+
+  create_table "environments", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "created_by"
+    t.boolean "is_active", default: true, null: false
+    t.boolean "is_prod", default: false, null: false
+    t.date "resolution_date"
+    t.string "resolution_number"
+    t.datetime "updated_at", null: false
+    t.string "updated_by"
+    t.string "uri_check"
+    t.string "uri_send"
+    t.string "uri_token"
   end
 
   create_table "permissions", force: :cascade do |t|
@@ -139,6 +168,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_14_140000) do
   end
 
   add_foreign_key "companies", "connections"
+  add_foreign_key "companies", "environments"
   add_foreign_key "role_permissions", "permissions"
   add_foreign_key "role_permissions", "roles"
   add_foreign_key "user_permissions", "permissions"

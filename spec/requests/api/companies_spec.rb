@@ -5,8 +5,8 @@ require 'rails_helper'
 RSpec.describe 'GET /api/companies', type: :request do
   let(:user) { User.create!(email: 'selector@example.com') }
   let(:sap)  { Connection.create!(name: 'SAP Producción', sl_url: 'https://sap.test:50000/b1s/v1') }
-  let(:acme) { Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db_code: 'SBO_ACME') }
-  let(:otra) { Company.create!(name: 'Otra S.A.', sap_connection: sap, sap_db_code: 'SBO_OTRA') }
+  let(:acme) { Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db: 'SBO_ACME') }
+  let(:otra) { Company.create!(name: 'Otra S.A.', sap_connection: sap, sap_db: 'SBO_OTRA') }
 
   def body_data
     JSON.parse(response.body)['Data']

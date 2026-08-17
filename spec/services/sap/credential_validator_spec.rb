@@ -5,7 +5,7 @@ require 'rails_helper'
 RSpec.describe Sap::CredentialValidator do
   let(:connection) { Connection.create!(name: 'SAP QA', sl_url: 'https://sap.test:50000/b1s/v1/') }
   let(:company) do
-    Company.create!(name: 'ACME S.A.', sap_db_code: 'SBO_ACME', connection_id: connection.id)
+    Company.create!(name: 'ACME S.A.', sap_db: 'SBO_ACME', connection_id: connection.id)
   end
 
   def validate(sap_user: 'manager', sap_password: 'secreto')
@@ -28,7 +28,7 @@ RSpec.describe Sap::CredentialValidator do
     end
 
     it 'avisa si la compañía no tiene base de SAP' do
-      company.update!(sap_db_code: nil)
+      company.update!(sap_db: nil)
 
       expect(validate.message).to eq('La compañía no tiene una base de datos de SAP asignada.')
     end

@@ -5,7 +5,7 @@ require 'rails_helper'
 RSpec.describe 'POST /api/sap_credential_validations', type: :request do
   let(:user) { User.create!(email: 'sap@example.com') }
   let(:sap)  { Connection.create!(name: 'SAP Producción', sl_url: 'https://sap.test:50000/b1s/v1') }
-  let(:acme) { Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db_code: 'SBO_ACME') }
+  let(:acme) { Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db: 'SBO_ACME') }
 
   let(:login_url) { 'https://sap.test:50000/b1s/v1/Login' }
   let(:probe_url) { %r{\Ahttps://sap\.test:50000/b1s/v1/BusinessPartners} }
@@ -109,7 +109,7 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
   end
 
   it 'responde 403 si la compañía no está asignada al usuario' do
-    ajena = Company.create!(name: 'Ajena S.A.', sap_connection: sap, sap_db_code: 'SBO_AJENA')
+    ajena = Company.create!(name: 'Ajena S.A.', sap_connection: sap, sap_db: 'SBO_AJENA')
 
     sign_in(user)
     post '/api/sap_credential_validations', params: credentials.merge(CompanyId: ajena.id)

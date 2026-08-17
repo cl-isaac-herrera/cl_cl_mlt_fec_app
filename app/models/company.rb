@@ -10,6 +10,17 @@ class Company < ApplicationRecord
   belongs_to :sap_connection, class_name: 'Connection', foreign_key: :connection_id,
                               inverse_of: :companies, optional: true
 
+  # Ambiente de Hacienda contra el que emite. Opcional porque una compañía puede
+  # existir configurada a medias hasta que se le asigne.
+  belongs_to :environment, inverse_of: :companies, optional: true
+
+  # Cifrado reversible, no digest: el PIN se necesita en claro para abrir el .p12 y
+  # la contraseña del ATV para pedirle el token a Hacienda. Ver `CLAUDE.md` §29 —
+  # `encrypts` solo actúa al escribir el atributo, así que una fila insertada por
+  # fuera del modelo queda en texto plano y nadie avisa.
+  encrypts :cert_pin
+  encrypts :token_password
+
   before_create :ensure_uuid
 
   # Compañías asignadas a un usuario. Es el filtro que define qué puede ver en el

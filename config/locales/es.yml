@@ -81,7 +81,7 @@ es:
         type: "El tipo"
       company:
         name: "El nombre"
-        sap_db_code: "El código de base de SAP"
+        sap_db: "El código de base de SAP"
       user:
         email: "El correo"
         name: "El nombre"

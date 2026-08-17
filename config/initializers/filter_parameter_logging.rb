@@ -14,5 +14,5 @@
 # atributo del modelo) y su copia anidada que agrega ParamsWrapper.
 Rails.application.config.filter_parameters += %i[
   passw secret token _key crypt salt certificate otp ssn
-  sappass sap_password
+  sappass sap_password cert_pin
 ]

@@ -123,7 +123,7 @@ module Sap
     # La URL sale de `connections` y no de SAP_SL_URL porque el producto es
     # multi-compañía (§8, nota de nomenclatura de `connections`).
     def base_url   = company.sap_connection&.sl_url.to_s
-    def company_db = company.sap_db_code.to_s
+    def company_db = company.sap_db.to_s
 
     def client
       @client ||= Clavisco::ServiceLayer::Client.new(
