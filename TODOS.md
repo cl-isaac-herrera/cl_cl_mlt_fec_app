@@ -679,6 +679,45 @@ en `[x]`; lo que sigue abierto necesita una decisión, no solo trabajo.
 
 ---
 
+## Submódulos — cambios que corresponden a `cl-sap-udfs-ruby`
+
+- [ ] **`ClientFactory.build` exige el Service Layer en el `$LOAD_PATH`, no la constante.**
+      El README del submódulo dice que el producto debe tener `Clavisco::ServiceLayer::Client`
+      *ya cargado*, pero el código no pregunta por la constante: hace
+      `require "clavisco/service_layer"`, que resuelve contra el `$LOAD_PATH`
+      (`lib/clavisco/sap_udfs/client_factory.rb:12`). Un producto que lo cargó con
+      `require_relative` —que es exactamente el patrón del initializer que manda el estándar de
+      plataforma §3— igual recibe el error "is not available on the load path" con la clase
+      cargada en memoria.
+      **Workaround:** el `Rakefile` de este producto agrega
+      `vendor/clavisco/service_layer/lib` al `$LOAD_PATH` antes de cargar los `.rake`.
+      **Pendiente submódulo:** que `build` verifique
+      `defined?(Clavisco::ServiceLayer::Client)` primero y deje el `require` como respaldo.
+      Al mergearse, el `$LOAD_PATH.unshift` del `Rakefile` se puede borrar.
+
+- [ ] **`create_udf` no puede crear campos `db_Numeric`: falta `EditSize` en el POST.**
+      `build_update_body` manda `Size` y `EditSize` juntos en el PATCH, pero `create_udf` en el
+      POST manda solo `Size` (`lib/clavisco/sap_udfs/schema_sync_service.rb:216`). SAP rechaza
+      la creación de un numérico con *"Field size deviates from legal range [1..11]"* para
+      cualquier `Size` —probado con 11 y con 10—, lo que apunta a que valida `EditSize`, que sin
+      enviarse queda en 0. Los `db_Alpha` y `db_Memo` no se ven afectados: SAP les deriva el
+      `EditSize` del `Size`.
+      **Workaround:** `CL_FEC_PurchInvSeriesNum` se declaró `db_Alpha` con `Size: 10` en
+      `config/sap_schemas/oadm_company_config.json`; la app convierte con `to_i` al leerlo.
+      **Pendiente submódulo:** que `create_udf` incluya `EditSize` junto a `Size`, o que el
+      schema pueda declararlo. Al mergearse **no** se puede corregir el campo ya creado: SAP no
+      permite cambiar el `Type` de un UDF existente, así que el workaround queda para siempre en
+      las bases donde ya se aplicó.
+
+- [ ] **`validate_schema!` no valida el largo del nombre del campo.** Valida `IsUDT`, el `@` del
+      `table_name` y la presencia de `columns`, pero no el largo de `Name`
+      (`lib/clavisco/sap_udfs/schema_sync_service.rb:354`). Un nombre que exceda el tope de SAP
+      pasa el `diff` como `will_create` y falla recién al aplicar el `POST`; y como el lock es
+      todo-o-nada, un solo campo mal nombrado deja sin registrar el sync de todos los schemas de
+      todas las compañías.
+      **Pendiente submódulo:** validar el largo en `validate_schema!` para que falle en el
+      `diff`, y documentar el tope en el README.
+
 ## Submódulos — cambios que corresponden a `cl-auth-ruby`
 
 Estas tres cosas están resueltas **con workarounds en este producto** porque el submódulo

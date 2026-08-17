@@ -2082,6 +2082,32 @@ nuevo, no editar el existente.
 > cuando `diff` no muestra ningún cambio para ese campo. Recién ahí sirve para instalar una
 > compañía nueva desde cero.
 
+### La descripción de todo UDF empieza con `FEC ·`
+
+El estándar de nomenclatura de Clavisco (Confluence, espacio `desarrollo`, página
+`2738159644`) fija en su §6.2 que la descripción de un UDF va en español con el patrón
+`[Entidad] · propósito funcional`, máximo 60 caracteres. **En este producto la entidad se
+reemplaza por el identificador de la aplicación:**
+
+```
+FEC · Código de impuesto por defecto del XML
+FEC · Razón social del emisor ante Hacienda
+```
+
+> **Regla:** toda descripción de UDF de este producto empieza con `FEC ·`. En español,
+> máximo 60 caracteres, sin repetir el nombre técnico.
+
+**Por qué se desvía del §6.2:** estos campos viven sobre tablas nativas de SAP (`OADM`,
+`OPCH`), que son compartidas con cualquier otro add-on instalado en la misma base. Ahí la
+entidad es obvia —quien mira el panel de campos de usuario ya sabe en qué ventana está— y
+lo que no se puede saber es **de qué producto es el campo**. El identificador de la
+aplicación resuelve justamente eso, y es el mismo criterio que el §6.1 aplica a las UDTs.
+Para una UDT propia de este producto, el patrón del §6.1 ya coincide con esta regla.
+
+La descripción **sí se puede corregir después**: es una de las propiedades que
+`compute_diffs` compara y que SAP acepta por PATCH, a diferencia del `Type` y del `Size`.
+Cambiarla en el schema y correr `sync` alcanza para alinear los campos ya creados.
+
 ### Convenciones del schema
 
 - Un archivo por tabla, nombre en `snake_case` (es el que recibe `sync_one`).
