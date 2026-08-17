@@ -29,7 +29,10 @@ CATALOG = [
   [3,  'Documents_Issued_ViewDocuments',    'Permite visualizar documentos emitidos'],
   [4,  'Documents_Reception_ViewDocuments',  'Permite visualizar documentos recepcionados'],
   [5,  'S_ReceptDocs',                      'Acceso a SubMenu Recepción de Documentos'],
-  [6,  'S_Company',                         'Acceso a SubMenu de Compañías'],
+  # Renombrado desde `S_Company` (§4.4), al migrar los endpoints de la pantalla.
+  # La equivalencia vive en `db/permission_name_map.yml`.
+  [6,  'Configurations_Companies_ListAccess',
+       'Permite acceder a la vista de lista de compañías'],
   [7,  'S_RegUser',                         'Acceso a SubMenu Registro de Usuarios'],
   # Huérfano: su pantalla ("Completar registro") se eliminó y nadie lo evalúa. Se
   # sigue sembrando porque el catálogo replica el del origen tal cual. Ver
@@ -45,8 +48,9 @@ CATALOG = [
   [13, 'S_Rols',                            'Acceso a SubMenu de Roles'],
   [14, 'S_RolByUser',                       'Acceso a SubMenu de Rol por Usuario'],
   [15, 'S_CreateDocs',                      'Acceso a SubMenu Creación de documentos'],
-  [16, 'F_CreateCompany',                   'Permiso para la Creación de Compañías'],
-  [17, 'F_ModifyCompany',                   'Permiso para la Modificación de Compañías'],
+  # Renombrados desde `F_CreateCompany` / `F_ModifyCompany` (§4.4). Ver el map.
+  [16, 'Configurations_Companies_Create',   'Permite crear compañías'],
+  [17, 'Configurations_Companies_Update',   'Permite actualizar una compañía'],
   [18, 'Configurations_Groups_Update',      'Permiso para la Actualización de Grupos'],
   [19, 'F_AddOwner',                        'Permiso para Agregar un Owner'],
   [20, 'F_RemoveOwner',                     'Permiso para Eliminar un Owner'],

@@ -45,7 +45,7 @@ export default [
     requiredPermission: 'M_Config',
     nodes: [
       { key: 'user-profile',     label: 'Perfil de usuario',              route: '/configurations/user-profile' },
-      { key: 'company',          label: 'Compañías',                      route: '/configurations/companies',      requiredPermission: 'S_Company' },
+      { key: 'company',          label: 'Compañías',                      route: '/configurations/companies',      requiredPermission: 'Configurations_Companies_ListAccess' },
       { key: 'connections',      label: 'Conexiones',                     route: '/configurations/connections',    requiredPermission: 'Configurations_Connections_Access' },
       { key: 'slResources',      label: 'Recursos Service Layer',         route: '/configurations/sl-resources',   requiredPermission: 'Configurations_SlResources_Access' },
       { key: 'udfs',             label: 'Campos definidos por usuario',   route: '/configurations/udfs',           requiredPermission: 'S_Udfs', requiredCompanyFlag: 'UseFactProv' },

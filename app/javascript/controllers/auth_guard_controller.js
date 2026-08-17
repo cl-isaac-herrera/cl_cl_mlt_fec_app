@@ -23,9 +23,9 @@ const ROUTE_PATTERN_PERMISSIONS = [
   // /documents/receptions/:id/create?xmlDocType=...
   { pattern: /^\/documents\/receptions\/[^/]+\/create\/?$/, permission: 'F_CreateAPInvoice' },
   // Crear compañía: /configurations/companies/new
-  { pattern: /^\/configurations\/companies\/new\/?$/, permission: 'F_CreateCompany' },
+  { pattern: /^\/configurations\/companies\/new\/?$/, permission: 'Configurations_Companies_Create' },
   // Editar compañía: /configurations/companies/:id/edit
-  { pattern: /^\/configurations\/companies\/[^/]+\/edit\/?$/, permission: 'F_ModifyCompany' },
+  { pattern: /^\/configurations\/companies\/[^/]+\/edit\/?$/, permission: 'Configurations_Companies_Update' },
 ]
 
 // Rutas que además requieren que la compañía seleccionada (SStore.CurrentCompany)

@@ -110,13 +110,13 @@ export default class extends Controller {
 
   /**
    * Click derecho en el botón de compañía.
-   * Solo muestra el menú si el usuario tiene F_ModifyCompany.
+   * Solo muestra el menú si el usuario tiene Configurations_Companies_Update.
    */
   onContextMenu(event) {
     event.preventDefault()
 
     const permissions = SStore.get('Permissions') ?? []
-    if (!permissions.includes('F_ModifyCompany')) return
+    if (!permissions.includes('Configurations_Companies_Update')) return
     if (!this.hasContextMenuTarget) return
 
     this.contextMenuTarget.classList.remove('hidden')
@@ -232,15 +232,17 @@ export default class extends Controller {
   }
 
   /**
-   * GET /api/companies — endpoint nativo de Rails. Devuelve solo las compañías
-   * asignadas al usuario de la sesión, así que no lleva filtros ni estado.
+   * GET /api/profile/companies — endpoint nativo de Rails. Devuelve solo las
+   * compañías asignadas al usuario de la sesión, así que no lleva filtros ni
+   * estado. (`/api/companies` es otro conjunto: las de la instalación, que
+   * administra /configurations/companies.)
    * Separado del render porque connect() lo necesita antes de abrir el panel,
    * para saber si hay una favorita que aplicar sola.
    * @returns {Promise<Array>}
    */
   async #fetchCompanies() {
     try {
-      const response = await fetch('/api/companies', { headers: getApiHeaders() })
+      const response = await fetch('/api/profile/companies', { headers: getApiHeaders() })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
       const data = await response.json()

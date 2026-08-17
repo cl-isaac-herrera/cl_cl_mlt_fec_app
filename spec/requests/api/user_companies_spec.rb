@@ -246,12 +246,14 @@ RSpec.describe 'Api::Users::Companies', type: :request do
       expect(response).to have_http_status(:forbidden)
     end
 
-    it 'no afecta a GET /api/companies, que no lleva permiso y no cambió' do
+    # Las compañías del propio usuario son otro conjunto y viven en otra ruta:
+    # el permiso de asignación no las amplía ni las restringe.
+    it 'no afecta a GET /api/profile/companies, que no lleva permiso' do
       beta
       admin_reaches(acme)
       sign_in_with('Configurations_Users_CompanyAssignment')
 
-      get '/api/companies'
+      get '/api/profile/companies'
 
       expect(body_data.map { |c| c['Name'] }).to eq(['ACME S.A.'])
     end

@@ -14,7 +14,7 @@ import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/aler
  * Storage (ver fec-migration-docs/STORAGE-KEY-MAPPING.md):
  *   - localStorage.Session          → { access_token, expires_at, ... }
  *   - sessionStorage.CurrentCompany → { companyId, companyName, groupId, ... }
- *   - sessionStorage.Permissions    → string[]  (e.g. ["F_CreateCompany"])
+ *   - sessionStorage.Permissions    → string[]  (e.g. ["Configurations_Companies_Create"])
  *
  * NOTA: CurrentFESession de Angular no existe en Rails.
  * El feToken se obtiene del mismo localStorage.Session (access_token).

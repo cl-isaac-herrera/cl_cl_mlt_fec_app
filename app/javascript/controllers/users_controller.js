@@ -25,7 +25,7 @@
  *   - GET   /api/users/:id/permissions                (permisos globales del usuario)
  *   - PUT   /api/users/:id/permissions                (reemplazar sus permisos globales)
  *   - GET   /api/permissions/catalog?type=global      (catálogo de permisos globales)
- *   - GET   /api/companies                            (compañías del administrador)
+ *   - GET   /api/profile/companies                    (compañías del administrador)
  *   - GET   /api/companies/assignable                 (las que puede asignar)
  *   - GET   /api/roles                                (catálogo de roles)
  *   - POST  /api/sap_credential_validations           (probar credenciales de SAP)
@@ -520,7 +520,7 @@ export default class extends TabulatorController {
   async #loadCreateData() {
     this.createLoadingOverlayTarget.classList.remove('hidden');
     try {
-      const companiesRes = await this.#railsFetch('/api/companies');
+      const companiesRes = await this.#railsFetch('/api/profile/companies');
       const companies    = companiesRes.Data || [];
 
       this.createCompanySelectTarget.innerHTML = '';

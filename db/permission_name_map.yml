@@ -31,6 +31,28 @@ renames:
       El nombre nuevo NO existía en el catálogo de origen: es un rename puro.
       Ojo al importar: el .NET lo trae con Id 9.
 
+  # Gatea la pantalla de compañías (nodo de menú + `GET /api/companies`).
+  - from: S_Company
+    to:   Configurations_Companies_ListAccess
+    note: >-
+      El nombre nuevo NO existía en el catálogo de origen: es un rename puro.
+      Ojo al importar: el .NET lo trae con Id 6.
+
+  # Habilita el botón "Nueva Compañía". Lo exigirá `POST /api/companies`.
+  - from: F_CreateCompany
+    to:   Configurations_Companies_Create
+    note: >-
+      Rename puro (Id 16 en el origen). Se renombró junto con el listado aunque
+      el endpoint de creación todavía no está migrado, para no cambiar el nombre
+      dos veces.
+
+  # Habilita el botón "Editar" de la fila. Lo exigirá `PATCH /api/companies/:id`.
+  # También lo mira el menú contextual del selector de compañía del toolbar.
+  - from: F_ModifyCompany
+    to:   Configurations_Companies_Update
+    note: >-
+      Rename puro (Id 17 en el origen). Misma nota que el de creación.
+
   # Habilita el botón "Nuevo Usuario" y lo exige `POST /api/users`.
   - from: S_RegUser
     to:   Configurations_Users_Create

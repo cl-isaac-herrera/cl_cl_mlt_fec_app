@@ -112,13 +112,13 @@ export default class extends Controller {
   }
 
   /**
-   * GET /api/companies — solo las compañías asignadas al usuario. Es el mismo
-   * universo contra el que el servidor acepta probar credenciales, así que el
-   * select no puede ofrecer una que después rechace con 403.
+   * GET /api/profile/companies — solo las compañías asignadas al usuario. Es el
+   * mismo universo contra el que el servidor acepta probar credenciales, así que
+   * el select no puede ofrecer una que después rechace con 403.
    */
   async #loadAssignableCompanies() {
     try {
-      const data = await this.#get('/api/companies');
+      const data = await this.#get('/api/profile/companies');
       const companies = data.Data ?? [];
 
       // Limpiar opciones previas (excepto placeholder)

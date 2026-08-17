@@ -8,9 +8,14 @@ Rails.application.routes.draw do
   # Nombrado REST: el verbo va en el método HTTP, no en el path — `GET /api/companies`
   # en vez de `GET /api/Companies/GetCompanies`.
   namespace :api do
-    # `assignable` son TODAS las compañías de la instalación (lista dual del tab de
-    # asignación); `index` son solo las del usuario de la sesión. Reemplaza
+    # `index` es el listado de administración (/configurations/companies): las
+    # compañías de la instalación, paginadas, con filtro por nombre y con las
+    # dadas de baja incluidas. Reemplaza GET /api/Companies/GetCompanies.
+    # `assignable` es la lista dual del tab de asignación de usuarios y reemplaza
     # GET /api/Companies/for-assignment?groupId=N — sin groupId, no hay grupos (§31).
+    #
+    # Las compañías DEL USUARIO de la sesión no están acá: son
+    # GET /api/profile/companies.
     resources :companies, only: [:index] do
       get :assignable, on: :collection
     end
@@ -45,7 +50,13 @@ Rails.application.routes.draw do
 
     # Perfil del usuario de la sesión. Singular: no lleva id porque siempre es el
     # propio. Reemplaza GET /api/User/GetUserInfo y PATCH /api/User/profile-info.
-    resource :profile, only: %i[show update]
+    #
+    # `companies` cuelga de acá y no de `/api/companies` porque el conjunto lo
+    # define la sesión, no un filtro: son las compañías asignadas al usuario, las
+    # que alimentan el selector del toolbar.
+    resource :profile, only: %i[show update] do
+      resources :companies, only: [:index], module: :profile
+    end
 
     # Prueba de credenciales de SAP contra el Service Layer de una compañía.
     # Reemplaza POST /api/Connections/validate-user-credentials.

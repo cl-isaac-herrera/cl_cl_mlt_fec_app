@@ -29,6 +29,15 @@ class Company < ApplicationRecord
     joins(:users_by_companies).where(users_by_companies: { user_id: user_id, is_active: true })
   }
 
+  # Filtro del listado de administración. Se aplica como "contiene"; en blanco no
+  # filtra nada. Solo por `name`: el nombre legal, el comercial y la
+  # identificación viven en SAP (UDFs `U_CL_FEC_Emsr*` sobre `OADM`), no acá.
+  scope :search, lambda { |name: nil|
+    next all if name.blank?
+
+    where(arel_table[:name].matches("%#{sanitize_sql_like(name.to_s.strip)}%"))
+  }
+
   private
 
   # Generado en Ruby y no en la base: el estándar prohíbe SQL específico de SQLite.

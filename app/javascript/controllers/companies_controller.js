@@ -1,33 +1,28 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
-import { Storage, SStore } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
+import { SStore, getApiHeaders } from 'vendor/clavisco/core';
+import { showToast } from 'vendor/clavisco/alerts';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
- * CompaniesController — Búsqueda y listado paginado de compañías (Tabulator).
+ * CompaniesController — Listado de compañías (/configurations/companies).
  *
- * Replica: Angular CompanyComponent
- *   - GET api/Companies/GetCompanies (paginado server-side)
- *   - Tabla Tabulator con paginación REMOTA (StartPos/StepPos + MaxQtyRowsFetch)
- *   - Columnas: Nombre Legal, Nombre Comercial, Identificación, Estado (badge), Acciones (estrella favorita + editar)
- *   - "Consultar" → resetea a página 1 y recarga
- *   - "Crear" → navega a /new (permiso F_CreateCompany)
- *   - Favorita (star) con confirmación previa · Actualizar (edit, permiso F_ModifyCompany)
+ * Endpoint nativo de Rails: GET /api/companies?name=&page=&per_page=
+ * (reemplaza GET /api/Companies/GetCompanies del .NET — ver CLAUDE.md §28).
  *
- * Layout full-height: height "100%"; el paginador de Tabulator queda al pie y las filas
- * hacen scroll interno solo cuando se requiere.
+ * La tabla muestra únicamente lo que vive en la base de la aplicación: nombre,
+ * estado y acciones. El nombre legal, el nombre comercial y la identificación
+ * salieron del listado porque ya no son columnas: viven en SAP como UDFs
+ * (`U_CL_FEC_Emsr*` sobre `OADM`). Por lo mismo el único filtro es el nombre.
  *
- * Storage (ver fec-migration-docs/STORAGE-KEY-MAPPING.md):
- *   - localStorage.Session          → { access_token, ... }
- *   - sessionStorage.CurrentCompany → { companyId, companyName, groupId, ... }
- *   - sessionStorage.Permissions    → string[]
+ * Permisos (CLAUDE.md §26 — se deshabilita con tooltip, no se oculta):
+ *   - Configurations_Companies_ListAccess → gatea la pantalla (menú + endpoint)
+ *   - Configurations_Companies_Create     → botón "Nueva Compañía"
+ *   - Configurations_Companies_Update     → botón "Editar" de la fila
  */
 export default class extends TabulatorController {
   static targets = [
     ...TabulatorController.targets,
-    'searchLegalName',
-    'searchComercialName',
-    'searchIdentification',
+    'searchName',
     'btnCreate', 'btnCreateWrap',
   ];
 
@@ -36,8 +31,7 @@ export default class extends TabulatorController {
   // ── Estado interno ─────────────────────────────────────────────────────────
 
   #permissions = [];        // string[]
-  #pendingFavoriteId = null;
-  #totalRecords = 0;        // total real del servidor (evita sobreestimación de Tabulator)
+  #totalRecords = 0;        // total real del servidor (ver CLAUDE.md §17)
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -46,7 +40,7 @@ export default class extends TabulatorController {
 
     // Botón "Nueva Compañía": habilitado solo con permiso; si no, queda
     // deshabilitado con tooltip explicativo (ver CLAUDE.md §26).
-    if (this.#hasPerm('F_CreateCompany')) {
+    if (this.#hasPerm('Configurations_Companies_Create')) {
       this.#enableCreateButton();
     } else if (this.hasBtnCreateWrapTarget) {
       this.#attachTooltip(this.btnCreateWrapTarget);
@@ -60,6 +54,7 @@ export default class extends TabulatorController {
   getTableConfig() {
     return {
       height: '100%',
+      maxHeight: undefined,
       layout: 'fitColumns',
       movableRows: false,
       placeholder: 'No se encontraron compañías',
@@ -70,8 +65,8 @@ export default class extends TabulatorController {
       paginationMode: 'remote',
       paginationSize: 10,
       paginationSizeSelector: [10, 15, 25],
-      // paginationCounter custom — Tabulator calcula el total como last_page*pageSize, lo que
-      // sobreestima cuando la última página no está llena. Usamos el total real del servidor.
+      // Contador propio: Tabulator infiere el total como last_page*pageSize y lo
+      // sobreestima cuando la última página no está llena (CLAUDE.md §17).
       paginationCounter: (_pageSize, currentRow, _currentPage, _totalRows, _totalPages) => {
         const total = this.#totalRecords;
         if (!total) return '';
@@ -81,8 +76,9 @@ export default class extends TabulatorController {
       locale: TABULATOR_LOCALE,
       langs: TABULATOR_LANGS,
       dataLoaderLoading: TABULATOR_LOADING_HTML,
-      ajaxURL: '/api/Companies/GetCompanies',
+      ajaxURL: '/api/companies',
       ajaxRequestFunc: (url, config, params) => this.#fetchPage(url, params),
+      ajaxResponse: (_url, _params, response) => response,
 
       columns: this.getColumns(),
     };
@@ -90,59 +86,51 @@ export default class extends TabulatorController {
 
   getColumns() {
     return [
-      { title: 'Nombre Legal', field: 'EmsrNombre', widthGrow: 2 },
-      { title: 'Nombre Comercial', field: 'EmsrNombreComercial', widthGrow: 2 },
-      { title: 'Identificación', field: 'EmsrIdeNumero', widthGrow: 1 },
+      { title: 'Nombre', field: 'Name', widthGrow: 3 },
       {
-        title: 'Estado', field: 'Active', width: 110,
+        title: 'Estado', field: 'Active', width: 120,
         formatter: (cell) => this.#statusBadge(cell.getValue() ? 'active' : 'inactive'),
       },
       {
         title: 'Acciones', field: 'Id', width: 110, hozAlign: 'center',
-        formatter: (cell) => this.#actionButtons(cell.getRow().getData()),
+        formatter: () => this.#actionButtons(),
         cellClick: (e, cell) => {
-          const row = cell.getRow().getData();
-          if (e.target.closest('[data-action-type="favorite"]')) this.#onFavoriteClick(row);
-          else if (e.target.closest('[data-action-type="edit"]')) this.#onEditClick(row);
+          if (e.target.closest('[data-action-type="edit"]')) this.#onEditClick(cell.getRow().getData());
         },
       },
     ];
   }
 
   /**
-   * Función de carga remota para Tabulator.
-   * @param {string} url       ajaxURL configurada
-   * @param {Object} params    { page (1-indexed), size, ... }
+   * Carga remota. El total viene en el cuerpo (`Data.Total`), no en un header ni
+   * pegado a cada fila como hacía el .NET con `MaxQtyRowsFetch`.
+   * @param {string} url    ajaxURL configurada
+   * @param {Object} params { page (1-indexed), size, ... }
    * @returns {Promise<{data: Array, last_page: number}>}
    */
   async #fetchPage(url, params) {
-    const page = params.page || 1;
-    const size = params.size || 5;
+    const size = params.size || 10;
 
     const qp = new URLSearchParams({
-      LegalName:         this.searchLegalNameTarget.value.trim(),
-      ComercialName:     this.searchComercialNameTarget.value.trim(),
-      Identification:    this.searchIdentificationTarget.value.trim(),
-      StartPos:          String(page),
-      StepPos:           String(size),
-      RequirePagination: 'true',
-      status:            '',
+      name:     this.searchNameTarget.value.trim(),
+      page:     String(params.page || 1),
+      per_page: String(size),
     });
 
     try {
       const json = await this.#apiFetch(`${url}?${qp}`);
 
-      if (json.Error || !json.Data) {
-        showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener información de Compañías', message: json.Message || 'Error desconocido' });
+      if (!json.Data) {
+        showToast(json.Message || 'Error al obtener las compañías', 'error');
         return { data: [], last_page: 1 };
       }
 
-      const total    = json.Data[0]?.MaxQtyRowsFetch || 0;
+      const total = json.Data.Total ?? 0;
       this.#totalRecords = total;
       const lastPage = Math.max(1, Math.ceil(total / size));
-      return { data: json.Data, last_page: lastPage };
+      return { data: json.Data.Items ?? [], last_page: lastPage };
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener las compañías', message: err.message });
+      showToast(err.message || 'Error al obtener las compañías', 'error');
       return { data: [], last_page: 1 };
     }
   }
@@ -151,40 +139,24 @@ export default class extends TabulatorController {
 
   search() {
     // setData() recarga vía ajax y vuelve a la página 1
-    this.table.setData();
+    this.table?.setData();
   }
 
   navigateCreate() {
+    // Defensa en profundidad: la UI ya deshabilita el botón, pero se puede
+    // manipular (CLAUDE.md §26).
+    if (!this.#hasPerm('Configurations_Companies_Create')) {
+      showToast('No cuenta con permisos para crear compañías.', 'info');
+      return;
+    }
     Turbo.visit('/configurations/companies/new');
   }
 
   // ── Event handlers de fila ─────────────────────────────────────────────────
 
-  async #onFavoriteClick(company) {
-    if (company.Favorite) return;
-    if ((company.QtyRolAssign ?? 1) === 0) {
-      showToast('Opción no disponible, ya que no posee asignaciones.', 'info');
-      return;
-    }
-    const confirmed = await confirm('¿Está seguro de que desea cambiar la compañía favorita?', 'Compañía favorita', ALERT_TYPES.QUESTION);
-    if (!confirmed) return;
-
-    try {
-      const json = await this.#apiFetch(`/api/companies/${company.Id}/favorite`, { method: 'POST' });
-      if (json.Error) {
-        showToast(`Error al cambiar la compañía favorita. ${json.Message}`, 'error');
-      } else {
-        showToast('Compañía favorita cambiada con éxito', 'success');
-        this.table.replaceData();
-      }
-    } catch (err) {
-      showToast(`Error: ${err.message}`, 'error');
-    }
-  }
-
   #onEditClick(company) {
-    if (!this.#hasPerm('F_ModifyCompany')) {
-      showToast('Opción no disponible, ya que no posee los permisos.', 'info');
+    if (!this.#hasPerm('Configurations_Companies_Update')) {
+      showToast('No cuenta con permisos para editar compañías.', 'info');
       return;
     }
     Turbo.visit(`/configurations/companies/${company.Id}/edit`);
@@ -201,37 +173,30 @@ export default class extends TabulatorController {
     return `<span style="background-color:${bg}; color:${color};" class="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide">${label}</span>`;
   }
 
-  #actionButtons(row = {}) {
-    const isFavorite = !!row.Favorite;
-    const starStyle  = isFavorite
-      ? 'color:#FFC107;'
-      : 'color:transparent; -webkit-text-stroke:1.5px #9ca3af;';
-    const starTip    = isFavorite ? 'Compañía favorita' : 'Establecer como favorita';
-    const starBtn    = `
-      <button type="button" data-action-type="favorite" data-tooltip="${starTip}"
-              class="p-1.5 rounded transition-colors ${isFavorite ? 'cursor-default' : 'hover:bg-yellow-50 cursor-pointer'}">
-        <span class="material-icons text-base" style="${starStyle}">star</span>
-      </button>`;
-    // Editar: deshabilitado con tooltip si no tiene permiso (ver CLAUDE.md §26).
-    // El data-tooltip va en el <span> envolvente porque un <button disabled> no
-    // emite eventos de mouse; el setupTooltip base (tabla) lo detecta ahí.
-    const editBtn = this.#hasPerm('F_ModifyCompany')
-      ? `<button type="button" data-action-type="edit" data-tooltip="Editar"
-                 class="p-1.5 text-blue-600 rounded hover:bg-blue-50 transition-colors cursor-pointer">
-           <span class="material-icons text-base">edit</span>
-         </button>`
-      : `<span data-tooltip="No cuenta con permisos para editar compañías">
-           <button type="button" disabled
-                   class="p-1.5 text-gray-300 rounded cursor-not-allowed pointer-events-none">
+  // Editar: deshabilitado con tooltip si no tiene permiso (ver CLAUDE.md §26).
+  // El data-tooltip va en el <span> envolvente porque un <button disabled> no
+  // emite eventos de mouse; el setupTooltip base (tabla) lo detecta ahí.
+  #actionButtons() {
+    return this.#hasPerm('Configurations_Companies_Update')
+      ? `<div class="flex items-center justify-center gap-1">
+           <button type="button" data-action-type="edit" data-tooltip="Editar"
+                   class="p-1.5 text-blue-600 rounded hover:bg-blue-50 transition-colors cursor-pointer">
              <span class="material-icons text-base">edit</span>
            </button>
-         </span>`;
-    return `<div class="flex items-center justify-center gap-1">${starBtn}${editBtn}</div>`;
+         </div>`
+      : `<div class="flex items-center justify-center gap-1">
+           <span data-tooltip="No cuenta con permisos para editar compañías">
+             <button type="button" disabled
+                     class="p-1.5 text-gray-300 rounded cursor-not-allowed pointer-events-none">
+               <span class="material-icons text-base">edit</span>
+             </button>
+           </span>
+         </div>`;
   }
 
   // ── Helpers de UI ──────────────────────────────────────────────────────────
 
-  /** Permissions es string[] — e.g. ["F_CreateCompany", "S_Company"] */
+  /** Permissions es string[] — e.g. ["Configurations_Companies_Create"] */
   #hasPerm(name) {
     return this.#permissions.includes(name);
   }
@@ -292,38 +257,25 @@ export default class extends TabulatorController {
     });
   }
 
+  /**
+   * Endpoint nativo de Rails: la sesión viaja en la cookie, así que no se arma
+   * ningún header Authorization — getApiHeaders() aporta lo único que hace falta.
+   */
   async #apiFetch(url, options = {}) {
-    const session = Storage.get('Session') || {};
-    const token   = session.access_token;
-
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type':             'application/json',
-        'API':                      'ApiAppUrl',
-        'X-Skip-Error-Interceptor': 'true',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'Accept': 'application/json',
+        ...getApiHeaders(),
         ...(options.headers || {}),
       },
     });
 
-    const clMessage = response.headers.get('cl-message');
-    const decodedMessage = clMessage ? (() => {
-      try { return decodeURIComponent(clMessage); } catch { return clMessage; }
-    })() : null;
-
     if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(decodedMessage || text || `HTTP ${response.status}`);
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.Message || `HTTP ${response.status}`);
     }
 
-    const hasBody = response.status !== 204 &&
-                    response.headers.get('content-length') !== '0' &&
-                    response.headers.get('content-type')?.includes('application/json');
-    if (!hasBody) return { Message: decodedMessage || null };
-
-    const json = await response.json();
-    if (decodedMessage && !json.Message) json.Message = decodedMessage;
-    return json;
+    return response.json();
   }
 }

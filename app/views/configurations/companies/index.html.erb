@@ -1,5 +1,5 @@
 <% content_for :title, "Compañías" %>
-<% content_for :page_title, "Búsqueda de Compañías" %>
+<% content_for :page_title, "Búsqueda de compañías" %>
 
 <div data-controller="companies"
      data-testid="companies-page"
@@ -9,34 +9,18 @@
   <%# FILTROS DE BÚSQUEDA %>
   <%# ---------------------------------------------------------------- %>
   <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4 flex-shrink-0">
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
 
+      <%# Único filtro: el nombre con el que la compañía se identifica dentro del %>
+      <%# producto. El nombre legal, el comercial y la identificación ya no son   %>
+      <%# columnas — viven en SAP como UDFs de OADM.                              %>
       <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Nombre Legal</label>
+        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Nombre</label>
         <input type="text"
-               data-companies-target="searchLegalName"
-               data-testid="search-legal-name"
-               placeholder="Nombre Legal"
-               class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-      </div>
-
-      <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Nombre Comercial</label>
-        <input type="text"
-               data-companies-target="searchComercialName"
-               data-testid="search-comercial-name"
-               placeholder="Nombre Comercial"
-               class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-      </div>
-
-      <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Identificación</label>
-        <input type="text"
-               inputmode="numeric"
-               pattern="[0-9]*"
-               data-companies-target="searchIdentification"
-               data-testid="search-identification"
-               placeholder="Identificación"
+               data-companies-target="searchName"
+               data-action="keydown.enter->companies#search"
+               data-testid="search-name"
+               placeholder="Nombre"
                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
       </div>
 
