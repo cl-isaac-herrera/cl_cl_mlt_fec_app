@@ -1,5 +1,5 @@
 import { Controller } from '@hotwired/stimulus';
-import { Storage, SStore } from 'vendor/clavisco/core';
+import { Storage, SStore, getApiHeaders } from 'vendor/clavisco/core';
 import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
 
 /**
@@ -24,22 +24,19 @@ export default class extends Controller {
 
   static targets = [
     // Sección 1 - Datos Generales
-    'comercialName', 'comercialNameError',
+    'name',
     'legalName', 'legalNameError',
     'identificationType',
     'identification', 'identificationError',
     'codigoActividad', 'codigoActividadError',
     'nameToEmail',
-    'groupId',
-    'shortName',
     'freightCharges',
     'registrofiscal8707',
     'sapConnectionId',
     'btnAddConnection',
     'dbSap',
-    'isExternal',
     'active',
-    'btnSaveGeneralContainer', 'btnSaveGeneral',
+    'btnSaveGeneralContainer', 'btnSaveGeneral', 'btnSaveGeneralWrap',
 
     // Sección 2 - Adicional
     'additionalInformation',
@@ -117,6 +114,9 @@ export default class extends Controller {
   #companyData            = null;
   #permissions            = [];   // string[]
   #selectedCompany        = null;
+  // Valores de la sección "Datos Generales" tal como se cargaron. Es la
+  // referencia contra la que se decide si hay algo que guardar.
+  #generalSnapshot        = null;
 
   #ideRules = {
     '01': { min: 9,  max: 9  },
@@ -192,16 +192,12 @@ export default class extends Controller {
 
   async #loadInitialData() {
     try {
-      const [groupsResp, sapResp] = await Promise.all([
-        this.#apiFetch('/api/Group/GetGroups'),
-        this.#apiFetch('/api/connections/assignable'),
-      ]);
+      // El .NET pedía además `GET /api/Group/GetGroups` para el select "Cuenta".
+      // No se migró: no hay grupos en esta versión (CLAUDE.md §31), así que el
+      // campo se eliminó junto con la consulta que lo alimentaba (§24).
+      const sapResp = await this.#apiFetch('/api/connections/assignable');
 
-      if (groupsResp.Data?.length) this.#fillGroupsSelect(groupsResp.Data);
-      if (sapResp.Data)            this.#fillSapConnectionsSelect(sapResp.Data);
-
-      const groupId = this.#selectedCompany?.groupId;
-      if (groupId) this.groupIdTarget.value = String(groupId);
+      if (sapResp.Data) this.#fillSapConnectionsSelect(sapResp.Data);
 
       this.#validateForm();
     } catch (err) {
@@ -209,164 +205,175 @@ export default class extends Controller {
     }
   }
 
+  /**
+   * Carga de la pantalla de edición.
+   *
+   * Solo se piden los datos de la sección que está migrada. Las consultas de las
+   * otras secciones (`warehouse`, `Tax`, `currencies`, `currency-map`,
+   * `activity-codes`) se quitaron: van al proxy .NET, que hoy responde 401, así
+   * que no llenaban nada — solo sumaban cinco peticiones fallidas y demoraban el
+   * cierre del loader. Vuelven cuando se migre cada sección (TODOS.md →
+   * Compañías).
+   *
+   * Cada loader se oculta cuando resuelve LO SUYO, no cuando resuelven todas: el
+   * `Promise.allSettled` + un único `hideSectionLoaders()` hacía que la sección
+   * de datos generales siguiera girando por culpa de consultas ajenas.
+   */
   async #loadCompanyInformation() {
     const companyId = this.companyIdValue;
+
+    // El select de conexiones es parte de la sección general, así que su loader
+    // tiene que esperarlo también. Las dos peticiones van en paralelo.
+    const connections = this.#railsFetch('/api/connections/assignable')
+      .then(resp => { if (resp.Data) this.#fillSapConnectionsSelect(resp.Data); })
+      .catch(err => showToast(`No se pudieron cargar las conexiones de SAP: ${err.message}`, 'error'));
+
+    const general = this.#railsFetch(`/api/companies/${companyId}`)
+      .then((resp) => {
+        if (!resp.Data) throw new Error(resp.Message || 'Error desconocido');
+        this.#companyData = resp.Data;
+      })
+      .catch((err) => {
+        showAlert({
+          type:    ALERT_TYPES.ERROR,
+          title:   'Se produjo un error al obtener la información de la compañía',
+          message: err.message,
+        });
+      });
+
     try {
-      const [
-        groupsResp, sapResp, companyResp,
-        warehouseResp, taxResp, currenciesResp,
-        currencyMapResp, activityCodesResp,
-      ] = await Promise.allSettled([
-        this.#apiFetch('/api/Group/GetGroups'),
-        this.#apiFetch('/api/connections/assignable'),
-        this.#apiFetch(`/api/companies/${companyId}`),
-        this.#apiFetch(`/api/warehouse?companyId=${companyId}`),
-        this.#apiFetch(`/api/Tax?companyId=${companyId}`),
-        this.#apiFetch(`/api/Companies/${companyId}/currencies`),
-        this.#apiFetch(`/api/Companies/${companyId}/currency-map`),
-        this.#apiFetch(`/api/Companies/${companyId}/activity-codes`),
-      ]);
-
-      if (groupsResp.status === 'fulfilled' && groupsResp.value.Data?.length) {
-        this.#fillGroupsSelect(groupsResp.value.Data);
-      }
-      if (sapResp.status === 'fulfilled' && sapResp.value.Data) {
-        this.#fillSapConnectionsSelect(sapResp.value.Data);
-      }
-      if (warehouseResp.status === 'fulfilled' && warehouseResp.value?.Data?.length) {
-        this.#warehouseList = warehouseResp.value.Data;
-        this.#fillWarehouseSelect();
-      }
-      if (taxResp.status === 'fulfilled' && taxResp.value?.Data?.length) {
-        this.#taxCodeList = taxResp.value.Data;
-        this.#fillTaxSelect();
-      }
-      if (currenciesResp.status === 'fulfilled' && currenciesResp.value?.Data?.length) {
-        this.#currenciesList = currenciesResp.value.Data;
-      }
-
-      // Si la compañía usa factura a proveedor, las listas SAP (almacén, impuestos,
-      // monedas) son necesarias: reportar cualquier fallo de esas consultas.
-      const usesFactProv = companyResp.status === 'fulfilled' && !!companyResp.value?.Data?.UseFactProv;
-      if (usesFactProv) {
-        const sapListErrors = this.#collectSapListErrors(warehouseResp, taxResp, currenciesResp);
-        if (sapListErrors.length) {
-          showToast('No se pudieron cargar los datos para factura proveedor', 'error');
-        }
-        this.#setSapListError(sapListErrors);
-      }
-
-      if (companyResp.status === 'fulfilled' && companyResp.value.Data) {
-        this.#companyData = companyResp.value.Data;
-        this.#fillForms(this.#companyData);
-      } else {
-        const msg = companyResp.reason?.message || companyResp.value?.Message || 'Error desconocido';
-        showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener la información de la compañía', message: msg });
-      }
-      if (currencyMapResp.status === 'fulfilled' && currencyMapResp.value?.Data?.length) {
-        this.#currencyMappings = currencyMapResp.value.Data;
-        this.#renderCurrencyMappings();
-      }
-      while (this.#activityCodes.length) this.#activityCodes.pop();
-      if (activityCodesResp.status === 'fulfilled' && activityCodesResp.value?.Data?.length) {
-        this.#activityCodes = activityCodesResp.value.Data;
-      }
-      this.#renderActivityCodes();
-    } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener la información', message: err.message });
+      // El orden importa: las conexiones tienen que estar en el <select> antes de
+      // aplicarle el valor de la compañía, o el `select.value = …` no encuentra
+      // la opción y queda en blanco.
+      await Promise.all([connections, general]);
+      if (this.#companyData) this.#fillGeneralSection(this.#companyData);
     } finally {
-      this.#hideSectionLoaders();
+      this.#hideLoader(this.loaderGeneralTarget);
     }
   }
 
-
+  // Solo se muestra el loader de la sección que realmente carga algo. Las demás
+  // no piden nada todavía: dejarlas girando diría que están esperando datos.
   #showSectionLoaders() {
-    const loaders = [
-      this.loaderGeneralTarget, this.loaderAdditionalTarget, this.loaderAtvTarget,
-      this.loaderAttachmentsTarget, this.loaderActivityCodesTarget, this.loaderSapTarget,
-    ];
-    loaders.forEach(el => el.classList.remove('hidden'));
-  }
-
-  #hideSectionLoaders() {
-    const loaders = [
-      this.loaderGeneralTarget, this.loaderAdditionalTarget, this.loaderAtvTarget,
-      this.loaderAttachmentsTarget, this.loaderActivityCodesTarget, this.loaderSapTarget,
-    ];
-    loaders.forEach(el => el.classList.add('hidden'));
+    this.#showLoader(this.loaderGeneralTarget);
   }
 
   #showLoader(loaderTarget) { loaderTarget?.classList.remove('hidden'); }
   #hideLoader(loaderTarget) { loaderTarget?.classList.add('hidden'); }
 
-    #fillForms(data) {
-    this.comercialNameTarget.value      = data.EmsrNombreComercial || '';
-    this.legalNameTarget.value          = data.EmsrNombre          || '';
-    this.identificationTypeTarget.value = data.EmsrIdeTipo         || '01';
-    this.identificationTarget.value     = data.EmsrIdeNumero       || '';
-    this.codigoActividadTarget.value    = data.CodigoActividad     || '';
-    this.nameToEmailTarget.value        = String(data.NameToEmail  ?? 1);
-    this.shortNameTarget.value          = data.ShortName           || '';
-    this.freightChargesTarget.value     = String(data.FreightCharges ?? 1);
-    this.registrofiscal8707Target.value = data.EmsrRegistrofiscal8707 || '';
-    this.dbSapTarget.value              = data.DBSap               || '';
-    this.isExternalTarget.checked       = !!data.IsExternal;
-    this.activeTarget.checked           = data.Active !== false;
+  /**
+   * Llena la sección "Datos Generales" con la respuesta de
+   * GET /api/companies/:id. Todo viene de la tabla `companies`: el bloque del
+   * emisor ante Hacienda estuvo un tiempo como UDFs de `OADM` y volvió a la base
+   * de la aplicación, así que ya no hay que ir a SAP para pintar el formulario.
+   *
+   * Las claves del emisor conservan el vocabulario del XML de Hacienda
+   * (`EmsrNombre`, `CodigoActividad`) aunque las columnas se llamen en inglés
+   * (`issuer_legal_name`, `economic_activity_code`): la traducción la hace
+   * `serialize_detail` del controller.
+   *
+   * Las demás secciones (adicional, ATV, adjuntos, códigos de actividad,
+   * factura a proveedor) todavía no se migraron y por eso no se llenan acá.
+   */
+  #fillGeneralSection(data) {
+    this.nameTarget.value           = data.Name || '';
+    this.dbSapTarget.value          = data.SapDb || '';
+    this.nameToEmailTarget.value    = String(data.EmailSenderType ?? 1);
+    this.freightChargesTarget.value = String(data.FreightType ?? 1);
+    this.activeTarget.checked       = data.Active !== false;
 
-    if (data.GroupId)        this.groupIdTarget.value        = String(data.GroupId);
-    if (data.SAPConnectionId) this.sapConnectionIdTarget.value = String(data.SAPConnectionId);
+    if (data.ConnectionId) this.sapConnectionIdTarget.value = String(data.ConnectionId);
+
+    // `EmsrNombreComercial` llega en la respuesta pero no se pinta: es el mismo
+    // valor que `Name`, que ya está en el campo "Nombre".
+    this.legalNameTarget.value          = data.EmsrNombre             || '';
+    this.identificationTypeTarget.value = data.EmsrIdeTipo            || '01';
+    this.identificationTarget.value     = data.EmsrIdeNumero          || '';
+    this.codigoActividadTarget.value    = data.CodigoActividad        || '';
+    this.registrofiscal8707Target.value = data.EmsrRegistroFiscal8707 || '';
 
     this.#applyIdentificationRules(data.EmsrIdeTipo || '01');
 
-    this.additionalInformationTarget.value = data.AdditionalInformation || '';
-    this.#emailCcItems = (data.EmailCC || '').split(';').filter(Boolean);
-    if (!this.#emailCcItems.length) this.#emailCcItems = [''];
-    this.#renderEmailCc();
+    // La foto se toma DESPUÉS de llenar: es el estado "sin cambios".
+    this.#generalSnapshot = this.#generalValues();
+    this.#validateForm();
+  }
 
-    this.certPinTarget.value        = data.CertPin  || '';
-    this.certPathTarget.value       = data.CertPath ? data.CertPath.split('\\').pop() : '';
-    this.certPathTextTarget.value   = this.certPathTarget.value;
-    this.certExpireDateTarget.value = data.CertExpireDate
-      ? this.#formatDateTime(data.CertExpireDate) : '';
-    this.tokenUsrTarget.value  = data.TokenUsr  || '';
+  /**
+   * Los valores actuales de la sección "Datos Generales", normalizados a texto
+   * para poder compararlos contra la foto inicial. El orden no importa: se
+   * compara llave por llave.
+   */
+  #generalValues() {
+    return {
+      name:               this.nameTarget.value.trim(),
+      legalName:          this.legalNameTarget.value.trim(),
+      identificationType: this.identificationTypeTarget.value,
+      identification:     this.identificationTarget.value.trim(),
+      codigoActividad:    this.codigoActividadTarget.value.trim(),
+      registrofiscal8707: this.registrofiscal8707Target.value.trim(),
+      nameToEmail:        this.nameToEmailTarget.value,
+      freightCharges:     this.freightChargesTarget.value,
+      sapConnectionId:    this.sapConnectionIdTarget.value,
+      dbSap:              this.dbSapTarget.value.trim(),
+      active:             String(this.activeTarget.checked),
+    };
+  }
 
-    this.logoNameTarget.value        = data.Logo          ? data.Logo.split('\\').pop()          : '';
-    this.printFormatNameTarget.value = data.FEPrintFormat ? data.FEPrintFormat.split('\\').pop() : '';
+  /** ¿Cambió algo en la sección respecto a lo que se cargó? */
+  #generalIsDirty() {
+    if (!this.#generalSnapshot) return false;
 
-    this.useFactProvTarget.checked = !!data.UseFactProv;
-    if (data.UseFactProv) {
-      this.#enableSapFields();
-      this.sendReceptContainerTarget.classList.remove('hidden');
-      this.sendReceptContainerTarget.classList.add('flex');
+    const current = this.#generalValues();
+    return Object.keys(current).some(key => current[key] !== this.#generalSnapshot[key]);
+  }
+
+  /**
+   * Habilita "Actualizar datos generales" solo si hay algo que actualizar en ESA
+   * sección. Sin cambios queda inhabilitado, con el motivo en el tooltip.
+   *
+   * El `data-tooltip` va en el <span> envolvente porque un <button disabled> no
+   * emite eventos de mouse (CLAUDE.md §2 y §26); por eso el botón lleva
+   * `pointer-events-none` mientras está deshabilitado y se lo quita al
+   * habilitarse.
+   */
+  #refreshGeneralSaveState() {
+    if (!this.hasBtnSaveGeneralTarget) return;
+
+    const reason = this.#generalSaveBlockedReason();
+    const btn    = this.btnSaveGeneralTarget;
+
+    btn.disabled = !!reason;
+    btn.classList.toggle('pointer-events-none', !!reason);
+    btn.classList.toggle('cursor-not-allowed', !!reason);
+    btn.classList.toggle('bg-gray-300',  !!reason);
+    btn.classList.toggle('text-gray-500', !!reason);
+    btn.classList.toggle('bg-blue-600',  !reason);
+    btn.classList.toggle('text-white',   !reason);
+    btn.classList.toggle('hover:bg-blue-700', !reason);
+
+    if (this.hasBtnSaveGeneralWrapTarget) {
+      this.btnSaveGeneralWrapTarget.dataset.tooltip =
+        reason || 'Actualizar los datos generales de la compañía';
     }
-    this.sendReceptAndApInvTarget.checked = !!data.SendReceptAndApInv;
+  }
 
-    this.numSerieProvTarget.value     = data.NumSerieProv    ?? '';
-    this.numSerieFactProvTarget.value = data.NumSerieFactProv ?? '';
-
-    if (data.XmlToleranceAmounts?.length) {
-      this.#xmlTolerances = [...data.XmlToleranceAmounts];
+  /**
+   * Por qué NO se puede guardar la sección, o null si sí se puede. El texto es
+   * el del tooltip, así que tiene que responder "¿cuándo sí podré usarlo?"
+   * (CLAUDE.md §2).
+   * @returns {?string}
+   */
+  #generalSaveBlockedReason() {
+    if (!this.#generalIsDirty()) return 'No hay cambios por guardar en esta sección';
+    if (!this.#validateGeneralForm()) {
+      return 'Complete los campos requeridos de la sección para poder guardar';
     }
-    this.#renderXmlTolerances();
 
-    if (data.DefaultTaxForXML) this.defaultTaxForXmlTarget.value = data.DefaultTaxForXML;
-    if (data.DefaultWareHouse) this.whDefaultTarget.value         = data.DefaultWareHouse;
+    return null;
   }
 
   // ── Rellenar selects ───────────────────────────────────────────────────────
-
-  #fillGroupsSelect(groups) {
-    const select = this.groupIdTarget;
-    const current = select.value;
-    select.innerHTML = '';
-    groups.forEach(g => {
-      const opt = document.createElement('option');
-      opt.value = String(g.Id);
-      opt.textContent = g.GroupName;
-      select.appendChild(opt);
-    });
-    if (current) select.value = current;
-  }
 
   #fillSapConnectionsSelect(connections) {
     const select  = this.sapConnectionIdTarget;
@@ -913,16 +920,25 @@ export default class extends Controller {
   // ── Guardar por sección ────────────────────────────────────────────────────
 
   async saveGeneralData() {
-    if (!this.#validateGeneralForm()) {
-      showToast('Posee información errónea, verifique los datos generales.', 'error');
+    // Defensa en profundidad: la UI ya deshabilita el botón, pero se puede
+    // manipular (CLAUDE.md §26).
+    const blocked = this.#generalSaveBlockedReason();
+    if (blocked) {
+      showToast(blocked, 'info');
       return;
     }
-    this.#showLoader(this.loaderGeneralTarget);
-    try {
-      await this.#sendEditRequest(1);
-      showToast('Datos generales actualizados con éxito.', 'success');
-    } catch (err) { showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar datos generales', message: err.message }); }
-    finally { this.#hideLoader(this.loaderGeneralTarget); }
+
+    // ⚠️ NO se llama a `#sendEditRequest`. Ese arma el payload viejo de 42 campos
+    // planos y lo manda a `PATCH /api/Companies` del .NET: con los datos ya
+    // repartidos entre SAP (UDFs de OADM) y las columnas nuevas de `companies`,
+    // escribiría contra campos que no existen. La escritura se habilita cuando se
+    // parta en las dos fuentes — ver TODOS.md → Compañías.
+    showAlert({
+      type:    ALERT_TYPES.WARNING,
+      title:   'Guardado pendiente de migración',
+      message: 'La lectura de los datos generales ya sale de SAP y de la base nueva, '
+             + 'pero el guardado todavía no se migró. Sus cambios no se enviaron.',
+    });
   }
 
   async saveAdditionalData() {
@@ -1008,7 +1024,9 @@ export default class extends Controller {
     }
 
     const companyId = parseInt(this.#selectedCompany?.companyId) || 0;
-    const groupId   = parseInt(this.groupIdTarget.value) || parseInt(this.#selectedCompany?.groupId) || 0;
+    // `groupId` va en 0: el campo se eliminó porque no hay grupos (§31), pero el
+    // endpoint .NET todavía lo exige. Ver TODOS.md → Compañías.
+    const groupId   = 0;
 
     try {
       const response = await fetch(
@@ -1038,13 +1056,15 @@ export default class extends Controller {
   #buildCompanyFormData() {
     const company = {
       Id:                    this.companyIdValue,
-      ComercialName:         this.comercialNameTarget.value,
+      // El campo "Nombre Comercial" se eliminó: es el mismo dato que `name`, así
+      // que las dos claves del payload viejo salen de ahí.
+      ComercialName:         this.nameTarget.value,
       LegalName:             this.legalNameTarget.value,
       Identification:        this.identificationTarget.value,
       Type:                  this.identificationTypeTarget.value,
       EmsrIdeTipo:           this.identificationTypeTarget.value,
       EmsrNombre:            this.legalNameTarget.value,
-      EmsrNombreComercial:   this.comercialNameTarget.value,
+      EmsrNombreComercial:   this.nameTarget.value,
       EmsrIdeNumero:         this.identificationTarget.value,
       CertPin:               this.certPinTarget.value,
       CertPath:              this.certPathTarget.value,
@@ -1057,10 +1077,13 @@ export default class extends Controller {
       DBSap:                 this.dbSapTarget.value,
       DBMaestraSap:          '',
       NameToEmail:           parseInt(this.nameToEmailTarget.value),
-      ShortName:             this.shortNameTarget.value,
+      // `ShortName` e `IsExternal` se eliminaron del formulario pero el endpoint
+      // .NET los sigue exigiendo: se manda el valor por defecto (§24).
+      // Ver TODOS.md → Compañías.
+      ShortName:             '',
       FreightCharges:        parseInt(this.freightChargesTarget.value),
       UseFactProv:           this.useFactProvTarget.checked,
-      IsExternal:            this.isExternalTarget.checked,
+      IsExternal:            false,
       SendReceptAndApInv:    this.sendReceptAndApInvTarget.checked,
       EmsrRegistrofiscal8707: this.registrofiscal8707Target.value,
       Active:                this.activeTarget.checked,
@@ -1084,7 +1107,8 @@ export default class extends Controller {
   }
 
   async #sendEditRequest(action) {
-    const groupId  = parseInt(this.groupIdTarget.value) || 0;
+    // 0 fijo: el campo "Grupo" se eliminó (§31) y el endpoint .NET lo exige.
+    const groupId  = 0;
 
     const response = await fetch(
       `/api/Companies?groupId=${groupId}&action=${action}`,
@@ -1121,11 +1145,10 @@ export default class extends Controller {
     const id    = this.identificationTarget.value;
     const rules = this.#ideRules[this.identificationTypeTarget.value] ?? { min: 9, max: 9 };
     return !!(
-      this.comercialNameTarget.value.trim() &&
+      this.nameTarget.value.trim() &&
       this.legalNameTarget.value.trim() &&
       id.length >= rules.min && id.length <= rules.max &&
       this.codigoActividadTarget.value.length === 6 &&
-      this.shortNameTarget.value.trim() &&
       this.dbSapTarget.value.trim() &&
       this.sapConnectionIdTarget.value
     );
@@ -1135,6 +1158,7 @@ export default class extends Controller {
     if (this.hasBtnRegisterTarget) {
       this.btnRegisterTarget.disabled = !this.#validateGeneralForm();
     }
+    this.#refreshGeneralSaveState();
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1156,6 +1180,30 @@ export default class extends Controller {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...extra,
     };
+  }
+
+  /**
+   * Endpoints NATIVOS de Rails: la sesión viaja en la cookie httpOnly, así que
+   * no se arma ningún header Authorization — getApiHeaders() aporta lo único
+   * que hace falta (CLAUDE.md §28). Los endpoints que todavía caen al proxy
+   * .NET siguen usando `#apiFetch`.
+   */
+  async #railsFetch(url, options = {}) {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Accept': 'application/json',
+        ...getApiHeaders(),
+        ...(options.headers || {}),
+      },
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.Message || `HTTP ${response.status}`);
+    }
+
+    return response.json();
   }
 
   async #apiFetch(url, options = {}) {

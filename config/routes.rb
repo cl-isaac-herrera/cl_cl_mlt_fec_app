@@ -16,7 +16,9 @@ Rails.application.routes.draw do
     #
     # Las compañías DEL USUARIO de la sesión no están acá: son
     # GET /api/profile/companies.
-    resources :companies, only: [:index] do
+    # `show` alimenta el formulario de edición y devuelve dos bloques: las
+    # columnas de `companies` y los UDFs de `OADM` leídos desde SAP.
+    resources :companies, only: %i[index show] do
       get :assignable, on: :collection
     end
 

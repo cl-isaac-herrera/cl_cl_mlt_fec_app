@@ -2023,10 +2023,18 @@ La estructura (UDTs y UDFs) que este producto necesita en SAP se declara en
 `config/sap_schemas/*.json` y se aplica con las rake tasks del submódulo
 `vendor/clavisco/sap_udfs`. Es la regla de CLAVISCO-PLATFORM-STANDARDS §2.8:
 
-> **Estado:** el submódulo está cableado y las tasks corren, pero todavía **no hay ningún
-> schema declarado** — `config/sap_schemas/` está vacío a propósito. La base queda lista para
-> el día que el producto necesite su primera UDT/UDF; lo de abajo es el procedimiento a seguir
-> desde ese momento.
+> **Estado:** el submódulo está cableado y las tasks corren, pero **no hay ningún schema
+> declarado** — `config/sap_schemas/` solo tiene la subcarpeta `delete/`. Hubo uno
+> (`oadm_company_config.json`, diez UDFs de configuración de FE sobre `OADM`) y se
+> **revirtió**: esos campos volvieron a la tabla `companies` de la base de la aplicación.
+> El manifiesto que los borró de SAP quedó en `config/sap_schemas/delete/` como rastro.
+>
+> **La lección de ese ida y vuelta:** un UDF solo deduplica cuando SAP **ya usa** ese dato
+> por su cuenta. Diez parámetros de la facturación electrónica de Costa Rica, que nadie más
+> que este producto lee, no eran "la misma información en dos lados": eran la única copia,
+> alojada en el sistema equivocado. El costo era concreto — una vuelta al Service Layer para
+> pintar un formulario, credenciales de SAP obligatorias para abrir la pantalla, y validación
+> imposible del lado del modelo. Antes de declarar un schema, preguntar si SAP lee ese campo.
 
 > **Nunca crear ni modificar UDTs/UDFs manualmente en SAP ni con código imperativo.**
 > Todo cambio de estructura pasa por un JSON schema + sync.
@@ -2119,4 +2127,37 @@ Cambiarla en el schema y correr `sync` alcanza para alinear los campos ya creado
   (payloads, `$filter`) sí lo llevan.
 - Nombre lógico de UDT propia: `CL_<PRODUCTO>_<MODULO>` (ej. `CL_FEC_MATCH_AUTOMATIC`).
 - `Size` no aplica a `db_Memo` ni `db_Date`.
-- La herramienta **no borra** nada: dar de baja un campo es a mano en SAP y con criterio.
+- `sync`/`diff` **nunca infieren borrados**: quitar un campo del schema no lo borra de SAP.
+  Para eso está `sap:schema:delete`, que solo toca lo que un manifiesto nombra explícitamente.
+
+### Borrar un UDF o una UDT — manifiesto explícito, nunca inferido
+
+```bash
+rake "sap:schema:delete[config/sap_schemas/delete/mi_manifiesto.json,config/sap_connections.json]"
+```
+
+El manifiesto es un arreglo JSON y cada ítem lleva **exactamente uno** de `delete_fields`
+(nombres de UDF, **sin** el prefijo `U_`) o `delete_table: true` (solo si `table_name`
+empieza con `@`):
+
+```json
+[
+  { "table_name": "OADM",          "delete_fields": ["CL_FEC_EmsrNombre"] },
+  { "table_name": "@CL_FEC_ALGO",  "delete_table": true }
+]
+```
+
+Cuatro cosas que hay que saber antes de correrlo:
+
+- **Los manifiestos van en `config/sap_schemas/delete/`, nunca en `config/sap_schemas/` a
+  secas.** `sync`/`diff`/`check_lock` hacen glob de `config/sap_schemas/*.json` (un nivel, no
+  recursivo) y tratarían un manifiesto como schema de creación, fallando para siempre en cada
+  corrida posterior.
+- **Es interactivo e irreversible:** pide escribir el nombre exacto de cada objetivo antes de
+  borrarlo. Borrar un UDF se lleva los datos de esa columna en todas las filas, en cada
+  compañía del archivo de conexiones. Correr `diff` antes para ver qué existe realmente.
+- **No toca el `config/sync.lock`.** Si el campo seguía declarado en un schema, el próximo
+  `sync` lo vuelve a crear: primero se quita del schema, después se borra de SAP.
+- **Los manifiestos se conservan, no se borran.** `delete_field` reporta `:not_found` en vez
+  de fallar cuando el objetivo ya no existe, así que volver a correr uno viejo es seguro y
+  sirve de auditoría de qué se quitó y cuándo.

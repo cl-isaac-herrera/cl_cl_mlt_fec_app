@@ -562,6 +562,79 @@ que armaba el Bearer para el proxy se borró con el último tab que lo usaba.
 
 ---
 
+## Compañías — endpoints migrados a Rails (`/configurations/companies`)
+
+Migrados hasta ahora: el **listado** (`GET /api/companies`) y la **lectura de los datos
+generales** del formulario de edición (`GET /api/companies/:id`). Todo sale de la tabla
+`companies`: el bloque del emisor estuvo un tiempo como UDFs de `OADM` y volvió a la base de
+la aplicación, así que ya no hay lectura a SAP para pintar el formulario.
+
+### Escritura — todavía en el .NET
+
+- [ ] **`POST` y `PATCH /api/Companies` siguen sin migrar.** `#buildCompanyFormData` de
+      `company_form_controller.js` arma el payload con el shape viejo (42 campos planos,
+      `DBSap`, `DBMaestraSap`, `Attempts`, `Busy`), que ya no corresponde a ninguna tabla.
+      El botón **"Actualizar datos generales"** ya se habilita/deshabilita solo según si
+      hay cambios en la sección (`#refreshGeneralSaveState`), pero `saveGeneralData`
+      **no manda nada**: muestra una advertencia y corta antes de llamar a
+      `#sendEditRequest`, para no escribir contra campos que no existen. Al migrar la
+      escritura hay que reemplazar esa advertencia por un `PATCH /api/companies/:id` que
+      escriba las columnas de la sección — **una sola fuente**, porque los diez campos del
+      emisor volvieron a `companies`. Ya no hay que resolver cómo escribir UDFs de `OADM`
+      por Service Layer ni qué hacer si una de dos escrituras falla a mitad de camino.
+- [ ] **Las demás secciones siguen llamando a `#sendEditRequest`** (acciones 2 a 5:
+      adicional, ATV, adjuntos, códigos de actividad). Van al .NET con el shape viejo y
+      hoy responden 401. Se migran con cada sección.
+- [ ] **Campo `Nombre` no se envía.** El formulario ya lo carga (`companies.name`) pero
+      `#buildCompanyFormData` no lo manda: el endpoint .NET no tiene dónde ponerlo.
+
+### Campos eliminados de la vista que aún viajan al API (§24)
+
+- [ ] Campo `ShortName` — eliminado de la vista en
+      `configurations/companies/_form.html.erb`. Aún se envía en el fetch de
+      `company_form_controller.js` con valor por defecto `""`.
+      **Pendiente API:** quitarlo del body cuando `POST|PATCH /api/Companies` deje de
+      requerirlo. No tiene columna en la base nueva.
+- [ ] Campo `IsExternal` — eliminado de la vista (este producto llega a SAP solo por
+      Service Layer, §29). Aún se envía con valor por defecto `false`.
+      **Pendiente API:** quitarlo del body.
+- [ ] Parámetro `groupId` de la query string — el campo "Grupo" se eliminó (§31). Se
+      manda `0` fijo en `#sendEditRequest` y en el registro.
+      **Pendiente API:** quitarlo de la URL. Ver también → Grupos de compañías.
+
+### Secciones del formulario que todavía no cargan
+
+`GET /api/companies/:id` devuelve **solo** los datos generales. El resto de las secciones
+quedan vacías hasta que se migre cada una, y sus llamadas siguen cayendo al proxy .NET:
+
+- [ ] **Adicional** — `AdditionalInformation` ya no existe como columna (se eliminó por no
+      tener consumidor); `EmailCC` **sí** llega en la respuesta (columna `email_cc`) pero la
+      sección no está cableada.
+- [ ] **Hacienda (ATV)** — `cert_path`, `cert_pin`, `cert_expires_at`, `token_user`,
+      `token_password`, `client_id`, `grant_type` están en `companies` pero no se exponen.
+      Ojo: `cert_pin` y `token_password` están cifrados y **no deben salir** en la
+      respuesta; hay que decidir qué se le muestra al usuario.
+- [ ] **Adjuntos** — `logo_path` y `print_format_path` guardan rutas del servidor .NET.
+      Antes de migrar la sección hay que decidir si se replica ese esquema o se pasa a
+      Active Storage.
+- [ ] **Códigos de actividad** — no tienen tabla en la base nueva ni UDT declarada.
+- [ ] **Factura a proveedor** — `PurchInvSeriesNum`, `DefaultXmlTaxCode` y
+      `DefaultWarehouse` ya llegan en la respuesta. Falta exponer `UseApInvoice`
+      (`use_ap_invoice`) y `auto_send_ap_inv` en `serialize_detail`, y cablear la sección.
+      Las listas que la alimentan (almacenes, impuestos, monedas) sí son consultas a SAP y
+      hoy van al proxy .NET.
+- [ ] **Ambiente de Hacienda** — `companies.environment_id` existe y la tabla
+      `environments` está creada pero **vacía**: falta el seed con las URLs de pruebas y
+      producción. El formulario todavía no tiene el campo.
+
+### Crear compañía
+
+- [ ] **`/configurations/companies/new` sigue contra el .NET.** Con la configuración de FE
+      de vuelta en `companies`, el alta es un `POST` a Rails y nada más: ya no hay que crear
+      estructura en SAP para dar de alta una compañía.
+
+---
+
 ## Grupos de compañías — código muerto por decisión de producto
 
 Esta versión se despliega **una instancia por cliente / grupo económico**, así que el

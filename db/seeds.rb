@@ -465,6 +465,20 @@ SL_RESOURCES = [
    '$top=1&$select=CardCode', 0]
 ].freeze
 
+# Consultas que NO vienen del export del .NET: las agregaría este producto. Se
+# sembrarían igual que las de arriba (`is_standard: true` — las trae el producto,
+# no las escribió el cliente), pero van en una constante aparte para que
+# `SL_RESOURCES` siga siendo el export verbatim y se pueda comparar contra el
+# origen.
+#
+# Mismas convenciones: `resource` sin prefijo (lo agrega `SlResourceSeed.qualify`
+# según el motor) y `page_size` en 0 cuando no pagina.
+#
+# Hoy está vacía: la única que hubo (`GetCompanyInfo`, que leía la configuración
+# de FE de la compañía desde una vista sobre `OADM`) se eliminó cuando esos datos
+# pasaron a vivir en la tabla `companies` de la base de la aplicación.
+SL_RESOURCES_OWN = [].freeze
+
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
   # sin haber escrito ninguna fila.
@@ -472,7 +486,7 @@ ActiveRecord::Base.transaction do
 
   preserved = 0
 
-  SL_RESOURCES.each do |code, description, resource, query_params, page_size|
+  (SL_RESOURCES + SL_RESOURCES_OWN).each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el
     # `find_or_initialize_by` no la encontraría e intentaría insertar otra igual.

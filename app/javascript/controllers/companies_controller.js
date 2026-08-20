@@ -9,10 +9,10 @@ import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'contr
  * Endpoint nativo de Rails: GET /api/companies?name=&page=&per_page=
  * (reemplaza GET /api/Companies/GetCompanies del .NET — ver CLAUDE.md §28).
  *
- * La tabla muestra únicamente lo que vive en la base de la aplicación: nombre,
- * estado y acciones. El nombre legal, el nombre comercial y la identificación
- * salieron del listado porque ya no son columnas: viven en SAP como UDFs
- * (`U_CL_FEC_Emsr*` sobre `OADM`). Por lo mismo el único filtro es el nombre.
+ * La tabla muestra nombre, estado y acciones. El nombre legal, el nombre
+ * comercial y la identificación salieron del listado por decisión de producto —
+ * son columnas de `companies`, así que volver a mostrarlas o filtrar por ellas es
+ * sumarlas a `getColumns()` y al scope `search` del modelo.
  *
  * Permisos (CLAUDE.md §26 — se deshabilita con tooltip, no se oculta):
  *   - Configurations_Companies_ListAccess → gatea la pantalla (menú + endpoint)

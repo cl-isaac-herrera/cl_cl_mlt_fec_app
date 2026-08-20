@@ -5,6 +5,55 @@ RSpec.describe Company, type: :model do
     expect(build(:company)).to be_valid
   end
 
+  # REGRESIÓN. El default era 0, que no es ninguna de las dos opciones del
+  # `<select>` del formulario (1 legal / 2 comercial): al asignarle "0" el
+  # navegador no encuentra la opción y deja el campo obligatorio SIN nada
+  # seleccionado. Si el default vuelve a 0, este ejemplo falla.
+  describe 'nombre para el envío de correos' do
+    it 'nace en "nombre legal", que es una opción válida' do
+      expect(Company.new(name: 'ACME').email_sender_type).to eq(1)
+      expect(Company.new(name: 'ACME')).to be_valid
+    end
+
+    it 'rechaza un valor fuera de las dos opciones' do
+      company = Company.new(name: 'ACME', email_sender_type: 0)
+
+      expect(company).not_to be_valid
+      expect(company.errors.full_messages)
+        .to include('El nombre para el envío de correos no está incluido en la lista')
+    end
+  end
+
+  describe 'bloque del emisor' do
+    it 'acepta los cuatro tipos de identificación de Hacienda' do
+      Company::ISSUER_ID_TYPES.each do |type|
+        expect(build(:company, issuer_id_type: type)).to be_valid
+      end
+    end
+
+    it 'rechaza un tipo de identificación que Hacienda no define' do
+      company = build(:company, issuer_id_type: '99')
+
+      expect(company).not_to be_valid
+      expect(company.errors.full_messages)
+        .to include('El tipo de identificación del emisor no está incluido en la lista')
+    end
+
+    # El largo replica el `Size` que el campo tenía como UDF de OADM.
+    it 'rechaza una razón social más larga que 100 caracteres' do
+      company = build(:company, issuer_legal_name: 'A' * 101)
+
+      expect(company).not_to be_valid
+      expect(company.errors.full_messages)
+        .to include('La razón social del emisor es demasiado largo (máximo 100 caracteres)')
+    end
+
+    it 'deja el bloque en blanco: una compañía puede estar configurada a medias' do
+      expect(build(:company, issuer_legal_name: nil, issuer_id_type: nil,
+                             issuer_id_number: nil)).to be_valid
+    end
+  end
+
   it 'soft_delete! la desactiva sin borrarla' do
     company = create(:company)
 

@@ -1,0 +1,17 @@
+[
+  {
+    "table_name": "OADM",
+    "delete_fields": [
+      "CL_FEC_EmsrNombre",
+      "CL_FEC_EmsrNomComercial",
+      "CL_FEC_EmsrIdeTipo",
+      "CL_FEC_EmsrIdeNumero",
+      "CL_FEC_CodigoActividad",
+      "CL_FEC_EmsrRegFiscal8707",
+      "CL_FEC_EmailCc",
+      "CL_FEC_PurchInvSeriesNum",
+      "CL_FEC_DefaultXmlTaxCode",
+      "CL_FEC_DefaultWarehouse"
+    ]
+  }
+]

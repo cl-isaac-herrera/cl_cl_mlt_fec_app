@@ -21,6 +21,12 @@ RSpec.describe 'Api::SlResources', type: :request do
   def body      = JSON.parse(response.body)
   def body_data = body['Data']
 
+  # Los ejemplos comparan el listado completo (totales y orden), así que la tabla
+  # tiene que arrancar vacía. No lo está siempre: las migraciones de datos que
+  # agregan filas al catálogo (`20260819120000`) las dejan sembradas cuando la
+  # base de test se prepara con `db:migrate` en vez de cargando `schema.rb`.
+  before { SlResource.unscoped.delete_all }
+
   def create_resource(code:, resource: 'view.svc/CL_X_B1SLQuery', query_params: '$select=*',
                       page_size: 999, is_standard: true)
     SlResource.create!(code: code, description: "Consulta #{code}", resource: resource,

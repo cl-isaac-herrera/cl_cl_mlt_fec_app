@@ -21,11 +21,42 @@ class Company < ApplicationRecord
   encrypts :cert_pin
   encrypts :token_password
 
+  # Tipos de identificación de Hacienda. Texto y no entero: los códigos llevan el
+  # cero adelante y `'01'.to_i` lo perdería.
+  ISSUER_ID_TYPES = %w[01 02 03 04].freeze
+
+  # Con qué nombre se envían los correos: 1 legal, 2 comercial. Son las dos
+  # opciones del `<select>` del formulario; cualquier otro valor lo deja sin nada
+  # seleccionado, que es lo que pasaba con el 0 que traía el default original.
+  EMAIL_SENDER_TYPES = [1, 2].freeze
+
+  # Dónde se cargan los otros cargos del documento: 1 en las líneas de artículos,
+  # 2 como gastos adicionales del documento.
+  FREIGHT_TYPES = [1, 2].freeze
+
   # Días de anticipación con los que se avisa que el certificado está por vencer.
   # Es el `certExpireCheckAlarm` de los appsettings del .NET, que valía 7 en los
   # tres ambientes: queda como constante y no como setting porque nunca cambió por
   # instalación.
   CERT_EXPIRATION_ALARM_DAYS = 7
+
+  # Los largos replican el `Size` que estos campos tenían como UDFs de `OADM`,
+  # que es el límite con el que se venían guardando. La validación mira el texto
+  # original; el `limit:` de la columna es la otra mitad (ver la migración).
+  validates :issuer_legal_name,      length: { maximum: 100 }, allow_nil: true
+  validates :issuer_id_number,       length: { maximum: 12 },  allow_nil: true
+  validates :economic_activity_code, length: { maximum: 6 },   allow_nil: true
+  validates :tax_registry_8707,      length: { maximum: 12 },  allow_nil: true
+  validates :default_xml_tax_code,   length: { maximum: 8 },   allow_nil: true
+  validates :default_warehouse,      length: { maximum: 8 },   allow_nil: true
+  validates :issuer_id_type, inclusion: { in: ISSUER_ID_TYPES }, allow_blank: true
+  validates :purchase_invoice_series, numericality: { only_integer: true, greater_than: 0 },
+                                      allow_nil: true
+
+  # Sin `allow_nil`: las dos columnas son `not null` con default, así que un valor
+  # fuera de la lista es un error, no un campo sin llenar.
+  validates :email_sender_type, inclusion: { in: EMAIL_SENDER_TYPES }
+  validates :freight_type,      inclusion: { in: FREIGHT_TYPES }
 
   before_create :ensure_uuid
 
@@ -36,8 +67,8 @@ class Company < ApplicationRecord
   }
 
   # Filtro del listado de administración. Se aplica como "contiene"; en blanco no
-  # filtra nada. Solo por `name`: el nombre legal, el comercial y la
-  # identificación viven en SAP (UDFs `U_CL_FEC_Emsr*` sobre `OADM`), no acá.
+  # filtra nada. Solo por `name` por decisión de producto: el nombre legal, el
+  # comercial y la identificación sí son columnas y se podrían agregar acá.
   scope :search, lambda { |name: nil|
     next all if name.blank?
 

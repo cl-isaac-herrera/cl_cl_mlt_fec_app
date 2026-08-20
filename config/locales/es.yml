@@ -82,6 +82,19 @@ es:
       company:
         name: "El nombre"
         sap_db: "El código de base de SAP"
+        # Bloque del emisor ante Hacienda. Sin estas claves el mensaje usa el
+        # nombre de la columna humanizado y sale en inglés (§30).
+        issuer_legal_name: "La razón social del emisor"
+        issuer_id_type: "El tipo de identificación del emisor"
+        issuer_id_number: "El número de identificación del emisor"
+        economic_activity_code: "El código de actividad económica"
+        tax_registry_8707: "El registro fiscal de la ley 8707"
+        email_cc: "Los correos en copia"
+        purchase_invoice_series: "La serie de facturas de compra"
+        default_xml_tax_code: "El código de impuesto por defecto del XML"
+        default_warehouse: "El almacén por defecto"
+        email_sender_type: "El nombre para el envío de correos"
+        freight_type: "El manejo de otros cargos"
       user:
         email: "El correo"
         name: "El nombre"
