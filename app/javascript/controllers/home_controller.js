@@ -1,5 +1,5 @@
 import { Controller } from '@hotwired/stimulus'
-import { Storage, SStore } from 'vendor/clavisco/core'
+import { Storage, SStore, getApiHeaders } from 'vendor/clavisco/core'
 import { showToast } from 'vendor/clavisco/alerts'
 
 /**
@@ -173,34 +173,28 @@ export default class extends Controller {
    * Consulta la alarma de vencimiento de certificado para la empresa activa
    * y muestra un toast de advertencia si el certificado esta proximo a vencer.
    *
-   * Equivalente Angular: GlobalFunctionsService.GetCertExpireDateAlarm(companyId)
-   * invocado desde home.component.ts -> Onload().
+   * Endpoint nativo de Rails: GET /api/certificate_alarm. El companyId NO viaja
+   * — la compañía activa la lee el servidor de la session cookie (CLAUDE.md §28).
+   * Reemplaza GET /api/Companies/GetCertExpireDateAlarm?companyId=N del .NET.
    *
-   * Nota importante sobre el bug del legacy:
-   *   el API devuelve `Data` como ARRAY, por lo que `data.Data.ShowAlarm`
-   *   siempre era undefined. Aqui se lee `Data[0].ShowAlarm`.
+   * `Data` es un objeto, no el arreglo de un elemento que devolvia el SP: por eso
+   * el Angular leia `data.Data.ShowAlarm` sobre un arreglo y siempre obtenia
+   * undefined.
    *
    * Cambio de empresa: company_selector_controller hace window.location.reload(),
    * por lo que connect() se vuelve a ejecutar y la alarma se reevalua con la
    * nueva empresa seleccionada.
    */
   async #checkCertExpireAlarm() {
-    const companyId = this.#selectedCompany?.companyId
-    if (!companyId) return
+    // Sin compañía activa no hay certificado que revisar, y el endpoint
+    // responderia 404: se evita el toast de error en la primera carga.
+    if (!this.#selectedCompany?.companyId) return
 
     try {
-      const json = await this.#apiFetch(
-        `/api/Companies/GetCertExpireDateAlarm?companyId=${companyId}`
-      )
+      const json = await this.#apiFetch('/api/certificate_alarm')
 
-      const alarm = Array.isArray(json?.Data) ? json.Data[0] : json?.Data
-
-      if (alarm) {
-        if (alarm.ShowAlarm) {
-          showToast(alarm.SmsAlert, 'warning')
-        }
-      } else if (json?.Message) {
-        showToast(json.Message, 'warning')
+      if (json?.Data?.ShowAlarm) {
+        showToast(json.Data.SmsAlert, 'warning')
       }
     } catch (error) {
       showToast(
@@ -211,44 +205,26 @@ export default class extends Controller {
   }
 
   /**
-   * Fetch contra el App server (ApiAppUrl). Reenvia token de sesion y
-   * Cl-Company-Id, y decodifica el header `cl-message` para errores.
+   * Fetch contra el API nativo de Rails. Sin header Authorization: los endpoints
+   * migrados se autentican con la session cookie (CLAUDE.md §28), y el mensaje de
+   * error viene en el cuerpo (`Message`), no en el header `cl-message`.
    */
   async #apiFetch(url, options = {}) {
-    const token     = (Storage.get('Session') || {}).access_token
-    const company   = SStore.get('CurrentCompany')
-    const companyId = company?.companyId ?? this.#selectedCompany?.companyId
-
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type':             'application/json',
-        'API':                      'ApiAppUrl',
-        'X-Skip-Error-Interceptor': 'true',
-        ...(token     ? { Authorization:   `Bearer ${token}` } : {}),
-        ...(companyId ? { 'Cl-Company-Id': String(companyId) } : {}),
+        'Accept': 'application/json',
+        ...getApiHeaders(),
         ...(options.headers || {}),
       },
     })
 
-    const clMessage = response.headers.get('cl-message')
-    const decodedMessage = clMessage ? (() => {
-      try { return decodeURIComponent(clMessage) } catch { return clMessage }
-    })() : null
-
     if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText)
-      throw new Error(decodedMessage || text || `HTTP ${response.status}`)
+      const body = await response.json().catch(() => null)
+      throw new Error(body?.Message || `HTTP ${response.status}`)
     }
 
-    const hasBody = response.status !== 204 &&
-                    response.headers.get('content-length') !== '0' &&
-                    response.headers.get('content-type')?.includes('application/json')
-    if (!hasBody) return { Message: decodedMessage || null }
-
-    const json = await response.json()
-    if (decodedMessage && !json.Message) json.Message = decodedMessage
-    return json
+    return response.json()
   }
 
   #showBanner() {

@@ -1565,6 +1565,7 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 | API .NET | Rails |
 |---|---|
 | `GET /api/Companies/GetCompanies?ComercialName=&...` | `GET /api/companies` |
+| `GET /api/Companies/GetCertExpireDateAlarm?companyId=N` | `GET /api/certificate_alarm` ⚠️ sin companyId (sale de la sesión) |
 | `GET /api/Permission/GetPermsByUser?companyId=N` | `GET /api/permissions` |
 | `GET /api/User/GetUserInfo` | `GET /api/profile` |
 | `PATCH /api/User/profile-info` | `PATCH /api/profile` |

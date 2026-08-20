@@ -58,6 +58,15 @@ Rails.application.routes.draw do
       resources :companies, only: [:index], module: :profile
     end
 
+    # Alarma de vencimiento del certificado digital, para el toast del home.
+    # Reemplaza GET /api/Companies/GetCertExpireDateAlarm?companyId=N.
+    #
+    # Singular y sin id: la alarma es una sola y es la de la compañía activa, que
+    # sale de la sesión y no de un parámetro (§28, reglas 3 y 5). No cuelga de
+    # `/api/companies/:id` justamente por eso — con el id en el path, cualquiera
+    # podría preguntar por el certificado de una compañía ajena.
+    resource :certificate_alarm, only: [:show]
+
     # Prueba de credenciales de SAP contra el Service Layer de una compañía.
     # Reemplaza POST /api/Connections/validate-user-credentials.
     resources :sap_credential_validations, only: [:create]
