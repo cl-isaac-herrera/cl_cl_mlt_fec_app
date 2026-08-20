@@ -20,6 +20,19 @@ Rails.application.routes.draw do
     # columnas de `companies` y los UDFs de `OADM` leídos desde SAP.
     resources :companies, only: %i[index show] do
       get :assignable, on: :collection
+
+      # UN endpoint por sección del formulario. Cada botón "Actualizar" es
+      # independiente en la pantalla y también en el proceso: escribe solo los
+      # campos de su sección y no puede pisar los de otra. El reparto de campos
+      # vive en `CompanySections`.
+      #
+      # `resource` singular y sin id: la sección pertenece a la compañía del
+      # path, no es una colección (§28). Las otras cinco secciones se agregan acá
+      # cuando se migren (`TODOS.md` → Compañías).
+      # `controller:` explícito porque `resource` singular busca el controller en
+      # PLURAL (`resource :profile` → `ProfilesController`), y estos nombres de
+      # sección son adjetivos: "generals" o "additionals" no significan nada.
+      resource :general, only: [:update], module: :companies, controller: 'general'
     end
 
     # `index` son los permisos EFECTIVOS del usuario de la sesión; `catalog` es

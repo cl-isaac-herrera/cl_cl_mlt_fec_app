@@ -919,6 +919,17 @@ export default class extends Controller {
 
   // ── Guardar por sección ────────────────────────────────────────────────────
 
+  /**
+   * Guarda SOLO la sección "Datos Generales", contra su propio endpoint.
+   *
+   * Cada sección tiene el suyo (`PATCH /api/companies/:id/general`), así que este
+   * botón no puede pisar el certificado ni los adjuntos ni nada de otra sección.
+   * El .NET mandaba las 42 columnas en cada guardado y apretar "Actualizar" en
+   * una sección reescribía todas las demás con lo que hubiera en pantalla.
+   *
+   * ⚠️ NO usa `#sendEditRequest` ni `#buildCompanyFormData`: esos son el camino
+   * viejo al .NET, y los siguen usando las secciones que no se migraron.
+   */
   async saveGeneralData() {
     // Defensa en profundidad: la UI ya deshabilita el botón, pero se puede
     // manipular (CLAUDE.md §26).
@@ -928,17 +939,53 @@ export default class extends Controller {
       return;
     }
 
-    // ⚠️ NO se llama a `#sendEditRequest`. Ese arma el payload viejo de 42 campos
-    // planos y lo manda a `PATCH /api/Companies` del .NET: con los datos ya
-    // repartidos entre SAP (UDFs de OADM) y las columnas nuevas de `companies`,
-    // escribiría contra campos que no existen. La escritura se habilita cuando se
-    // parta en las dos fuentes — ver TODOS.md → Compañías.
-    showAlert({
-      type:    ALERT_TYPES.WARNING,
-      title:   'Guardado pendiente de migración',
-      message: 'La lectura de los datos generales ya sale de SAP y de la base nueva, '
-             + 'pero el guardado todavía no se migró. Sus cambios no se enviaron.',
-    });
+    this.#showLoader(this.loaderGeneralTarget);
+    try {
+      const json = await this.#railsFetch(
+        `/api/companies/${this.companyIdValue}/general`,
+        { method: 'PATCH', body: JSON.stringify(this.#generalPayload()) },
+      );
+
+      // Se repinta con lo que quedó guardado, no con lo que había en pantalla: el
+      // servidor normaliza (los vacíos pasan a NULL) y así el formulario muestra
+      // el estado real.
+      if (json.Data) {
+        this.#companyData = { ...this.#companyData, ...json.Data };
+        this.#fillGeneralSection(this.#companyData);
+      }
+
+      showToast(json.Message || 'Datos generales actualizados con éxito.', 'success');
+    } catch (err) {
+      // Error de escritura → modal, no toast (CLAUDE.md §9).
+      showAlert({
+        type:    ALERT_TYPES.ERROR,
+        title:   'Error al guardar datos generales',
+        message: err.message,
+      });
+    } finally {
+      this.#hideLoader(this.loaderGeneralTarget);
+    }
+  }
+
+  /**
+   * El cuerpo del PATCH de la sección: exactamente los campos que la sección
+   * ofrece, con las claves que el endpoint acepta. Tiene que cubrir lo mismo que
+   * `#generalValues()`, que es lo que decide si hay cambios que guardar.
+   */
+  #generalPayload() {
+    return {
+      Name:                   this.nameTarget.value.trim(),
+      Active:                 this.activeTarget.checked,
+      ConnectionId:           this.sapConnectionIdTarget.value || null,
+      SapDb:                  this.dbSapTarget.value.trim(),
+      EmailSenderType:        this.nameToEmailTarget.value,
+      FreightType:            this.freightChargesTarget.value,
+      EmsrNombre:             this.legalNameTarget.value.trim(),
+      EmsrIdeTipo:            this.identificationTypeTarget.value,
+      EmsrIdeNumero:          this.identificationTarget.value.trim(),
+      CodigoActividad:        this.codigoActividadTarget.value.trim(),
+      EmsrRegistroFiscal8707: this.registrofiscal8707Target.value.trim(),
+    };
   }
 
   async saveAdditionalData() {

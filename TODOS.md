@@ -564,29 +564,55 @@ que armaba el Bearer para el proxy se borró con el último tab que lo usaba.
 
 ## Compañías — endpoints migrados a Rails (`/configurations/companies`)
 
-Migrados hasta ahora: el **listado** (`GET /api/companies`) y la **lectura de los datos
-generales** del formulario de edición (`GET /api/companies/:id`). Todo sale de la tabla
-`companies`: el bloque del emisor estuvo un tiempo como UDFs de `OADM` y volvió a la base de
-la aplicación, así que ya no hay lectura a SAP para pintar el formulario.
+Migrados hasta ahora: el **listado** (`GET /api/companies`), la **lectura** del formulario
+de edición (`GET /api/companies/:id`) y el **guardado de la sección "Datos Generales"**
+(`PATCH /api/companies/:id/general`). Todo sale de la tabla `companies`: el bloque
+del emisor estuvo un tiempo como UDFs de `OADM` y volvió a la base de la aplicación.
 
-### Escritura — todavía en el .NET
+### Un endpoint por sección — la convención a seguir
 
-- [ ] **`POST` y `PATCH /api/Companies` siguen sin migrar.** `#buildCompanyFormData` de
-      `company_form_controller.js` arma el payload con el shape viejo (42 campos planos,
-      `DBSap`, `DBMaestraSap`, `Attempts`, `Busy`), que ya no corresponde a ninguna tabla.
-      El botón **"Actualizar datos generales"** ya se habilita/deshabilita solo según si
-      hay cambios en la sección (`#refreshGeneralSaveState`), pero `saveGeneralData`
-      **no manda nada**: muestra una advertencia y corta antes de llamar a
-      `#sendEditRequest`, para no escribir contra campos que no existen. Al migrar la
-      escritura hay que reemplazar esa advertencia por un `PATCH /api/companies/:id` que
-      escriba las columnas de la sección — **una sola fuente**, porque los diez campos del
-      emisor volvieron a `companies`. Ya no hay que resolver cómo escribir UDFs de `OADM`
-      por Service Layer ni qué hacer si una de dos escrituras falla a mitad de camino.
-- [ ] **Las demás secciones siguen llamando a `#sendEditRequest`** (acciones 2 a 5:
-      adicional, ATV, adjuntos, códigos de actividad). Van al .NET con el shape viejo y
-      hoy responden 401. Se migran con cada sección.
-- [ ] **Campo `Nombre` no se envía.** El formulario ya lo carga (`companies.name`) pero
-      `#buildCompanyFormData` no lo manda: el endpoint .NET no tiene dónde ponerlo.
+Cada botón "Actualizar" del formulario va a **su propio** endpoint y escribe **solo** los
+campos de su sección. Son independientes en la pantalla y también en el proceso: apretar
+"Actualizar" en una sección no puede pisar los campos de otra ni siquiera si vinieran en el
+cuerpo. El .NET hacía lo contrario — `PATCH /api/Companies?action=N` mandaba las 42 columnas
+en cada guardado, así que un campo mal cargado en una sección se propagaba al guardar otra.
+
+El nombre de la subruta es el de la sección, a secas: sin sufijo `_settings` ni `_config` —
+el `PATCH` ya dice que es configuración. La sección migrada es la plantilla:
+`resource :general, only: [:update], module: :companies` bajo `resources :companies`, con su
+controller en `app/controllers/api/companies/`. Faltan las cinco restantes:
+
+- [ ] `PATCH .../additional` — sección "Adicional". Solo tendría `email_cc`:
+      `AdditionalInformation` se eliminó por no tener consumidor.
+- [ ] `PATCH .../tax_authority_credentials` — sección "Hacienda (ATV)". `cert_path`,
+      `cert_pin`, `cert_expires_at`, `token_user`, `token_password`, `client_id`,
+      `grant_type`. **Ojo:** `cert_pin` y `token_password` están cifrados y no deben salir
+      en la respuesta; hay que decidir qué se le muestra al usuario. Incluye subida del
+      `.p12`.
+- [ ] `PATCH .../attachments` — sección "Adjuntos". `logo_path` y `print_format_path`
+      guardan rutas del servidor .NET; antes de migrar hay que decidir si se replica ese
+      esquema o se pasa a Active Storage.
+- [ ] `PATCH .../economic_activities` — sección "Códigos de actividad". **No tiene tabla en
+      la base nueva**: hay que crearla primero.
+- [ ] `PATCH .../purchase_invoice` — sección "Factura a proveedor".
+      `use_ap_invoice`, `auto_send_ap_inv`, `purchase_invoice_series`,
+      `default_xml_tax_code`, `default_warehouse`. Las tolerancias del XML y el mapeo de
+      monedas **no tienen tabla**.
+
+> Al agregar una sección hay que tocar **los dos** lados: su controller y
+> `Api::CompaniesController#serialize_detail`, que es la lectura única del formulario. Si un
+> campo se agrega en uno y no en el otro, el formulario lo muestra, el usuario lo edita,
+> guarda, y no pasa nada — sin error. `spec/requests/api/company_general_spec.rb`
+> tiene el par de ejemplos que compara las dos listas; copiar ese patrón por sección.
+
+### Escritura que sigue en el .NET
+
+- [ ] **Las secciones 2 a 5 siguen llamando a `#sendEditRequest`** (adicional, ATV,
+      adjuntos, códigos de actividad). Van a `PATCH /api/Companies` con el shape viejo y
+      hoy responden 401. Se reemplazan con los endpoints de arriba.
+- [ ] **El alta (`POST`) sigue en el .NET.** Ver más abajo.
+- [ ] **Campo `Nombre` no se envía en el alta.** `#buildCompanyFormData` no lo manda: el
+      endpoint .NET no tiene dónde ponerlo. Se resuelve al migrar el `POST`.
 
 ### Campos eliminados de la vista que aún viajan al API (§24)
 

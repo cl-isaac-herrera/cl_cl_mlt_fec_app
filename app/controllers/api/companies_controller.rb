@@ -19,6 +19,9 @@ module Api
   # El cuerpo y la respuesta siguen en PascalCase: es contrato con el frontend.
   class CompaniesController < AuthorizedController
     include AssignableCompanies
+    # El alcance lo comparte con los PATCH de cada sección: si no resolvieran el
+    # mismo conjunto, el formulario abriría una compañía que el guardado rechaza.
+    include VisibleCompanies
 
     # El permiso se resuelve ANTES de buscar el registro: si se hiciera al revés,
     # un 404 le confirmaría a quien no tiene permiso qué ids existen.
@@ -35,11 +38,6 @@ module Api
       # /configurations/companies/:id/edit.
       'show'  => 'Configurations_Companies_Update'
     }.freeze
-
-    # Permite ver todas las compañías de la instalación, no solo las asignadas al
-    # usuario. No es un permiso de acción sino de alcance: se consulta con
-    # `permission?`, que no corta la respuesta (`CLAUDE.md` §28).
-    SEE_ALL_PERMISSION = 'Configurations_Companies_ViewAllApplicationCompanies'
 
     # GET /api/companies?name=&page=1&per_page=10
     #
@@ -101,20 +99,8 @@ module Api
       require_permission!(permission)
     end
 
-    # `unscoped` a propósito: el default_scope de SoftDeletable esconde a las
-    # inactivas, y esta pantalla existe justamente para poder verlas y
-    # reactivarlas (`CLAUDE.md` §28).
-    def visible_companies
-      return Company.unscoped if permission?(SEE_ALL_PERMISSION)
-
-      Company.unscoped.assigned_to(Current.user.id)
-    end
-
     def load_company
-      @company = visible_companies.find_by(id: params[:id])
-      return if @company
-
-      render json: ApiResponse.not_found('La compañía no existe.').to_h, status: :not_found
+      @company = find_visible_company(params[:id])
     end
 
     def page
@@ -139,36 +125,44 @@ module Api
       }
     end
 
-    # El detalle para el formulario: lo del listado más las columnas que la
-    # pantalla de edición necesita. Por ahora solo las de datos generales — el
-    # resto (certificado, ATV, adjuntos, factura a proveedor) se agrega cuando se
-    # migre cada sección.
+    # El detalle para el formulario: la lectura es una sola, aunque el guardado
+    # esté partido en un endpoint por sección.
     #
     # `SapDb` reemplaza al `DBSap` del .NET, que además mandaba un `DBMaestraSap`
     # vacío que ninguna columna respalda.
     #
     # Las claves del bloque del emisor conservan el vocabulario del XML de
     # Hacienda (`EmsrNombre`, `CodigoActividad`) aunque las columnas se llamen en
-    # inglés: es el contrato que ya consume el formulario, y son los nombres con
-    # los que se habla del tema.
+    # inglés: es el contrato que ya consume el formulario.
+    #
+    # ⚠️ Los campos marcados como de "Datos Generales" tienen que coincidir con
+    # los que acepta `Api::Companies::GeneralController`. Si uno se agrega
+    # acá y no allá, el formulario lo muestra, el usuario lo edita, guarda, y no
+    # pasa nada — sin error. `spec/requests/api/company_general_spec.rb` compara
+    # las dos listas.
     def serialize_detail(company)
       serialize(company).merge(
-        ConnectionId:    company.connection_id,
-        SapDb:           company.sap_db,
-        FreightType:     company.freight_type,
-        EmailSenderType: company.email_sender_type,
-
+        # ── Sección "Datos Generales" ────────────────────────────────────────
+        ConnectionId:           company.connection_id,
+        SapDb:                  company.sap_db,
+        EmailSenderType:        company.email_sender_type,
+        FreightType:            company.freight_type,
         EmsrNombre:             company.issuer_legal_name,
-        # El nombre comercial ES `name`: no hay columna aparte, a propósito.
-        EmsrNombreComercial:    company.name,
         EmsrIdeTipo:            company.issuer_id_type,
         EmsrIdeNumero:          company.issuer_id_number,
         CodigoActividad:        company.economic_activity_code,
         EmsrRegistroFiscal8707: company.tax_registry_8707,
-        EmailCC:                company.email_cc,
-        PurchInvSeriesNum:      company.purchase_invoice_series,
-        DefaultXmlTaxCode:      company.default_xml_tax_code,
-        DefaultWarehouse:       company.default_warehouse
+
+        # El nombre comercial ES `name`: no hay columna aparte, a propósito.
+        EmsrNombreComercial: company.name,
+
+        # ── Secciones que todavía no tienen su endpoint ──────────────────────
+        # Se devuelven porque la lectura del formulario es una sola; se van a
+        # poder editar cuando cada sección se migre (`TODOS.md` → Compañías).
+        EmailCC:           company.email_cc,
+        PurchInvSeriesNum: company.purchase_invoice_series,
+        DefaultXmlTaxCode: company.default_xml_tax_code,
+        DefaultWarehouse:  company.default_warehouse
       )
     end
   end

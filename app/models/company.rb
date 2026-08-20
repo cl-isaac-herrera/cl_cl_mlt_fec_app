@@ -40,6 +40,17 @@ class Company < ApplicationRecord
   # instalación.
   CERT_EXPIRATION_ALARM_DAYS = 7
 
+  # La columna es `not null`: sin esto, guardar el formulario con el nombre en
+  # blanco revienta contra la restricción de la base y llega como un 500 en vez de
+  # un mensaje.
+  validates :name, presence: true
+
+  # `belongs_to ... optional: true` no valida nada cuando el id SÍ viene: una
+  # conexión inexistente pasaría el modelo y la rechazaría la llave foránea, que
+  # también llega como 500. `unscoped` porque una conexión dada de baja sigue
+  # siendo una referencia válida — es la que ya tenía la compañía.
+  validate :sap_connection_must_exist
+
   # Los largos replican el `Size` que estos campos tenían como UDFs de `OADM`,
   # que es el límite con el que se venían guardando. La validación mira el texto
   # original; el `limit:` de la columna es la otra mitad (ver la migración).
@@ -99,6 +110,15 @@ class Company < ApplicationRecord
   end
 
   private
+
+  # Mensaje explícito, así que no pasa por i18n y no necesita clave (§30). El
+  # nombre del atributo sí sale de `es.yml`.
+  def sap_connection_must_exist
+    return if connection_id.blank?
+    return if Connection.unscoped.exists?(id: connection_id)
+
+    errors.add(:connection_id, 'no corresponde a una conexión existente')
+  end
 
   # El texto del toast. Se arma en el servidor —y no en el JS— porque es el mismo
   # `SmsAlert` que armaba el SP: el cliente solo lo muestra.

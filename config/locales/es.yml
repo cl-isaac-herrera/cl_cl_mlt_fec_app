@@ -82,6 +82,7 @@ es:
       company:
         name: "El nombre"
         sap_db: "El código de base de SAP"
+        connection_id: "La conexión de SAP"
         # Bloque del emisor ante Hacienda. Sin estas claves el mensaje usa el
         # nombre de la columna humanizado y sale en inglés (§30).
         issuer_legal_name: "La razón social del emisor"
