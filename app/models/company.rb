@@ -100,6 +100,18 @@ class Company < ApplicationRecord
   # @param days [Integer] umbral de anticipación, en días.
   # @return [Hash] `ShowAlarm` y `SmsAlert` — PascalCase porque es el contrato que
   #   ya consume el frontend.
+  # ¿Hay un PIN de certificado guardado? Se pregunta por el valor CRUDO de la
+  # columna y no por el atributo descifrado: la respuesta es la misma —o hay
+  # algo escrito o no lo hay— y así no se descifra solo para poner un
+  # placeholder en el formulario. Además no revienta con una fila importada en
+  # texto plano, que con `support_unencrypted_data = false` levanta al leerla.
+  #
+  # Es lo único que se le cuenta al cliente de los dos secretos: el valor no sale
+  # nunca de la aplicación (ver `Api::Companies::TaxAuthorityController`).
+  def cert_pin_stored? = read_attribute_before_type_cast(:cert_pin).present?
+
+  def token_password_stored? = read_attribute_before_type_cast(:token_password).present?
+
   def certificate_alarm(days: CERT_EXPIRATION_ALARM_DAYS)
     return { ShowAlarm: false, SmsAlert: nil } if cert_expires_at.blank?
 

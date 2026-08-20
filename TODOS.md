@@ -565,9 +565,13 @@ que armaba el Bearer para el proxy se borró con el último tab que lo usaba.
 ## Compañías — endpoints migrados a Rails (`/configurations/companies`)
 
 Migrados hasta ahora: el **listado** (`GET /api/companies`), la **lectura** del formulario
-de edición (`GET /api/companies/:id`) y el **guardado de la sección "Datos Generales"**
-(`PATCH /api/companies/:id/general`). Todo sale de la tabla `companies`: el bloque
-del emisor estuvo un tiempo como UDFs de `OADM` y volvió a la base de la aplicación.
+de edición (`GET /api/companies/:id`), el guardado de dos secciones — **"Datos Generales"**
+(`PATCH /api/companies/:id/general`) y **"Hacienda (ATV)"**
+(`PATCH /api/companies/:id/tax_authority`) — y el **certificado digital**: se carga y se
+descarga desde Rails (`POST /api/certificate_inspections`,
+`GET /api/companies/:id/certificate`). Los datos salen de la tabla `companies` —el bloque
+del emisor estuvo un tiempo como UDFs de `OADM` y volvió a la base de la aplicación— y el
+`.p12` del disco, bajo `FILES_BASE_PATH`.
 
 ### Un endpoint por sección — la convención a seguir
 
@@ -578,17 +582,24 @@ cuerpo. El .NET hacía lo contrario — `PATCH /api/Companies?action=N` mandaba 
 en cada guardado, así que un campo mal cargado en una sección se propagaba al guardar otra.
 
 El nombre de la subruta es el de la sección, a secas: sin sufijo `_settings` ni `_config` —
-el `PATCH` ya dice que es configuración. La sección migrada es la plantilla:
+el `PATCH` ya dice que es configuración. Las secciones migradas son la plantilla:
 `resource :general, only: [:update], module: :companies` bajo `resources :companies`, con su
-controller en `app/controllers/api/companies/`. Faltan las cinco restantes:
+controller en `app/controllers/api/companies/`. Faltan las cuatro restantes:
 
 - [ ] `PATCH .../additional` — sección "Adicional". Solo tendría `email_cc`:
       `AdditionalInformation` se eliminó por no tener consumidor.
-- [ ] `PATCH .../tax_authority_credentials` — sección "Hacienda (ATV)". `cert_path`,
-      `cert_pin`, `cert_expires_at`, `token_user`, `token_password`, `client_id`,
-      `grant_type`. **Ojo:** `cert_pin` y `token_password` están cifrados y no deben salir
-      en la respuesta; hay que decidir qué se le muestra al usuario. Incluye subida del
-      `.p12`.
+- [x] `PATCH .../tax_authority` — sección "Hacienda (ATV)". Hecho. Se llamó
+      `tax_authority` y no `tax_authority_credentials` porque la sección guarda además el
+      certificado y su vencimiento, no solo las credenciales del ATV.
+      **Su cuerpo es multipart, no JSON** — es la única sección que lleva un archivo.
+      Acepta `TokenUsr`, `CertPin`, `TokenPass` y, opcional, `file` con el `.p12`.
+      `cert_path` y `cert_expires_at` los deriva del archivo y **no** los acepta del cuerpo
+      (ver más abajo).
+      `cert_pin` y `token_password` siguen cifrados y **no salen** en ninguna respuesta: lo
+      único que se devuelve es `HasCertPin` / `HasTokenPass`. Como el campo se pinta vacío,
+      la clave ausente significa "dejalo como está" y la clave vacía, "borralo" — el cliente
+      la manda solo si el usuario escribió algo. `client_id` y `grant_type` **no** están en
+      el endpoint: no tienen campo en el formulario.
 - [ ] `PATCH .../attachments` — sección "Adjuntos". `logo_path` y `print_format_path`
       guardan rutas del servidor .NET; antes de migrar hay que decidir si se replica ese
       esquema o se pasa a Active Storage.
@@ -602,14 +613,65 @@ controller en `app/controllers/api/companies/`. Faltan las cinco restantes:
 > Al agregar una sección hay que tocar **los dos** lados: su controller y
 > `Api::CompaniesController#serialize_detail`, que es la lectura única del formulario. Si un
 > campo se agrega en uno y no en el otro, el formulario lo muestra, el usuario lo edita,
-> guarda, y no pasa nada — sin error. `spec/requests/api/company_general_spec.rb`
-> tiene el par de ejemplos que compara las dos listas; copiar ese patrón por sección.
+> guarda, y no pasa nada — sin error. `spec/requests/api/company_general_spec.rb` y
+> `company_tax_authority_spec.rb` tienen el par de ejemplos que compara las dos listas;
+> copiar ese patrón por sección.
+
+### El archivo del certificado (`.p12`) — resuelto
+
+- [x] **Se guarda en el disco del servidor**, en `{FILES_BASE_PATH}/{cédula}/{archivo.p12}`
+      (`Certificates::Store`). La raíz sale de `.env`; el default de desarrollo es
+      `storage/files` dentro del proyecto.
+      **En disco y no en Active Storage a propósito:** el `.p12` no lo lee solo esta
+      aplicación — el servicio de firma lo abre **por su ruta**
+      (`new X509Certificate2(CertPath, CertPin)`) cada vez que firma un XML, y monta un
+      watcher sobre el archivo. Por eso `companies.cert_path` guarda una ruta absoluta: es
+      un contrato entre dos procesos que comparten sistema de archivos, y un blob con
+      nombre de hash dejaría al firmador sin poder abrirlo.
+      El .NET armaba la carpeta con el grupo y el `ShortName` de la compañía, que esta
+      versión eliminó (§31 y campo sin columna); la cédula los reemplaza.
+
+- [x] **La fecha de vencimiento la deriva Rails del archivo, en el mismo guardado.**
+      `cert_path` y `cert_expires_at` **no se aceptan del cuerpo**. Cerraba dos agujeros: la
+      fecha se podía escribir a mano para posponer la alarma del home, y la ruta —que el
+      formulario muestra como nombre de archivo— se pisaba con `cert.p12` a secas en una
+      columna que el firmador lee como ruta, dejando a esa compañía sin poder emitir.
+
+- [x] **`POST /api/certificate_inspections`** sigue existiendo como adelanto para la
+      pantalla: abre el `.p12` con el PIN y devuelve el vencimiento sin guardar nada, para
+      que el campo se llene al elegir el archivo. Reemplaza
+      `POST /api/Companies/CheckCertExpireDate?CertPin=…` y saca el PIN de la query string,
+      donde quedaba en el historial del navegador y en el log de accesos.
+
+- [x] **`GET /api/companies/:id/certificate`** (botón "Descargar certificado") ya se sirve
+      desde Rails. Pide el mismo permiso que editar la sección: el `.p12` con su PIN es la
+      identidad de la compañía ante Hacienda, así que bajarlo no es una lectura más.
+      Responde 404 —no 500— cuando la ruta guardada apunta al disco del servidor .NET del
+      que se importó la compañía y este no tiene el archivo.
+
+- [ ] **`FILES_BASE_PATH` tiene que existir y ser escribible en cada ambiente**, y el
+      firmador tiene que poder leer de ahí. Es configuración de despliegue, no de código.
+      **Pendiente:** fijarla en el `.env` de test y producción, y confirmar los permisos de
+      la carpeta — adentro viven llaves privadas.
+
+- [ ] **Las compañías importadas del .NET traen `cert_path` apuntando a aquel servidor.**
+      Hasta que se recargue el certificado desde esta pantalla, la descarga responde 404 y
+      el archivo sigue viviendo donde el firmador lo tenía.
+      **Pendiente:** decidir si la importación copia los archivos a `FILES_BASE_PATH` y
+      reescribe la ruta, o si se recargan a mano compañía por compañía.
+
+- [ ] **El logo y el formato de impresión (sección "Adjuntos") siguen con rutas del
+      servidor .NET.** Ya tienen dónde ir —la misma raíz— cuando se migre esa sección.
 
 ### Escritura que sigue en el .NET
 
-- [ ] **Las secciones 2 a 5 siguen llamando a `#sendEditRequest`** (adicional, ATV,
-      adjuntos, códigos de actividad). Van a `PATCH /api/Companies` con el shape viejo y
-      hoy responden 401. Se reemplazan con los endpoints de arriba.
+- [ ] **Las secciones "Adicional", "Adjuntos" y "Códigos de actividad" siguen llamando a
+      `#sendEditRequest`.** Van a `PATCH /api/Companies` con el shape viejo y hoy responden
+      401. Se reemplazan con los endpoints de arriba.
+      **Ojo con los dos secretos:** `#buildCompanyFormData` manda `CertPin` y `TokenPass`
+      con lo que haya en pantalla, que desde esta migración es siempre vacío (el valor
+      guardado no vuelve del servidor). Si esos endpoints revivieran antes de migrarse,
+      guardar "Adjuntos" borraría el PIN y el token password del lado del .NET.
 - [ ] **El alta (`POST`) sigue en el .NET.** Ver más abajo.
 - [ ] **Campo `Nombre` no se envía en el alta.** `#buildCompanyFormData` no lo manda: el
       endpoint .NET no tiene dónde ponerlo. Se resuelve al migrar el `POST`.
@@ -630,16 +692,19 @@ controller en `app/controllers/api/companies/`. Faltan las cinco restantes:
 
 ### Secciones del formulario que todavía no cargan
 
-`GET /api/companies/:id` devuelve **solo** los datos generales. El resto de las secciones
-quedan vacías hasta que se migre cada una, y sus llamadas siguen cayendo al proxy .NET:
+`GET /api/companies/:id` llena "Datos Generales" y "Hacienda (ATV)". El resto de las
+secciones quedan vacías hasta que se migre cada una, y sus llamadas siguen cayendo al
+proxy .NET:
 
 - [ ] **Adicional** — `AdditionalInformation` ya no existe como columna (se eliminó por no
       tener consumidor); `EmailCC` **sí** llega en la respuesta (columna `email_cc`) pero la
       sección no está cableada.
-- [ ] **Hacienda (ATV)** — `cert_path`, `cert_pin`, `cert_expires_at`, `token_user`,
-      `token_password`, `client_id`, `grant_type` están en `companies` pero no se exponen.
-      Ojo: `cert_pin` y `token_password` están cifrados y **no deben salir** en la
-      respuesta; hay que decidir qué se le muestra al usuario.
+- [x] **Hacienda (ATV)** — cableada. La respuesta trae `CertFileName`, `CertExpireDate`,
+      `TokenUsr` y los dos indicadores `HasCertPin` / `HasTokenPass`. Los secretos no
+      viajan: el campo se pinta vacío y el placeholder dice si hay uno guardado. Del
+      certificado sale el NOMBRE, no la ruta: dónde lo guardó el servidor no es asunto de
+      la pantalla, y el cliente ya no puede escribirla.
+      `client_id` y `grant_type` siguen sin exponerse porque no tienen campo.
 - [ ] **Adjuntos** — `logo_path` y `print_format_path` guardan rutas del servidor .NET.
       Antes de migrar la sección hay que decidir si se replica ese esquema o se pasa a
       Active Storage.

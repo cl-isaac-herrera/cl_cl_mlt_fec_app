@@ -111,3 +111,37 @@
 #app-sidebar[data-collapsed="true"] .logo-collapsed {
   display: block;
 }
+
+/* ---------------------------------------------------------------------------
+ * Latido para íconos de aviso — hoy lo usa el vencimiento del certificado
+ * digital, al lado del título de la sección "Hacienda (ATV)" en el formulario
+ * de compañías.
+ *
+ * No sale de Tailwind: `animate-pulse` solo baja la opacidad (el ícono se
+ * apaga, no llama la atención) y `animate-ping` escala hacia afuera y
+ * desaparece, pensado para un halo detrás de otro elemento. Acá hace falta que
+ * el ícono crezca y vuelva sin dejar de leerse.
+ * ------------------------------------------------------------------------- */
+@keyframes cl-beat {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.25); }
+}
+
+.cl-beat {
+  /* `inline-flex`: transform no aplica a cajas inline, y el <span> del ícono
+     lo es por defecto. */
+  display: inline-flex;
+  transform-origin: center;
+  animation: cl-beat 1.6s ease-in-out infinite;
+}
+
+/* Ya vencido: el mismo latido, al doble de ritmo. */
+.cl-beat-urgent {
+  animation-duration: 0.8s;
+}
+
+/* Quien pidió menos movimiento igual tiene que ver el ícono y su color; lo que
+   se quita es el latido, no el aviso. */
+@media (prefers-reduced-motion: reduce) {
+  .cl-beat { animation: none; }
+}

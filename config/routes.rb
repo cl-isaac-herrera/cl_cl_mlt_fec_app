@@ -27,12 +27,25 @@ Rails.application.routes.draw do
       # vive en `CompanySections`.
       #
       # `resource` singular y sin id: la sección pertenece a la compañía del
-      # path, no es una colección (§28). Las otras cinco secciones se agregan acá
-      # cuando se migren (`TODOS.md` → Compañías).
+      # path, no es una colección (§28). Las otras cuatro secciones se agregan
+      # acá cuando se migren (`TODOS.md` → Compañías).
       # `controller:` explícito porque `resource` singular busca el controller en
       # PLURAL (`resource :profile` → `ProfilesController`), y estos nombres de
       # sección son adjetivos: "generals" o "additionals" no significan nada.
       resource :general, only: [:update], module: :companies, controller: 'general'
+
+      # Sección "Datos de Conexión de Hacienda (ATV)". `tax_authority` a secas y
+      # no `tax_authority_credentials`: la sección guarda además el certificado
+      # y su vencimiento, no solo las credenciales del ATV.
+      #
+      # El cuerpo es multipart, no JSON: la sección incluye la carga del `.p12`.
+      resource :tax_authority, only: [:update], module: :companies,
+                               controller: 'tax_authority'
+
+      # Descarga del `.p12` de la compañía. Se puede servir desde acá porque el
+      # archivo ya lo guarda esta aplicación; antes vivía en el disco del .NET.
+      resource :certificate, only: [:show], module: :companies,
+                             controller: 'certificate'
     end
 
     # `index` son los permisos EFECTIVOS del usuario de la sesión; `catalog` es
@@ -85,6 +98,13 @@ Rails.application.routes.draw do
     # Prueba de credenciales de SAP contra el Service Layer de una compañía.
     # Reemplaza POST /api/Connections/validate-user-credentials.
     resources :sap_credential_validations, only: [:create]
+
+    # Lectura del vencimiento de un certificado `.p12` recién elegido, antes de
+    # guardarlo. Reemplaza POST /api/Companies/CheckCertExpireDate?CertPin=N —
+    # el PIN pasa de la query string al cuerpo. No cuelga de
+    # `/api/companies/:id`: el certificado todavía no es de ninguna compañía, y
+    # el alta lo usa igual.
+    resources :certificate_inspections, only: [:create]
 
     # Conexiones a servidores SAP. Reemplaza GET/POST/PATCH /api/Connections del
     # .NET; el id de update pasa del cuerpo al path. `assignable` es la

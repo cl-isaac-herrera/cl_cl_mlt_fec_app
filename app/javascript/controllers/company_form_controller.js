@@ -3,6 +3,25 @@ import { Storage, SStore, getApiHeaders } from 'vendor/clavisco/core';
 import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
 
 /**
+ * Con cuántos días de anticipación se avisa que el certificado está por vencer.
+ *
+ * Es el mismo umbral que `Company::CERT_EXPIRATION_ALARM_DAYS`, el que usa el
+ * toast del home. Si cambia allá, cambia acá: son dos avisos de lo mismo y
+ * quedarían diciendo cosas distintas el mismo día.
+ */
+const CERT_ALARM_DAYS = 7;
+
+/**
+ * Los dos tonos de las insignias de aviso (§33): disco claro, ícono oscuro. El
+ * par importa — un disco cargado con el ícono en un tono cercano los funde y el
+ * ícono deja de leerse.
+ */
+const ALERT_TONES = {
+  warning: 'text-yellow-700 bg-yellow-100',
+  error:   'text-red-600 bg-red-200',
+};
+
+/**
  * CompanyFormController — Crear / Editar compañía.
  *
  * Replica: Angular CreateOrUpdateCompanyComponent
@@ -45,13 +64,14 @@ export default class extends Controller {
     'btnSaveAdditionalContainer',
 
     // Sección 3 - ATV
+    'certAlert',
     'certPin', 'certPinEyeIcon',
     'certPath', 'certPathText',
     'certFileInput',
     'certExpireDate',
     'tokenUsr',
     'tokenPass', 'tokenPassEyeIcon',
-    'btnSaveAtvContainer',
+    'btnSaveAtvContainer', 'btnSaveAtv', 'btnSaveAtvWrap',
 
     // Sección 4 - Adjuntos
     'logoName', 'logoFileInput',
@@ -79,7 +99,7 @@ export default class extends Controller {
     'currencyMappingList', 'currencyMappingEmpty', 'currencyMappingsDupError',
     'btnReloadSap',
     'btnSaveSap',
-    'sapErrorIcon', 'sapErrorDetail',
+    'sapErrorIcon',
 
     // Loaders de sección
     'loaderGeneral', 'loaderAdditional', 'loaderAtv', 'loaderAttachments', 'loaderActivityCodes', 'loaderSap',
@@ -117,6 +137,13 @@ export default class extends Controller {
   // Valores de la sección "Datos Generales" tal como se cargaron. Es la
   // referencia contra la que se decide si hay algo que guardar.
   #generalSnapshot        = null;
+  // Lo mismo para la sección "Datos de Conexión de Hacienda (ATV)". Los dos
+  // secretos no entran en la foto: el servidor no los devuelve, así que el campo
+  // siempre arranca vacío y no hay contra qué comparar. En su lugar se recuerda
+  // si el usuario los escribió, que es lo que decide si viajan en el PATCH.
+  #atvSnapshot            = null;
+  #certPinTouched         = false;
+  #tokenPassTouched       = false;
 
   #ideRules = {
     '01': { min: 9,  max: 9  },
@@ -139,6 +166,7 @@ export default class extends Controller {
     this.#selectedCompany = SStore.get('CurrentCompany') || {};
 
     this.#setupMode();
+    this.#setupTooltips();
     this.#initEmailCc();
 
     if (this.#isEditing) {
@@ -188,6 +216,76 @@ export default class extends Controller {
     this.#renderEmailCc();
   }
 
+  // ── Tooltips ───────────────────────────────────────────────────────────────
+
+  /**
+   * Este formulario no tiene tabla, así que no hereda el `setupTooltip()` de
+   * `TabulatorController`: sin esto, los `data-tooltip` que ya estaban puestos
+   * (el motivo por el que un botón "Actualizar" está deshabilitado, §26) no se
+   * veían nunca.
+   */
+  #setupTooltips() {
+    [
+      this.hasCertAlertTarget          ? this.certAlertTarget          : null,
+      this.hasSapErrorIconTarget       ? this.sapErrorIconTarget       : null,
+      this.hasBtnSaveGeneralWrapTarget ? this.btnSaveGeneralWrapTarget : null,
+      this.hasBtnSaveAtvWrapTarget     ? this.btnSaveAtvWrapTarget     : null,
+    ].filter(Boolean).forEach(el => this.#attachTooltip(el));
+  }
+
+  /**
+   * Tooltip flotante para un elemento fuera de Tabulator. Mismo patrón y mismo
+   * `place()` con clamp que el base (CLAUDE.md §25): se posiciona arriba del
+   * cursor, se voltea a la izquierda si se sale por la derecha y se recorta
+   * contra los cuatro bordes, para que nunca quede cortado.
+   *
+   * Lee `data-tooltip` en cada `mouseenter`, no al registrar: el del aviso de
+   * vencimiento cambia cuando cambia la fecha.
+   */
+  #attachTooltip(el) {
+    let tip = document.getElementById('cl-tabulator-tooltip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'cl-tabulator-tooltip';
+      tip.style.cssText = [
+        'position:fixed', 'z-index:9999', 'pointer-events:none',
+        'background:#1f2937', 'color:#fff', 'padding:4px 8px',
+        'border-radius:4px', 'font-size:12px', 'line-height:1.35',
+        'max-width:min(320px, calc(100vw - 16px))',
+        'white-space:normal', 'word-break:break-word', 'text-align:left',
+        'opacity:0', 'transition:opacity 0.15s',
+      ].join(';');
+      document.body.appendChild(tip);
+    }
+
+    const place = (e) => {
+      const margin = 8;
+      const { width: w, height: h } = tip.getBoundingClientRect();
+      let left = e.clientX + 12;
+      let top  = e.clientY - h - 10;
+      if (left + w + margin > window.innerWidth) left = e.clientX - w - 12;
+      if (left < margin) left = margin;
+      if (left + w + margin > window.innerWidth) left = window.innerWidth - w - margin;
+      if (top < margin) top = e.clientY + 18;
+      if (top + h + margin > window.innerHeight) top = window.innerHeight - h - margin;
+      tip.style.left = `${left}px`;
+      tip.style.top  = `${top}px`;
+    };
+
+    el.addEventListener('mouseenter', (e) => {
+      if (!el.dataset.tooltip) return;
+      tip.textContent = el.dataset.tooltip;
+      place(e);
+      tip.style.opacity = '1';
+    });
+    el.addEventListener('mousemove', (e) => {
+      if (tip.style.opacity === '1') place(e);
+    });
+    el.addEventListener('mouseleave', () => {
+      tip.style.opacity = '0';
+    });
+  }
+
   // ── Carga de datos ─────────────────────────────────────────────────────────
 
   async #loadInitialData() {
@@ -208,7 +306,8 @@ export default class extends Controller {
   /**
    * Carga de la pantalla de edición.
    *
-   * Solo se piden los datos de la sección que está migrada. Las consultas de las
+   * Solo se piden los datos de las secciones que están migradas — "Datos
+   * Generales" y "Hacienda (ATV)", que salen de la misma petición. Las consultas de las
    * otras secciones (`warehouse`, `Tax`, `currencies`, `currency-map`,
    * `activity-codes`) se quitaron: van al proxy .NET, que hoy responde 401, así
    * que no llenaban nada — solo sumaban cinco peticiones fallidas y demoraban el
@@ -246,16 +345,23 @@ export default class extends Controller {
       // aplicarle el valor de la compañía, o el `select.value = …` no encuentra
       // la opción y queda en blanco.
       await Promise.all([connections, general]);
-      if (this.#companyData) this.#fillGeneralSection(this.#companyData);
+      if (this.#companyData) {
+        this.#fillGeneralSection(this.#companyData);
+        this.#fillAtvSection(this.#companyData);
+      }
     } finally {
       this.#hideLoader(this.loaderGeneralTarget);
+      this.#hideLoader(this.loaderAtvTarget);
     }
   }
 
-  // Solo se muestra el loader de la sección que realmente carga algo. Las demás
-  // no piden nada todavía: dejarlas girando diría que están esperando datos.
+  // Solo se muestran los loaders de las secciones que realmente cargan algo. Las
+  // demás no piden nada todavía: dejarlas girando diría que están esperando
+  // datos. Las dos salen de la MISMA petición (`GET /api/companies/:id`), aunque
+  // el guardado esté partido en un endpoint por sección.
   #showSectionLoaders() {
     this.#showLoader(this.loaderGeneralTarget);
+    this.#showLoader(this.loaderAtvTarget);
   }
 
   #showLoader(loaderTarget) { loaderTarget?.classList.remove('hidden'); }
@@ -272,8 +378,9 @@ export default class extends Controller {
    * (`issuer_legal_name`, `economic_activity_code`): la traducción la hace
    * `serialize_detail` del controller.
    *
-   * Las demás secciones (adicional, ATV, adjuntos, códigos de actividad,
-   * factura a proveedor) todavía no se migraron y por eso no se llenan acá.
+   * La sección de Hacienda (ATV) sale de la misma respuesta pero la llena
+   * `#fillAtvSection`. Las demás (adicional, adjuntos, códigos de actividad,
+   * factura a proveedor) todavía no se migraron y por eso no se llenan.
    */
   #fillGeneralSection(data) {
     this.nameTarget.value           = data.Name || '';
@@ -340,9 +447,25 @@ export default class extends Controller {
   #refreshGeneralSaveState() {
     if (!this.hasBtnSaveGeneralTarget) return;
 
-    const reason = this.#generalSaveBlockedReason();
-    const btn    = this.btnSaveGeneralTarget;
+    this.#paintSectionSaveButton(
+      this.btnSaveGeneralTarget,
+      this.hasBtnSaveGeneralWrapTarget ? this.btnSaveGeneralWrapTarget : null,
+      this.#generalSaveBlockedReason(),
+      'Actualizar los datos generales de la compañía',
+    );
+  }
 
+  /**
+   * Pinta el botón "Actualizar …" de una sección según se pueda guardar o no.
+   * Lo comparten todas las secciones migradas para que el gris, el cursor y el
+   * tooltip signifiquen lo mismo en todas.
+   *
+   * @param {HTMLButtonElement} btn
+   * @param {?HTMLElement} wrap  <span> envolvente que lleva el tooltip.
+   * @param {?string} reason     Por qué NO se puede guardar; null si sí se puede.
+   * @param {string} enabledTooltip  Qué hace el botón cuando está habilitado.
+   */
+  #paintSectionSaveButton(btn, wrap, reason, enabledTooltip) {
     btn.disabled = !!reason;
     btn.classList.toggle('pointer-events-none', !!reason);
     btn.classList.toggle('cursor-not-allowed', !!reason);
@@ -352,10 +475,7 @@ export default class extends Controller {
     btn.classList.toggle('text-white',   !reason);
     btn.classList.toggle('hover:bg-blue-700', !reason);
 
-    if (this.hasBtnSaveGeneralWrapTarget) {
-      this.btnSaveGeneralWrapTarget.dataset.tooltip =
-        reason || 'Actualizar los datos generales de la compañía';
-    }
+    if (wrap) wrap.dataset.tooltip = reason || enabledTooltip;
   }
 
   /**
@@ -371,6 +491,251 @@ export default class extends Controller {
     }
 
     return null;
+  }
+
+  // ── Sección "Hacienda (ATV)" ───────────────────────────────────────────────
+
+  /**
+   * Llena la sección con la respuesta de `GET /api/companies/:id`.
+   *
+   * El PIN del certificado y el token password NO vienen en la respuesta: están
+   * cifrados y no se le devuelven a nadie. Lo único que llega es si hay uno
+   * guardado (`HasCertPin` / `HasTokenPass`), y con eso el campo —que siempre
+   * arranca vacío— dice en el placeholder qué pasa si se escribe algo.
+   *
+   * Del certificado llega el nombre del archivo, no la ruta: dónde lo guardó el
+   * servidor no es asunto de esta pantalla.
+   */
+  #fillAtvSection(data) {
+    this.certPathTarget.value       = data.CertFileName || '';
+    this.certPathTextTarget.value   = data.CertFileName || '';
+    this.tokenUsrTarget.value       = data.TokenUsr || '';
+    this.#showCertExpiresAt(data.CertExpireDate);
+
+    this.#applySecretPlaceholder(this.certPinTarget,   this.certPinEyeIconTarget,   data.HasCertPin);
+    this.#applySecretPlaceholder(this.tokenPassTarget, this.tokenPassEyeIconTarget, data.HasTokenPass);
+
+    // Un certificado ya guardado no es un archivo pendiente de subir.
+    this.#selectedCertFile = null;
+    this.#oldCertPin       = '';
+
+    // La foto se toma DESPUÉS de llenar: es el estado "sin cambios".
+    this.#certPinTouched   = false;
+    this.#tokenPassTouched = false;
+    this.#atvSnapshot      = this.#atvValues();
+    this.#refreshAtvSaveState();
+  }
+
+  /**
+   * Pinta la fecha de vencimiento. Es solo display: la fecha no viaja de vuelta
+   * al servidor — la deriva él del `.p12` al guardarlo, que es la única fuente
+   * que no se puede escribir a mano para posponer la alarma de vencimiento.
+   *
+   * El aviso del encabezado se repinta acá y no en `#fillAtvSection` para que
+   * también siga al adelanto: al elegir un certificado nuevo, el ícono refleja
+   * la fecha que se está viendo, no la que todavía está guardada.
+   */
+  #showCertExpiresAt(isoDate) {
+    this.certExpireDateTarget.value = this.#formatDateTime(isoDate);
+    this.#renderCertAlert(isoDate);
+  }
+
+  /**
+   * El ícono que late al lado del título de la sección: ámbar los días previos
+   * al vencimiento, rojo una vez vencido, nada el resto del tiempo.
+   *
+   * Va en el encabezado —visible con la sección cerrada— porque el formulario
+   * tiene seis secciones plegadas y un certificado vencido no puede depender de
+   * que alguien abra la correcta para enterarse.
+   */
+  #renderCertAlert(isoDate) {
+    if (!this.hasCertAlertTarget) return;
+
+    this.#paintAlertBadge(this.certAlertTarget, this.#certExpirationAlert(isoDate));
+  }
+
+  /**
+   * Pinta —o apaga— una insignia de aviso en el encabezado de una sección: disco
+   * lleno, ícono redondeado encima y el motivo en el tooltip (§33).
+   *
+   * Es el ÚNICO lugar que arma esas clases. Las secciones que avisan algo son
+   * varias (el vencimiento del certificado, las listas de SAP que no cargaron) y
+   * con cada una armando su propio HTML se iban separando sin que nadie lo
+   * notara.
+   *
+   * @param {HTMLElement} el
+   * @param {?{icon: string, tone: string, urgent: boolean, message: string}} alert
+   *   null apaga la insignia.
+   */
+  #paintAlertBadge(el, alert) {
+    if (!alert) {
+      el.className = 'hidden';
+      el.removeAttribute('data-tooltip');
+      el.innerHTML = '';
+      return;
+    }
+
+    el.className = [
+      'cl-beat',
+      alert.urgent ? 'cl-beat-urgent' : '',
+      // Disco lleno, no un aro: el círculo es una superficie sólida del tono
+      // claro y el ícono va encima en el oscuro.
+      'items-center justify-center h-6 w-6 rounded-full flex-shrink-0',
+      alert.tone,
+    ].filter(Boolean).join(' ');
+
+    el.dataset.tooltip = alert.message;
+    el.innerHTML = this.#alertIcon(alert.icon);
+  }
+
+  /**
+   * Los dos íconos, de **Material Symbols Rounded** — la variante de puntas
+   * redondeadas. No es la familia `material-icons` del resto de la app: esa
+   * dibuja el triángulo con las puntas en ángulo vivo. El layout la carga
+   * subseteada a estos dos nombres (ver `protected.html.erb`).
+   *
+   * El vencido usa `priority_high` (el signo solo) y no `error`: ese es un
+   * círculo relleno y, adentro del anillo, se vería como un círculo dentro de
+   * otro.
+   */
+  #alertIcon(name) {
+    return `<span class="material-symbols-rounded" style="font-size:16px; line-height:1">${name}</span>`;
+  }
+
+  /**
+   * Qué avisar sobre el vencimiento, o null si todavía falta mucho.
+   *
+   * Los textos son los mismos que arma `Company#cert_expiration_message` para el
+   * toast del home: es el mismo hecho contado en dos lugares y decirlo distinto
+   * haría dudar de cuál es el bueno.
+   *
+   * @returns {?{icon: string, ring: string, urgent: boolean, message: string}}
+   */
+  #certExpirationAlert(isoDate) {
+    if (!isoDate) return null;
+
+    const expiresAt = new Date(isoDate);
+    if (isNaN(expiresAt.getTime())) return null;
+
+    // Días de calendario, no de 24 horas: un certificado que vence esta noche
+    // tiene que decir "vence hoy", no "vence en 0 días" ni "venció".
+    const midnight = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const days = Math.round((midnight(expiresAt) - midnight(new Date())) / 86_400_000);
+    if (days > CERT_ALARM_DAYS) return null;
+
+    const pad  = n => String(n).padStart(2, '0');
+    const date = `${pad(expiresAt.getDate())}/${pad(expiresAt.getMonth() + 1)}/${expiresAt.getFullYear()}`;
+
+    if (days < 0) {
+      return {
+        icon: 'priority_high', tone: ALERT_TONES.error, urgent: true,
+        message: `El certificado digital venció el ${date}. Debe cargar uno vigente para poder emitir documentos electrónicos.`,
+      };
+    }
+    if (days === 0) {
+      return {
+        icon: 'warning', tone: ALERT_TONES.warning, urgent: false,
+        message: `El certificado digital vence hoy (${date}). Debe cargar uno vigente para no interrumpir la emisión.`,
+      };
+    }
+
+    const plural = days === 1 ? 'día' : 'días';
+    return {
+      icon: 'warning', tone: ALERT_TONES.warning, urgent: false,
+      message: `El certificado digital vence en ${days} ${plural} (${date}). Debe cargar uno vigente antes de esa fecha.`,
+    };
+  }
+
+  /**
+   * Un campo de secreto se muestra vacío siempre. El placeholder es lo único que
+   * distingue "no hay nada guardado" de "hay algo y no se muestra".
+   *
+   * Vuelve a taparse (`type=password`) junto con su ícono: si el usuario lo había
+   * destapado para revisar lo que escribía, después de guardar no tiene por qué
+   * seguir a la vista.
+   */
+  #applySecretPlaceholder(input, eyeIcon, stored) {
+    input.value       = '';
+    input.type        = 'password';
+    input.placeholder = stored ? 'Guardado — escriba para reemplazarlo' : '';
+    eyeIcon.textContent = 'visibility_off';
+  }
+
+  /**
+   * Los valores editables de la sección, normalizados a texto para compararlos
+   * contra la foto inicial.
+   *
+   * Es uno solo: el nombre del certificado y su vencimiento son de solo lectura
+   * —los deriva el servidor del archivo— y los dos secretos no se pueden comparar
+   * contra nada, porque el servidor no los devuelve. Para esos tres el "cambió"
+   * son las marcas de abajo.
+   */
+  #atvValues() {
+    return { tokenUsr: this.tokenUsrTarget.value.trim() };
+  }
+
+  /** ¿Cambió algo en la sección respecto a lo que se cargó? */
+  #atvIsDirty() {
+    if (!this.#atvSnapshot) return false;
+    if (this.#certPinTouched || this.#tokenPassTouched || this.#selectedCertFile) return true;
+
+    const current = this.#atvValues();
+    return Object.keys(current).some(key => current[key] !== this.#atvSnapshot[key]);
+  }
+
+  /**
+   * Por qué NO se puede guardar la sección, o null si sí se puede. El texto es el
+   * del tooltip, así que tiene que responder "¿cuándo sí podré usarlo?"
+   * (CLAUDE.md §2).
+   *
+   * Las dos concordancias con la identificación de la compañía eran toasts que
+   * saltaban recién al apretar el botón; como son condiciones que se pueden
+   * evaluar mientras se escribe, ahora deshabilitan el botón y explican por qué
+   * (§26).
+   *
+   * @returns {?string}
+   */
+  #atvSaveBlockedReason() {
+    if (!this.#atvIsDirty()) return 'No hay cambios por guardar en esta sección';
+
+    const identification = this.identificationTarget.value;
+    const certPath       = this.certPathTarget.value;
+    const tokenUsr       = this.tokenUsrTarget.value.replace(/[^0-9]/g, '');
+
+    if (certPath && !certPath.includes(identification)) {
+      return 'El nombre del certificado debe contener la identificación de la compañía';
+    }
+    if (tokenUsr && !tokenUsr.includes(identification)) {
+      return 'El token de usuario debe contener la identificación de la compañía';
+    }
+
+    return null;
+  }
+
+  #refreshAtvSaveState() {
+    if (!this.hasBtnSaveAtvTarget) return;
+
+    this.#paintSectionSaveButton(
+      this.btnSaveAtvTarget,
+      this.hasBtnSaveAtvWrapTarget ? this.btnSaveAtvWrapTarget : null,
+      this.#atvSaveBlockedReason(),
+      'Actualizar los datos de Hacienda de la compañía',
+    );
+  }
+
+  /** Cambió un campo visible de la sección (token de usuario). */
+  onAtvChange() { this.#refreshAtvSaveState(); }
+
+  // Escribir en un campo de secreto es lo que lo hace viajar en el PATCH: sin
+  // esta marca, la clave no se manda y el valor guardado queda como está.
+  onCertPinInput() {
+    this.#certPinTouched = true;
+    this.#refreshAtvSaveState();
+  }
+
+  onTokenPassInput() {
+    this.#tokenPassTouched = true;
+    this.#refreshAtvSaveState();
   }
 
   // ── Rellenar selects ───────────────────────────────────────────────────────
@@ -515,7 +880,12 @@ export default class extends Controller {
 
   onCertFileSelected() {
     const file = this.certFileInputTarget.files[0];
-    if (!file) { this.certPathTarget.value = ''; this.certPathTextTarget.value = ''; return; }
+    if (!file) {
+      this.certPathTarget.value     = '';
+      this.certPathTextTarget.value = '';
+      this.#refreshAtvSaveState();
+      return;
+    }
 
     if (!file.name.endsWith('.p12') && !file.name.endsWith('.pfx')) {
       this.certFileInputTarget.value = '';
@@ -526,6 +896,7 @@ export default class extends Controller {
     this.#selectedCertFile        = file;
     this.certPathTarget.value     = file.name;
     this.certPathTextTarget.value = file.name;
+    this.#refreshAtvSaveState();
 
     if (!this.certPinTarget.value) {
       showAlert({ type: ALERT_TYPES.WARNING, title: 'Pin requerido', message: 'Para obtener la fecha de expiración del certificado debe colocar el PIN.' });
@@ -534,6 +905,17 @@ export default class extends Controller {
     this.#getCertExpireDate();
   }
 
+  /**
+   * Le pide al servidor la fecha de vencimiento del certificado recién elegido.
+   *
+   * El PIN va en el CUERPO, no en la query string como en el .NET: un secreto en
+   * la URL queda en el historial del navegador y en el log de accesos, donde
+   * `filter_parameters` no llega.
+   *
+   * Es solo un adelanto para la pantalla: acá el archivo se abre y se descarta.
+   * La fecha que queda guardada la deriva el PATCH de la sección del archivo que
+   * recibe, no de esto.
+   */
   async #getCertExpireDate() {
     const pin  = this.certPinTarget.value;
     const file = this.#selectedCertFile;
@@ -541,25 +923,19 @@ export default class extends Controller {
 
     const fd = new FormData();
     fd.append('file', file);
+    fd.append('CertPin', pin);
 
     try {
-      const resp = await fetch(
-        `/api/Companies/CheckCertExpireDate?CertPin=${encodeURIComponent(pin)}`,
-        { method: 'POST', headers: this.#authHeaders(), body: fd }
-      );
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const json = await resp.json();
+      const json = await this.#railsFetch('/api/certificate_inspections', { method: 'POST', body: fd });
 
-      this.certExpireDateTarget.value = json.Data?.CertExpireDate
-        ? this.#formatDateTime(json.Data.CertExpireDate)
-        : '';
-
-      if (!json.Data?.CertExpireDate) {
-        showAlert({ type: ALERT_TYPES.WARNING, title: 'Certificado', message: json.Message || 'No se pudo obtener la fecha de expiración.' });
-      }
+      this.#showCertExpiresAt(json.Data?.CertExpireDate);
     } catch (err) {
-      this.certExpireDateTarget.value = '';
+      this.#showCertExpiresAt(null);
       showAlert({ type: ALERT_TYPES.ERROR, title: 'Error de certificado', message: err.message });
+    } finally {
+      // La fecha es un campo de la sección: cambie o falle, el botón tiene que
+      // reflejar el estado real.
+      this.#refreshAtvSaveState();
     }
   }
 
@@ -870,15 +1246,27 @@ export default class extends Controller {
 
   // Muestra/oculta el ícono rojo palpitante en el encabezado de la sección y
   // rellena el tooltip con el detalle de las consultas que fallaron.
+  /**
+   * El aviso de la sección "Factura a Proveedor": las listas que la alimentan
+   * (almacenes, impuestos, monedas) no se pudieron traer de SAP.
+   *
+   * Usa la misma insignia que el vencimiento del certificado (§33). Antes era un
+   * `material-icons` con `animate-pulse` y un tooltip propio hecho con
+   * `group-hover`; quedó de antes de que la convención existiera.
+   *
+   * Rojo porque el fallo ya ocurrió, pero con el latido normal: la sección queda
+   * incompleta, que es menos grave que un certificado vencido —eso frena la
+   * emisión— y el ritmo rápido se reserva para eso.
+   */
   #setSapListError(errors) {
     if (!this.hasSapErrorIconTarget) return;
-    if (errors?.length) {
-      this.sapErrorDetailTarget.textContent = errors.join('\n');
-      this.sapErrorIconTarget.classList.remove('hidden');
-    } else {
-      this.sapErrorDetailTarget.textContent = '';
-      this.sapErrorIconTarget.classList.add('hidden');
-    }
+
+    this.#paintAlertBadge(this.sapErrorIconTarget, errors?.length ? {
+      icon: 'priority_high', tone: ALERT_TONES.error, urgent: false,
+      // Con ' · ' y no con salto de línea: el tooltip flotante normaliza los
+      // espacios en blanco (§25) y los renglones quedarían pegados.
+      message: `No se pudieron cargar las listas de SAP de esta sección. ${errors.join(' · ')}`,
+    } : null);
   }
 
   // ── Recargar listas SAP ────────────────────────────────────────────────────
@@ -997,25 +1385,75 @@ export default class extends Controller {
     finally { this.#hideLoader(this.loaderAdditionalTarget); }
   }
 
+  /**
+   * Guarda SOLO la sección "Datos de Conexión de Hacienda (ATV)", contra su
+   * propio endpoint (`PATCH /api/companies/:id/tax_authority`).
+   *
+   * El cuerpo es multipart porque la sección incluye el certificado. El servidor
+   * lo guarda en disco y deriva de él la ruta y el vencimiento; esta pantalla no
+   * manda ninguno de los dos.
+   */
   async saveAtvData() {
-    const identification = this.identificationTarget.value;
-    const certPath       = this.certPathTarget.value;
-    const tokenUsr       = this.tokenUsrTarget.value.replace(/[^0-9]/g, '');
+    // Defensa en profundidad: la UI ya deshabilita el botón, pero se puede
+    // manipular (CLAUDE.md §26).
+    const blocked = this.#atvSaveBlockedReason();
+    if (blocked) {
+      showToast(blocked, 'info');
+      return;
+    }
 
-    if (certPath && !certPath.includes(identification)) {
-      showToast('El nombre del certificado no coincide con la identificación de la compañía.', 'error');
-      return;
-    }
-    if (tokenUsr && !tokenUsr.includes(identification)) {
-      showToast('El token del usuario no coincide con la identificación de la compañía.', 'error');
-      return;
-    }
     this.#showLoader(this.loaderAtvTarget);
     try {
-      await this.#sendEditRequest(2);
-      showToast('Datos de Hacienda actualizados con éxito.', 'success');
-    } catch (err) { showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar datos de Hacienda', message: err.message }); }
-    finally { this.#hideLoader(this.loaderAtvTarget); }
+      const json = await this.#railsFetch(
+        `/api/companies/${this.companyIdValue}/tax_authority`,
+        { method: 'PATCH', body: this.#atvPayload() },
+      );
+
+      // Se repinta con lo que quedó guardado, no con lo que había en pantalla: es
+      // además la única forma de volver a saber si hay secretos guardados, porque
+      // sus valores no vuelven, y de ver el nombre y el vencimiento que el
+      // servidor sacó del archivo.
+      if (json.Data) {
+        this.#companyData = { ...this.#companyData, ...json.Data };
+        this.#fillAtvSection(this.#companyData);
+      }
+
+      showToast(json.Message || 'Datos de Hacienda actualizados con éxito.', 'success');
+    } catch (err) {
+      // Error de escritura → modal, no toast (CLAUDE.md §9).
+      showAlert({
+        type:    ALERT_TYPES.ERROR,
+        title:   'Error al guardar datos de Hacienda',
+        message: err.message,
+      });
+    } finally {
+      this.#hideLoader(this.loaderAtvTarget);
+    }
+  }
+
+  /**
+   * El cuerpo del PATCH de la sección — `FormData`, porque puede llevar el
+   * certificado.
+   *
+   * Los dos secretos viajan SOLO si el usuario los escribió: la clave ausente le
+   * dice al endpoint que los deje como están. Sin esa regla, guardar la sección
+   * para cambiar el token de usuario borraría el PIN, porque el input se pinta
+   * vacío (el valor guardado no vuelve nunca del servidor).
+   *
+   * El nombre del certificado y su vencimiento NO se mandan: los deriva el
+   * servidor del archivo. Mandar el nombre era además peligroso — la columna
+   * guarda la ruta que el servicio de firma abre, y pisarla con `cert.p12` a
+   * secas dejaba a la compañía sin poder emitir.
+   */
+  #atvPayload() {
+    const fd = new FormData();
+    fd.append('TokenUsr', this.tokenUsrTarget.value.trim());
+
+    if (this.#certPinTouched)   fd.append('CertPin',   this.certPinTarget.value);
+    if (this.#tokenPassTouched) fd.append('TokenPass', this.tokenPassTarget.value);
+    if (this.#selectedCertFile) fd.append('file',      this.#selectedCertFile);
+
+    return fd;
   }
 
   async saveAttData() {
@@ -1206,6 +1644,10 @@ export default class extends Controller {
       this.btnRegisterTarget.disabled = !this.#validateGeneralForm();
     }
     this.#refreshGeneralSaveState();
+    // La identificación de la compañía vive en "Datos Generales" pero condiciona
+    // el guardado de la sección de Hacienda (el nombre del certificado y el token
+    // tienen que contenerla), así que editarla también repinta ese botón.
+    this.#refreshAtvSaveState();
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1236,14 +1678,18 @@ export default class extends Controller {
    * .NET siguen usando `#apiFetch`.
    */
   async #railsFetch(url, options = {}) {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Accept': 'application/json',
-        ...getApiHeaders(),
-        ...(options.headers || {}),
-      },
-    });
+    const headers = {
+      'Accept': 'application/json',
+      ...getApiHeaders(),
+      ...(options.headers || {}),
+    };
+
+    // `getApiHeaders()` fija `Content-Type: application/json`. Un cuerpo
+    // FormData trae el suyo con el boundary que el browser genera: dejarle el
+    // de JSON encima hace que el servidor no encuentre las partes.
+    if (options.body instanceof FormData) delete headers['Content-Type'];
+
+    const response = await fetch(url, { ...options, headers });
 
     if (!response.ok) {
       const body = await response.json().catch(() => null);

@@ -57,10 +57,14 @@ module Api
 
     # GET /api/companies/:id
     #
-    # Los datos generales de una compañía, para el formulario de edición. Todo sale
+    # Los datos de una compañía, para el formulario de edición. La lectura es UNA
+    # sola aunque el guardado esté partido en un endpoint por sección. Todo sale
     # de la tabla `companies`: el bloque del emisor ante Hacienda estuvo un tiempo
     # como UDFs de `OADM` y volvió a la base de la aplicación, así que la
     # respuesta ya no necesita hablar con SAP para armarse.
+    #
+    # Los dos secretos de la sección de Hacienda (el PIN del certificado y la
+    # contraseña del token) NO viajan: se devuelve solo si hay uno guardado.
     #
     # Reemplaza `GET /api/companies/:id` del .NET, que devolvía las 42 columnas de
     # las dos tablas del legado.
@@ -135,11 +139,12 @@ module Api
     # Hacienda (`EmsrNombre`, `CodigoActividad`) aunque las columnas se llamen en
     # inglés: es el contrato que ya consume el formulario.
     #
-    # ⚠️ Los campos marcados como de "Datos Generales" tienen que coincidir con
-    # los que acepta `Api::Companies::GeneralController`. Si uno se agrega
-    # acá y no allá, el formulario lo muestra, el usuario lo edita, guarda, y no
-    # pasa nada — sin error. `spec/requests/api/company_general_spec.rb` compara
-    # las dos listas.
+    # ⚠️ Los campos de cada sección tienen que coincidir con los que acepta el
+    # controller de ESA sección (`Api::Companies::GeneralController`,
+    # `Api::Companies::TaxAuthorityController`). Si uno se agrega acá y no allá,
+    # el formulario lo muestra, el usuario lo edita, guarda, y no pasa nada — sin
+    # error. `company_general_spec.rb` y `company_tax_authority_spec.rb` comparan
+    # las dos listas de su sección.
     def serialize_detail(company)
       serialize(company).merge(
         # ── Sección "Datos Generales" ────────────────────────────────────────
@@ -155,6 +160,21 @@ module Api
 
         # El nombre comercial ES `name`: no hay columna aparte, a propósito.
         EmsrNombreComercial: company.name,
+
+        # ── Sección "Datos de Conexión de Hacienda (ATV)" ────────────────────
+        # El PIN del certificado y la contraseña del token NO salen de acá: están
+        # cifrados y no se le devuelven a nadie. `HasCertPin` / `HasTokenPass` es
+        # lo único que el formulario necesita de ellos — con eso distingue "no hay
+        # PIN configurado" de "hay uno y no se muestra".
+        #
+        # Del certificado sale el NOMBRE del archivo, no la ruta: la ruta absoluta
+        # en el servidor es infraestructura y el cliente ya no puede escribirla
+        # (la deriva `Certificates::Store` a partir de la cédula).
+        CertFileName:   Certificates::Store.file_name(company.cert_path),
+        CertExpireDate: company.cert_expires_at,
+        TokenUsr:       company.token_user,
+        HasCertPin:     company.cert_pin_stored?,
+        HasTokenPass:   company.token_password_stored?,
 
         # ── Secciones que todavía no tienen su endpoint ──────────────────────
         # Se devuelven porque la lectura del formulario es una sola; se van a

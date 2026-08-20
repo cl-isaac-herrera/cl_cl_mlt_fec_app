@@ -276,7 +276,14 @@
          data-company-form-target="sectionAtv"
          class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
   <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
-    <span class="text-sm font-semibold text-gray-700">Datos de Conexión de Hacienda (ATV)</span>
+    <span class="flex items-center gap-2">
+      <span class="text-sm font-semibold text-gray-700">Datos de Conexión de Hacienda (ATV)</span>
+      <%# Aviso de vencimiento del certificado. Nace oculto y lo pinta            %>
+      <%# `#renderCertAlert` según la fecha que devuelve el API: ámbar los días   %>
+      <%# previos, rojo una vez vencido. Va en el <summary> a propósito — se ve   %>
+      <%# con la sección cerrada, que es cuando hace falta que avise.             %>
+      <span data-company-form-target="certAlert" class="hidden"></span>
+    </span>
     <span class="material-icons text-gray-400 text-base">expand_more</span>
   </summary>
 
@@ -292,14 +299,16 @@
     </svg>
   </div>
 
-    <%# CertPin %>
+    <%# CertPin — el valor guardado NO se devuelve al consultar (está cifrado y  %>
+    <%# es un secreto), así que el campo siempre arranca vacío. Si la compañía   %>
+    <%# ya tiene uno, el JS lo dice en el placeholder: escribir lo reemplaza.    %>
     <div class="flex flex-col gap-1">
       <label class="text-xs font-medium text-gray-600">Pin del Certificado</label>
       <div class="relative flex items-center">
         <input type="password"
                data-company-form-target="certPin"
                data-testid="field-cert-pin"
-               data-action="click->company-form#onCertPinClick blur->company-form#onCertPinBlur keyup.enter->company-form#onCertPinEnter"
+               data-action="click->company-form#onCertPinClick blur->company-form#onCertPinBlur keyup.enter->company-form#onCertPinEnter input->company-form#onCertPinInput"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         <button type="button"
                 data-action="click->company-form#toggleCertPin"
@@ -360,16 +369,18 @@
       <input type="text"
              data-company-form-target="tokenUsr"
              data-testid="field-token-usr"
+             data-action="input->company-form#onAtvChange"
              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
     </div>
 
-    <%# TokenPass %>
+    <%# TokenPass — mismo trato que el pin: cifrado, no vuelve al consultar.     %>
     <div class="flex flex-col gap-1">
       <label class="text-xs font-medium text-gray-600">Token Password</label>
       <div class="relative flex items-center">
         <input type="password"
                data-company-form-target="tokenPass"
                data-testid="field-token-pass"
+               data-action="input->company-form#onTokenPassInput"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         <button type="button"
                 data-action="click->company-form#toggleTokenPass"
@@ -380,16 +391,26 @@
       </div>
     </div>
 
-    <%# Botón guardar sección (solo edición) %>
+    <%# Botón guardar sección (solo edición). Nace deshabilitado y se habilita   %>
+    <%# cuando hay algo cambiado en ESTA sección (y el nombre del certificado y  %>
+    <%# el token concuerdan con la identificación de la compañía). El motivo de  %>
+    <%# estar deshabilitado va en el `data-tooltip` del <span>, que el JS         %>
+    <%# reescribe según el caso — un <button disabled> no emite eventos de mouse %>
+    <%# (§2 y §26).                                                              %>
     <div data-company-form-target="btnSaveAtvContainer"
          class="hidden sm:col-span-2 flex justify-end pt-2">
-      <button type="button"
-              data-action="click->company-form#saveAtvData"
-              data-testid="btn-save-atv"
-              class="inline-flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
-        <span class="material-icons text-base">save</span>
-        Actualizar datos de Hacienda
-      </button>
+      <span data-company-form-target="btnSaveAtvWrap"
+            data-tooltip="No hay cambios por guardar en esta sección">
+        <button type="button"
+                data-action="click->company-form#saveAtvData"
+                data-company-form-target="btnSaveAtv"
+                data-testid="btn-save-atv"
+                disabled
+                class="inline-flex items-center gap-1 px-4 py-2 bg-gray-300 text-gray-500 text-sm font-medium rounded-lg transition-colors cursor-not-allowed pointer-events-none">
+          <span class="material-icons text-base">save</span>
+          Actualizar datos de Hacienda
+        </button>
+      </span>
     </div>
   </div>
 </details>
@@ -562,16 +583,13 @@
     <span class="flex items-center gap-2">
       <span class="text-sm font-semibold text-gray-700">Datos para Factura a Proveedor</span>
 
-      <%# Ícono de error — se muestra cuando fallan las consultas SAP (almacén, impuestos, monedas) %>
+      <%# Aviso: fallaron las consultas SAP (almacenes, impuestos, monedas) que  %>
+      <%# alimentan esta sección. Nace oculto y lo pinta `#setSapListError` con  %>
+      <%# la misma insignia que el vencimiento del certificado (§33): el detalle %>
+      <%# de qué falló va en el tooltip.                                          %>
       <span data-company-form-target="sapErrorIcon"
             data-testid="sap-error-icon"
-            class="hidden relative group">
-        <span class="material-icons text-red-600 text-base animate-pulse cursor-help align-middle">error</span>
-        <span data-company-form-target="sapErrorDetail"
-              class="pointer-events-none absolute left-1/2 top-full z-20 mt-1 -translate-x-1/2 hidden group-hover:block
-                     whitespace-pre-line rounded-md bg-gray-900 px-3 py-2 text-xs font-normal text-white shadow-lg
-                     w-64 normal-case"></span>
-      </span>
+            class="hidden"></span>
     </span>
     <span class="material-icons text-gray-400 text-base">expand_more</span>
   </summary>

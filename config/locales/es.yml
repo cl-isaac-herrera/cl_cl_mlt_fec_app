@@ -96,6 +96,12 @@ es:
         default_warehouse: "El almacén por defecto"
         email_sender_type: "El nombre para el envío de correos"
         freight_type: "El manejo de otros cargos"
+        # Sección "Datos de Conexión de Hacienda (ATV)".
+        cert_path: "El nombre del certificado"
+        cert_pin: "El pin del certificado"
+        cert_expires_at: "La fecha de expiración del certificado"
+        token_user: "El token de usuario"
+        token_password: "El token password"
       user:
         email: "El correo"
         name: "El nombre"

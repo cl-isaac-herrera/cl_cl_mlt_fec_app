@@ -1566,6 +1566,9 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 |---|---|
 | `GET /api/Companies/GetCompanies?ComercialName=&...` | `GET /api/companies` |
 | `GET /api/Companies/GetCertExpireDateAlarm?companyId=N` | `GET /api/certificate_alarm` ⚠️ sin companyId (sale de la sesión) |
+| `PATCH /api/Companies?groupId=N&action=N` (el form entero) | `PATCH /api/companies/:id/general`, `PATCH /api/companies/:id/tax_authority` — uno por sección |
+| `POST /api/Companies/CheckCertExpireDate?CertPin=…` | `POST /api/certificate_inspections` ⚠️ el PIN pasa de la query string al cuerpo |
+| `GET /api/companies/:id/certificate` (archivo del disco .NET) | `GET /api/companies/:id/certificate` — mismo path, ahora nativo (`Certificates::Store`) |
 | `GET /api/Permission/GetPermsByUser?companyId=N` | `GET /api/permissions` |
 | `GET /api/User/GetUserInfo` | `GET /api/profile` |
 | `PATCH /api/User/profile-info` | `PATCH /api/profile` |
@@ -2161,3 +2164,77 @@ Cuatro cosas que hay que saber antes de correrlo:
 - **Los manifiestos se conservan, no se borran.** `delete_field` reporta `:not_found` en vez
   de fallar cuando el objetivo ya no existe, así que volver a correr uno viejo es seguro y
   sirve de auditoría de qué se quitó y cuándo.
+
+---
+
+## 33. Íconos de aviso que laten — `.cl-beat`
+
+Un aviso que tiene que encontrar el ojo sin abrir nada usa el ícono con la clase
+**`.cl-beat`**, definida en `app/assets/tailwind/application.css`. En el formulario de
+compañías hay dos: el vencimiento del certificado digital ("Hacienda (ATV)") y las listas de
+SAP que no cargaron ("Factura a Proveedor").
+
+Las dos las pinta `#paintAlertBadge` en `company_form_controller.js`, que es el **único**
+lugar que arma esas clases. Al agregar un aviso nuevo, pasar por ahí: con cada sección
+armando su propio HTML se van separando sin que nadie lo note — que es justo lo que había
+pasado con el de "Factura a Proveedor" (usaba `animate-pulse`, `material-icons` sin disco y
+un tooltip propio con `group-hover`).
+
+El ícono va dentro de un **disco circular lleno** — una superficie sólida, no un aro — del
+mismo tono pero apagado, con el ícono encima en el tono fuerte. Así se lee como una insignia
+y no como un borde más del encabezado.
+
+```html
+<%# Por vencer %>
+<span class="cl-beat items-center justify-center h-6 w-6 rounded-full flex-shrink-0
+             text-yellow-700 bg-yellow-100"
+      data-tooltip="El certificado digital vence en 5 días (01/05/2027)...">
+  <span class="material-symbols-rounded" style="font-size:16px; line-height:1">warning</span>
+</span>
+
+<%# Ya vencido — mismo latido, al doble de ritmo %>
+<span class="cl-beat cl-beat-urgent items-center justify-center h-6 w-6 rounded-full flex-shrink-0
+             text-red-600 bg-red-200"
+      data-tooltip="El certificado digital venció el ...">
+  <span class="material-symbols-rounded" style="font-size:16px; line-height:1">priority_high</span>
+</span>
+```
+
+### La familia es `material-symbols-rounded`, no `material-icons`
+
+El `warning` de `material-icons` es un triángulo de puntas en ángulo vivo. La variante de
+puntas redondeadas está en **Material Symbols Rounded**, que `protected.html.erb` carga
+aparte y **subseteada con `icon_names`** — la familia completa son cientos de KB.
+
+> **Al usar un ícono nuevo de esta familia hay que agregarlo a `icon_names` en el layout.**
+> Si no, la fuente no lo trae y en su lugar se ve el texto de la ligadura (`warning` como
+> palabra). `display=block` está puesto para que ese texto no aparezca mientras carga.
+
+Adentro del anillo, el vencido usa **`priority_high`** (el signo solo) y no `error`: ese ya
+es un círculo relleno y quedaría un círculo dentro de otro.
+
+### Reglas
+
+- **No usar `animate-pulse` ni `animate-ping` de Tailwind para esto.** El primero solo baja
+  la opacidad —el ícono se apaga en vez de llamar la atención— y el segundo escala hacia
+  afuera y desaparece, porque está pensado para un halo detrás de otro elemento.
+- **Severidad por color e ícono, no por movimiento:** amarillo `warning` para lo que va a
+  pasar, rojo `priority_high` para lo que ya pasó. `.cl-beat-urgent` solo acelera el latido
+  (0.8s vs 1.6s); por sí solo no distingue nada para quien no percibe el movimiento.
+- **El disco claro y el ícono oscuro, no al revés.** El par es `bg-yellow-100` +
+  `text-yellow-700`: un disco cargado con el ícono en un tono cercano los funde y el
+  triángulo deja de leerse — fue el problema con la escala `amber`.
+- **Siempre con `data-tooltip`** que explique el motivo con su fecha (§2). Un ícono que late
+  sin decir por qué obliga a adivinar.
+- El aviso va en el **encabezado de la sección**, visible con la sección plegada: si hay que
+  abrirla para enterarse, no es un aviso.
+- La animación se apaga sola con `prefers-reduced-motion`. El color y el ícono se quedan —lo
+  que se quita es el movimiento, no la información.
+
+### El tooltip necesita quien lo pinte
+
+`data-tooltip` **no hace nada por sí solo** fuera de una tabla Tabulator: lo renderiza el
+`setupTooltip()` de `TabulatorController`, y una pantalla sin tabla no lo hereda. En esos
+casos hay que registrar la delegación local (`#attachTooltip`, con el `place()` con clamp de
+§25) — es lo que hace `company_form_controller.js`. Sin eso el atributo queda puesto y el
+usuario nunca ve el motivo, que es justamente lo que §26 exige mostrar.
