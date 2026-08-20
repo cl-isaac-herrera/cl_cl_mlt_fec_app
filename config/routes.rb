@@ -27,7 +27,7 @@ Rails.application.routes.draw do
       # vive en `CompanySections`.
       #
       # `resource` singular y sin id: la sección pertenece a la compañía del
-      # path, no es una colección (§28). Las otras cuatro secciones se agregan
+      # path, no es una colección (§28). Las otras tres secciones se agregan
       # acá cuando se migren (`TODOS.md` → Compañías).
       # `controller:` explícito porque `resource` singular busca el controller en
       # PLURAL (`resource :profile` → `ProfilesController`), y estos nombres de
@@ -42,10 +42,30 @@ Rails.application.routes.draw do
       resource :tax_authority, only: [:update], module: :companies,
                                controller: 'tax_authority'
 
+      # Sección "Adjuntos de la compañía": el logo y el formato de impresión.
+      # `attachments` en plural aunque sea `resource` singular: es UN conjunto
+      # —los adjuntos de esta compañía—, no una colección de recursos con id.
+      #
+      # El cuerpo es multipart, igual que el de Hacienda: los dos campos de la
+      # sección son archivos, y la parte que no venga queda como está.
+      resource :attachments, only: [:update], module: :companies,
+                             controller: 'attachments'
+
       # Descarga del `.p12` de la compañía. Se puede servir desde acá porque el
       # archivo ya lo guarda esta aplicación; antes vivía en el disco del .NET.
       resource :certificate, only: [:show], module: :companies,
                              controller: 'certificate'
+
+      # Descarga de los dos adjuntos, por el mismo motivo. `print_format` en
+      # `snake_case` reemplaza al `print-format` del .NET (§28).
+      #
+      # Sin `destroy`: el botón "Restablecer formato" necesita el formato por
+      # defecto de la aplicación, que todavía no tiene tabla — y vaciar la columna
+      # no es un equivalente, deja a la compañía sin poder emitir. Ver el
+      # controller y `TODOS.md` → Compañías.
+      resource :logo, only: [:show], module: :companies, controller: 'logo'
+      resource :print_format, only: [:show], module: :companies,
+                              controller: 'print_format'
     end
 
     # `index` son los permisos EFECTIVOS del usuario de la sesión; `catalog` es

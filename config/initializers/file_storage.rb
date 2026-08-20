@@ -5,17 +5,17 @@
 # Configurar en .env (ver .env.example)
 # ---------------------------------------------------------------
 #
-# Hoy la usa el certificado digital de cada compañía, que se guarda en
-# `{FILES_BASE_PATH}/{cédula}/{archivo.p12}` (ver `Certificates::Store`). El
-# logo y el formato de impresión van a colgar de la misma raíz cuando se migre
-# la sección "Adjuntos".
+# De acá cuelgan los tres archivos de cada compañía, en
+# `{FILES_BASE_PATH}/{cédula}/` (ver `CompanyFiles::Store` y `CLAUDE.md` §34):
+# el certificado digital, el logo y el formato de impresión.
 #
-# **Es una ruta local, no un bucket, y eso es a propósito:** el `.p12` no lo lee
-# solo esta aplicación — el servicio de firma abre el archivo por su ruta
-# (`new X509Certificate2(CertPath, CertPin)`) para firmar los XML. Mientras ese
-# servicio siga siendo un proceso aparte, lo que se guarda en `companies.cert_path`
-# tiene que ser una ruta que él pueda abrir; un blob de Active Storage con nombre
-# de hash no le sirve.
+# **Es una ruta local, no un bucket, y eso es a propósito:** ninguno de los tres
+# lo lee solo esta aplicación. El servicio de firma abre el `.p12` por su ruta
+# (`new X509Certificate2(CertPath, CertPin)`) para firmar los XML, el de correo
+# adjunta el logo (`new Attachment(companyLogoPath)`) y el generador del PDF abre
+# el `.rpt`. Mientras esos servicios sigan siendo procesos aparte, lo que se
+# guarda en `companies.{cert,logo,print_format}_path` tiene que ser una ruta que
+# ellos puedan abrir; un blob de Active Storage con nombre de hash no les sirve.
 #
 # El valor de producción termina en la carpeta del ambiente, por ejemplo:
 #   FILES_BASE_PATH='C:\inetpub\wwwroot\CL\Clavisco\Multicompania\fe\test\files'

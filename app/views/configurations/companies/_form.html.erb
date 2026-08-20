@@ -436,7 +436,9 @@
     </svg>
   </div>
 
-    <%# Logo %>
+    <%# Logo. El campo muestra el NOMBRE del archivo, no la ruta: la columna     %>
+    <%# guarda la ruta absoluta que abre el servicio de correo para incrustarlo  %>
+    <%# en el mensaje, y el cliente ya no puede escribirla.                      %>
     <div class="flex flex-col gap-1">
       <label class="text-xs font-medium text-gray-600">Logo de la Compañía</label>
       <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-gray-50">
@@ -452,20 +454,30 @@
                class="hidden">
         <button type="button"
                 data-action="click->company-form#triggerLogoUpload"
-                class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0"
-                title="Seleccionar logo">
+                data-tooltip="Seleccionar el logo de la compañía"
+                class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0">
           <span class="material-icons text-base leading-none">attach_file</span>
         </button>
-        <button type="button"
-                data-action="click->company-form#downloadLogo"
-                class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0"
-                title="Descargar logo">
-          <span class="material-icons text-base leading-none">download</span>
-        </button>
+        <%# Nace deshabilitado: la descarga tiene su propio permiso y solo se     %>
+        <%# habilita si además hay un logo guardado. El motivo va en el <span>    %>
+        <%# envolvente porque un <button disabled> no emite eventos de mouse      %>
+        <%# (§2 y §26).                                                           %>
+        <span data-company-form-target="btnDownloadLogoWrap"
+              class="self-stretch flex"
+              data-tooltip="No cuenta con permisos para descargar el logo de la compañía">
+          <button type="button"
+                  data-company-form-target="btnDownloadLogo"
+                  data-action="click->company-form#downloadLogo"
+                  data-testid="btn-download-logo"
+                  disabled
+                  class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-300 cursor-not-allowed pointer-events-none transition-colors flex-shrink-0">
+            <span class="material-icons text-base leading-none">download</span>
+          </button>
+        </span>
       </div>
     </div>
 
-    <%# Formato de Impresión %>
+    <%# Formato de Impresión (.rpt de Crystal Reports) %>
     <div class="flex flex-col gap-1">
       <label class="text-xs font-medium text-gray-600">Formato de Impresión</label>
       <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-gray-50">
@@ -481,36 +493,57 @@
                class="hidden">
         <button type="button"
                 data-action="click->company-form#triggerPrintFormatUpload"
-                class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0"
-                title="Seleccionar formato">
+                data-tooltip="Seleccionar el formato de impresión de la compañía"
+                class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0">
           <span class="material-icons text-base leading-none">attach_file</span>
         </button>
-        <button type="button"
-                data-action="click->company-form#downloadPrintFormat"
-                class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0"
-                title="Descargar formato">
-          <span class="material-icons text-base leading-none">download</span>
-        </button>
-        <button type="button"
-                data-company-form-target="btnResetFormat"
-                data-action="click->company-form#resetPrintFormat"
-                class="hidden self-stretch flex items-center px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0"
-                title="Restablecer formato de impresión">
-          <span class="material-icons text-base leading-none">refresh</span>
-        </button>
+        <span data-company-form-target="btnDownloadPrintFormatWrap"
+              class="self-stretch flex"
+              data-tooltip="No cuenta con permisos para descargar el formato de impresión de la compañía">
+          <button type="button"
+                  data-company-form-target="btnDownloadPrintFormat"
+                  data-action="click->company-form#downloadPrintFormat"
+                  data-testid="btn-download-print-format"
+                  disabled
+                  class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-300 cursor-not-allowed pointer-events-none transition-colors flex-shrink-0">
+            <span class="material-icons text-base leading-none">download</span>
+          </button>
+        </span>
+        <%# Restablecer NO se oculta cuando falta el permiso: se deshabilita con  %>
+        <%# el motivo (§26). Es lo único de esta sección que todavía va al .NET.  %>
+        <span data-company-form-target="btnResetFormatWrap"
+              class="self-stretch flex"
+              data-tooltip="No cuenta con permisos para restablecer el formato de impresión">
+          <button type="button"
+                  data-company-form-target="btnResetFormat"
+                  data-action="click->company-form#resetPrintFormat"
+                  data-testid="btn-reset-print-format"
+                  disabled
+                  class="self-stretch flex items-center px-2 border-l border-gray-200 text-gray-300 cursor-not-allowed pointer-events-none transition-colors flex-shrink-0">
+            <span class="material-icons text-base leading-none">refresh</span>
+          </button>
+        </span>
       </div>
     </div>
 
-    <%# Botón guardar sección (solo edición) %>
+    <%# Botón guardar sección (solo edición). Nace deshabilitado y se habilita   %>
+    <%# cuando hay al menos un archivo elegido en ESTA sección: los dos campos   %>
+    <%# muestran el nombre de lo que ya está guardado, así que sin un archivo    %>
+    <%# nuevo no hay nada que mandar.                                            %>
     <div data-company-form-target="btnSaveAttachmentsContainer"
          class="hidden sm:col-span-2 flex justify-end pt-2">
-      <button type="button"
-              data-action="click->company-form#saveAttData"
-              data-testid="btn-save-attachments"
-              class="inline-flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors">
-        <span class="material-icons text-base">save</span>
-        Actualizar adjuntos
-      </button>
+      <span data-company-form-target="btnSaveAttachmentsWrap"
+            data-tooltip="No hay cambios por guardar en esta sección">
+        <button type="button"
+                data-action="click->company-form#saveAttData"
+                data-company-form-target="btnSaveAttachments"
+                data-testid="btn-save-attachments"
+                disabled
+                class="inline-flex items-center gap-1 px-4 py-2 bg-gray-300 text-gray-500 text-sm font-medium rounded-lg transition-colors cursor-not-allowed pointer-events-none">
+          <span class="material-icons text-base">save</span>
+          Actualizar adjuntos
+        </button>
+      </span>
     </div>
   </div>
 </details>

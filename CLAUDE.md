@@ -1566,9 +1566,12 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 |---|---|
 | `GET /api/Companies/GetCompanies?ComercialName=&...` | `GET /api/companies` |
 | `GET /api/Companies/GetCertExpireDateAlarm?companyId=N` | `GET /api/certificate_alarm` ⚠️ sin companyId (sale de la sesión) |
-| `PATCH /api/Companies?groupId=N&action=N` (el form entero) | `PATCH /api/companies/:id/general`, `PATCH /api/companies/:id/tax_authority` — uno por sección |
+| `PATCH /api/Companies?groupId=N&action=N` (el form entero) | `PATCH /api/companies/:id/general`, `PATCH /api/companies/:id/tax_authority`, `PATCH /api/companies/:id/attachments` — uno por sección |
 | `POST /api/Companies/CheckCertExpireDate?CertPin=…` | `POST /api/certificate_inspections` ⚠️ el PIN pasa de la query string al cuerpo |
 | `GET /api/companies/:id/certificate` (archivo del disco .NET) | `GET /api/companies/:id/certificate` — mismo path, ahora nativo (`Certificates::Store`) |
+| `GET /api/companies/:id/logo` (archivo del disco .NET) | `GET /api/companies/:id/logo` — mismo path, ahora nativo (`Attachments::LogoStore`) |
+| `GET /api/companies/:id/print-format` | `GET /api/companies/:id/print_format` ⚠️ `snake_case`, no kebab |
+| `PATCH /api/Companies/ResetCompanyPrintFormat?companyId=N` | (no se migra todavía — necesita el formato por defecto de la aplicación, ver `TODOS.md`) |
 | `GET /api/Permission/GetPermsByUser?companyId=N` | `GET /api/permissions` |
 | `GET /api/User/GetUserInfo` | `GET /api/profile` |
 | `PATCH /api/User/profile-info` | `PATCH /api/profile` |
@@ -2238,3 +2241,129 @@ es un círculo relleno y quedaría un círculo dentro de otro.
 casos hay que registrar la delegación local (`#attachTooltip`, con el `place()` con clamp de
 §25) — es lo que hace `company_form_controller.js`. Sin eso el atributo queda puesto y el
 usuario nunca ve el motivo, que es justamente lo que §26 exige mostrar.
+
+---
+
+## 34. Archivos de una compañía — en DISCO, vía `CompanyFiles::Store`
+
+Una compañía tiene tres archivos: el certificado digital (`.p12`), el logo y el formato de
+impresión (`.rpt`). Los tres se guardan en el **disco del servidor**, bajo
+`{FILES_BASE_PATH}/{cédula}/`, y la columna correspondiente (`cert_path`, `logo_path`,
+`print_format_path`) guarda la **ruta absoluta**.
+
+```
+{FILES_BASE_PATH}/{cédula}/{archivo.p12}    ← nombre del archivo subido, limpiado
+{FILES_BASE_PATH}/{cédula}/logo.{ext}       ← nombre FIJO (`FIXED_BASENAME`)
+{FILES_BASE_PATH}/{cédula}/{formato.rpt}    ← nombre del archivo subido, limpiado
+```
+
+**El logo se guarda siempre como `logo.{extensión}`**, sin importar cómo lo haya llamado
+quien lo subió (`Logo Corporativo v3 (final).PNG` → `logo.png`): la carpeta de la compañía
+tiene un solo logo, con un nombre predecible, en vez de uno distinto por cada carga. Lo
+declara `FIXED_BASENAME` en la subclase. Ojo con la consecuencia: cambiar de extensión sí
+cambia la ruta (`logo.png` → `logo.jpg`), así que el anterior hay que borrarlo — con el
+mismo orden de operaciones de más abajo.
+
+> **Regla:** todo archivo de compañía pasa por una subclase de `CompanyFiles::Store`.
+> **Nunca Active Storage, nunca un bucket, nunca escribir el archivo a mano desde un
+> controller.**
+
+### Por qué no Active Storage
+
+Porque ninguno de los tres lo lee solo esta aplicación:
+
+| Archivo | Quién más lo abre | Cómo |
+|---|---|---|
+| `.p12` | Servicio de firma | `new X509Certificate2(CertPath, CertPin)` + watcher sobre el archivo |
+| `.rpt` | Generador del PDF | `CreatePdf(DocId, FEPrintFormat)`, y lo copia a un `temp/` al lado |
+| logo | Servicio de correo | `new Attachment(companyLogoPath)`, incrustado en el cuerpo del mail |
+
+Es un contrato entre procesos que comparten sistema de archivos. Un blob con nombre de hash
+—o un bucket— deja a esos servicios sin poder abrir nada. Por eso lo que se guarda es una
+ruta y no un identificador.
+
+### Lo que la clase base ya resuelve (no reimplementarlo)
+
+Nombre limpiado antes de tocar el disco (se descarta la carpeta que traiga el cliente),
+extensión validada, tope de tamaño, carpeta creada, sobrescritura del homónimo, y un
+`remove` que **solo borra dentro de la raíz configurada** — una compañía importada apunta al
+disco del servidor .NET y borrar ahí destruiría el archivo que ese servicio está usando.
+
+Una subclase declara nada más cinco constantes: `ALLOWED_EXTENSIONS`, `PATH_COLUMN`, `NOUN`
+(cómo se nombra el archivo en los mensajes), `MAX_BYTES` y `FIXED_BASENAME` (`nil` conserva
+el nombre subido). Se leen con `self.class::` en la base porque la búsqueda de una constante
+suelta es **léxica** y resolvería siempre la de la clase base.
+
+### La ruta NO se acepta del cuerpo, nunca
+
+El formulario muestra el **nombre** del archivo; la ruta es infraestructura. Aceptarla del
+cliente dejaba `logo.png` a secas en una columna que otro proceso lee como ruta absoluta —
+con el certificado eso dejaba a la compañía sin poder emitir. La respuesta devuelve
+`…FileName` (`CompanyFiles::Store.file_name`), no la ruta.
+
+### Orden de las operaciones al reemplazar
+
+1. Validar/abrir lo que haya que abrir (el PIN del `.p12`) **antes** de escribir, para que un
+   dato equivocado no deje un archivo tirado en el disco.
+2. Escribir el nuevo.
+3. Actualizar la fila. Si falla, **borrar lo que se acaba de escribir**: no lo apunta nadie.
+4. Recién entonces borrar el anterior, y solo si la ruta cambió (subir el mismo nombre
+   sobrescribe en su lugar, así que "la anterior" y "la nueva" son la misma).
+
+Con varios archivos en la misma petición (la sección "Adjuntos" manda dos), si el segundo
+falla hay que borrar el primero: quedó escrito y sin fila que lo referencie.
+
+### `print_format_path` no se puede vaciar
+
+El servicio de emisión **levanta** si la columna está vacía ("No se ha configurado un formato
+de impresion para FE"). Vaciarla deja a la compañía sin poder emitir, así que "restablecer el
+formato" tiene que **copiar** el formato por defecto y apuntar la columna al archivo nuevo —
+no borrar. Es la razón por la que ese botón todavía no se migró (`TODOS.md` → Compañías).
+
+---
+
+## 35. Git — se commitea en `main` y se pushea a `fork`
+
+Durante la migración este repositorio se trabaja **directo sobre `main`**, y el push va al
+remoto **`fork`**.
+
+```bash
+git checkout main        # si no se está ahí
+git add -A
+git commit -m "..."
+git push fork main
+```
+
+> **Regla:** **NO crear ramas de feature.** Cada tanda de trabajo es un commit sobre `main`
+> y un `git push fork main`. Nada de `feat/…`, nada de PRs entre ramas locales.
+
+### Los dos remotos no son intercambiables
+
+| Remoto | Repositorio | Para qué |
+|---|---|---|
+| `fork` | `cl-isaac-herrera/cl_cl_mlt_fec_app` | **Acá se pushea.** Es el fork de trabajo de la migración. |
+| `origin` | `Crisql/cl_cl_mlt_fec_app` | El repo de la organización. **No se pushea** desde acá. |
+
+`origin/main` va varios commits atrás a propósito: la migración avanza en el fork y la
+integración al repo de la organización es otra conversación, no un `git push` de paso.
+
+### Si aparece una rama de feature, se reintegra
+
+Ya pasó: dos secciones del formulario de compañías quedaron en
+`feat/companias-seccion-hacienda`. La salida es traerlas a `main` y seguir ahí, no abrir otra:
+
+```bash
+git checkout main
+git merge --ff-only feat/companias-seccion-hacienda
+git push fork main
+```
+
+`--ff-only` a propósito: si no puede avanzar en línea recta es que `main` se movió por otro
+lado, y eso hay que mirarlo antes de crear un merge commit sin querer.
+
+### Mensajes de commit
+
+`tipo(alcance): descripción en minúscula`, **sin tildes ni eñes en el asunto**
+(`feat(companias): migrar la seccion de Adjuntos`) — es la misma restricción de los títulos de
+issue del estándar global. El cuerpo sí lleva acentos y explica **por qué**, no qué: el diff
+ya dice qué cambió. Cierra con la línea `Co-Authored-By` cuando el commit lo hizo Claude.

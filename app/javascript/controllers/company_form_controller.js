@@ -75,9 +75,11 @@ export default class extends Controller {
 
     // Sección 4 - Adjuntos
     'logoName', 'logoFileInput',
+    'btnDownloadLogo', 'btnDownloadLogoWrap',
     'printFormatName', 'printFormatFileInput',
-    'btnResetFormat',
-    'btnSaveAttachmentsContainer',
+    'btnDownloadPrintFormat', 'btnDownloadPrintFormatWrap',
+    'btnResetFormat', 'btnResetFormatWrap',
+    'btnSaveAttachmentsContainer', 'btnSaveAttachments', 'btnSaveAttachmentsWrap',
 
     // Sección 5 - Códigos de actividad
     'sectionActivityCodes',
@@ -190,9 +192,6 @@ export default class extends Controller {
       this.btnSaveSapTarget.classList.remove('hidden');
       this.btnRegisterContainerTarget.classList.add('hidden');
 
-      if (this.#hasPerm('F_ResetCompanyFormat')) {
-        this.btnResetFormatTarget.classList.remove('hidden');
-      }
       if (this.#hasPerm('Configurations_Connections_Create')) {
         this.btnAddConnectionTarget.classList.remove('hidden');
       }
@@ -209,6 +208,14 @@ export default class extends Controller {
       this.btnRegisterContainerTarget.classList.remove('hidden');
       this.btnRegisterContainerTarget.classList.add('flex');
     }
+
+    // Los tres botones de la barra de los campos de "Adjuntos" (descargar logo,
+    // descargar formato, restablecer) nacen deshabilitados y los habilita
+    // `#refreshAttachmentsState()` según el permiso y según haya archivo
+    // guardado. No se ocultan cuando falta el permiso: se deshabilitan con el
+    // motivo (§26). Corre en los dos modos — en creación el motivo es que la
+    // compañía todavía no existe.
+    this.#refreshAttachmentsState();
   }
 
   #initEmailCc() {
@@ -230,7 +237,17 @@ export default class extends Controller {
       this.hasSapErrorIconTarget       ? this.sapErrorIconTarget       : null,
       this.hasBtnSaveGeneralWrapTarget ? this.btnSaveGeneralWrapTarget : null,
       this.hasBtnSaveAtvWrapTarget     ? this.btnSaveAtvWrapTarget     : null,
+      this.hasBtnSaveAttachmentsWrapTarget    ? this.btnSaveAttachmentsWrapTarget    : null,
+      this.hasBtnDownloadLogoWrapTarget       ? this.btnDownloadLogoWrapTarget       : null,
+      this.hasBtnDownloadPrintFormatWrapTarget ? this.btnDownloadPrintFormatWrapTarget : null,
+      this.hasBtnResetFormatWrapTarget        ? this.btnResetFormatWrapTarget        : null,
     ].filter(Boolean).forEach(el => this.#attachTooltip(el));
+
+    // Los dos botones de "adjuntar" están siempre habilitados, así que su
+    // tooltip va directo en el <button> y no en un <span> envolvente.
+    this.element
+      .querySelectorAll('[data-action*="triggerLogoUpload"], [data-action*="triggerPrintFormatUpload"]')
+      .forEach(el => this.#attachTooltip(el));
   }
 
   /**
@@ -307,12 +324,12 @@ export default class extends Controller {
    * Carga de la pantalla de edición.
    *
    * Solo se piden los datos de las secciones que están migradas — "Datos
-   * Generales" y "Hacienda (ATV)", que salen de la misma petición. Las consultas de las
-   * otras secciones (`warehouse`, `Tax`, `currencies`, `currency-map`,
-   * `activity-codes`) se quitaron: van al proxy .NET, que hoy responde 401, así
-   * que no llenaban nada — solo sumaban cinco peticiones fallidas y demoraban el
-   * cierre del loader. Vuelven cuando se migre cada sección (TODOS.md →
-   * Compañías).
+   * Generales", "Hacienda (ATV)" y "Adjuntos", que salen de la misma petición.
+   * Las consultas de las otras secciones (`warehouse`, `Tax`, `currencies`,
+   * `currency-map`, `activity-codes`) se quitaron: van al proxy .NET, que hoy
+   * responde 401, así que no llenaban nada — solo sumaban cinco peticiones
+   * fallidas y demoraban el cierre del loader. Vuelven cuando se migre cada
+   * sección (TODOS.md → Compañías).
    *
    * Cada loader se oculta cuando resuelve LO SUYO, no cuando resuelven todas: el
    * `Promise.allSettled` + un único `hideSectionLoaders()` hacía que la sección
@@ -348,20 +365,23 @@ export default class extends Controller {
       if (this.#companyData) {
         this.#fillGeneralSection(this.#companyData);
         this.#fillAtvSection(this.#companyData);
+        this.#fillAttachmentsSection(this.#companyData);
       }
     } finally {
       this.#hideLoader(this.loaderGeneralTarget);
       this.#hideLoader(this.loaderAtvTarget);
+      this.#hideLoader(this.loaderAttachmentsTarget);
     }
   }
 
   // Solo se muestran los loaders de las secciones que realmente cargan algo. Las
   // demás no piden nada todavía: dejarlas girando diría que están esperando
-  // datos. Las dos salen de la MISMA petición (`GET /api/companies/:id`), aunque
+  // datos. Las tres salen de la MISMA petición (`GET /api/companies/:id`), aunque
   // el guardado esté partido en un endpoint por sección.
   #showSectionLoaders() {
     this.#showLoader(this.loaderGeneralTarget);
     this.#showLoader(this.loaderAtvTarget);
+    this.#showLoader(this.loaderAttachmentsTarget);
   }
 
   #showLoader(loaderTarget) { loaderTarget?.classList.remove('hidden'); }
@@ -378,9 +398,10 @@ export default class extends Controller {
    * (`issuer_legal_name`, `economic_activity_code`): la traducción la hace
    * `serialize_detail` del controller.
    *
-   * La sección de Hacienda (ATV) sale de la misma respuesta pero la llena
-   * `#fillAtvSection`. Las demás (adicional, adjuntos, códigos de actividad,
-   * factura a proveedor) todavía no se migraron y por eso no se llenan.
+   * Las secciones de Hacienda (ATV) y de adjuntos salen de la misma respuesta
+   * pero las llenan `#fillAtvSection` y `#fillAttachmentsSection`. Las demás
+   * (adicional, códigos de actividad, factura a proveedor) todavía no se
+   * migraron y por eso no se llenan.
    */
   #fillGeneralSection(data) {
     this.nameTarget.value           = data.Name || '';
@@ -946,13 +967,200 @@ export default class extends Controller {
     );
   }
 
+  // ── Sección "Adjuntos de la compañía" ──────────────────────────────────────
+
+  /**
+   * Llena la sección con la respuesta de `GET /api/companies/:id`.
+   *
+   * De los dos adjuntos llega el NOMBRE del archivo, no la ruta: la columna
+   * guarda la ruta absoluta que otro proceso abre —el servicio de correo el
+   * logo, el generador del PDF el `.rpt`— y dónde lo guardó el servidor no es
+   * asunto de esta pantalla.
+   */
+  #fillAttachmentsSection(data) {
+    this.logoNameTarget.value        = data.LogoFileName || '';
+    this.printFormatNameTarget.value = data.PrintFormatFileName || '';
+
+    // Un archivo ya guardado no es un archivo pendiente de subir. El <input
+    // type="file"> también se limpia: si no, volver a elegir el mismo archivo no
+    // dispara `change` y la sección quedaría sin poder guardarse.
+    this.#selectedLogoFile          = null;
+    this.#selectedPrintFormatFile   = null;
+    this.logoFileInputTarget.value        = '';
+    this.printFormatFileInputTarget.value = '';
+
+    this.#refreshAttachmentsState();
+  }
+
+  /**
+   * Por qué NO se puede guardar la sección, o null si sí se puede.
+   *
+   * No hay foto de valores contra la que comparar como en las otras secciones:
+   * los dos campos son de solo lectura y muestran el nombre de lo que ya está
+   * guardado. Lo único que se puede cambiar es elegir un archivo nuevo, así que
+   * eso ES el "cambió".
+   *
+   * @returns {?string}
+   */
+  #attachmentsSaveBlockedReason() {
+    if (!this.#selectedLogoFile && !this.#selectedPrintFormatFile) {
+      return 'No hay cambios por guardar en esta sección';
+    }
+
+    return null;
+  }
+
+  /**
+   * Repinta los cuatro botones de la sección: el de guardar y los tres de la
+   * barra de los campos (descargar logo, descargar formato, restablecer).
+   *
+   * Los tres últimos dependen de dos cosas distintas —el permiso y que haya un
+   * archivo guardado— y las dos se explican en el tooltip, porque un ícono gris
+   * sin motivo obliga a adivinar (§2 y §26).
+   */
+  #refreshAttachmentsState() {
+    if (this.hasBtnSaveAttachmentsTarget) {
+      this.#paintSectionSaveButton(
+        this.btnSaveAttachmentsTarget,
+        this.hasBtnSaveAttachmentsWrapTarget ? this.btnSaveAttachmentsWrapTarget : null,
+        this.#attachmentsSaveBlockedReason(),
+        'Actualizar los adjuntos de la compañía',
+      );
+    }
+
+    if (this.hasBtnDownloadLogoTarget) {
+      this.#paintIconButton(
+        this.btnDownloadLogoTarget,
+        this.hasBtnDownloadLogoWrapTarget ? this.btnDownloadLogoWrapTarget : null,
+        this.#logoDownloadBlockedReason(),
+        'Descargar el logo de la compañía',
+      );
+    }
+
+    if (this.hasBtnDownloadPrintFormatTarget) {
+      this.#paintIconButton(
+        this.btnDownloadPrintFormatTarget,
+        this.hasBtnDownloadPrintFormatWrapTarget ? this.btnDownloadPrintFormatWrapTarget : null,
+        this.#printFormatDownloadBlockedReason(),
+        'Descargar el formato de impresión de la compañía',
+      );
+    }
+
+    if (this.hasBtnResetFormatTarget) {
+      this.#paintIconButton(
+        this.btnResetFormatTarget,
+        this.hasBtnResetFormatWrapTarget ? this.btnResetFormatWrapTarget : null,
+        this.#resetFormatBlockedReason(),
+        'Restablecer el formato de impresión al de la aplicación',
+      );
+    }
+  }
+
+  /**
+   * Pinta un botón de ícono de la barra de un campo según se pueda usar o no.
+   * Es el equivalente de `#paintSectionSaveButton` para los botones sufijo: ahí
+   * el deshabilitado es un fondo gris; acá, el ícono en gris claro (§4).
+   *
+   * @param {HTMLButtonElement} btn
+   * @param {?HTMLElement} wrap  <span> envolvente que lleva el tooltip.
+   * @param {?string} reason     Por qué NO se puede usar; null si sí se puede.
+   * @param {string} enabledTooltip  Qué hace el botón cuando está habilitado.
+   */
+  #paintIconButton(btn, wrap, reason, enabledTooltip) {
+    btn.disabled = !!reason;
+    btn.classList.toggle('pointer-events-none', !!reason);
+    btn.classList.toggle('cursor-not-allowed', !!reason);
+    btn.classList.toggle('text-gray-300', !!reason);
+    btn.classList.toggle('text-gray-500', !reason);
+    btn.classList.toggle('hover:bg-gray-100', !reason);
+    btn.classList.toggle('hover:text-gray-700', !reason);
+
+    if (wrap) wrap.dataset.tooltip = reason || enabledTooltip;
+  }
+
+  /**
+   * Los dos permisos que acepta el endpoint de descarga: el de la compañía y el
+   * global. Se evalúan igual que del lado del servidor —cualquiera alcanza— para
+   * que la pantalla no deshabilite lo que el API sí permitiría.
+   */
+  #canDownload(permission, globalPermission) {
+    return this.#hasPerm(permission) || this.#hasPerm(globalPermission);
+  }
+
+  /** El nombre del archivo GUARDADO, que es el que se descarga. */
+  #savedLogoName()        { return this.#companyData?.LogoFileName || ''; }
+  #savedPrintFormatName() { return this.#companyData?.PrintFormatFileName || ''; }
+
+  /**
+   * En creación no hay nada que descargar ni restablecer todavía. Es el primer
+   * motivo de los tres botones: sin esto dirían "no cuenta con permisos", que es
+   * falso y manda a pedirle un permiso a quien no lo necesita.
+   */
+  #attachmentsNeedSavedCompany() {
+    return this.#isEditing ? null : 'Debe registrar la compañía antes de administrar sus adjuntos';
+  }
+
+  #logoDownloadBlockedReason() {
+    const pending = this.#attachmentsNeedSavedCompany();
+    if (pending) return pending;
+
+    if (!this.#canDownload('Configurations_Companies_DownloadLogo',
+                           'Configurations_Companies_DownloadLogoInAllCompanies')) {
+      return 'No cuenta con permisos para descargar el logo de la compañía';
+    }
+    if (!this.#savedLogoName()) {
+      return 'La compañía debe tener un logo guardado para poder descargarlo';
+    }
+
+    return null;
+  }
+
+  #printFormatDownloadBlockedReason() {
+    const pending = this.#attachmentsNeedSavedCompany();
+    if (pending) return pending;
+
+    if (!this.#canDownload('Configurations_Companies_DownloadFEPrintFormat',
+                           'Configurations_Companies_DownloadFEPrintFormatInAllCompanies')) {
+      return 'No cuenta con permisos para descargar el formato de impresión de la compañía';
+    }
+    if (!this.#savedPrintFormatName()) {
+      return 'La compañía debe tener un formato de impresión guardado para poder descargarlo';
+    }
+
+    return null;
+  }
+
+  #resetFormatBlockedReason() {
+    const pending = this.#attachmentsNeedSavedCompany();
+    if (pending) return pending;
+
+    if (!this.#hasPerm('F_ResetCompanyFormat')) {
+      return 'No cuenta con permisos para restablecer el formato de impresión';
+    }
+    if (!this.#savedPrintFormatName()) {
+      return 'La compañía debe tener un formato de impresión propio para poder restablecerlo';
+    }
+
+    return null;
+  }
+
   // ── Logo ───────────────────────────────────────────────────────────────────
 
   triggerLogoUpload() { this.logoFileInputTarget.click(); }
 
   onLogoSelected() {
     const file = this.logoFileInputTarget.files[0];
-    if (!file) { this.logoNameTarget.value = ''; return; }
+
+    // Sin archivo (el usuario canceló el diálogo) el campo vuelve a mostrar el
+    // nombre de lo que está guardado, no queda en blanco: en blanco parecería
+    // que la compañía se quedó sin logo.
+    if (!file) {
+      this.#selectedLogoFile    = null;
+      this.logoNameTarget.value = this.#savedLogoName();
+      this.#refreshAttachmentsState();
+      return;
+    }
+
     const ext = file.name.split('.').pop().toLowerCase();
     if (!['jpg', 'jpeg', 'png'].includes(ext)) {
       this.logoFileInputTarget.value = '';
@@ -961,12 +1169,21 @@ export default class extends Controller {
     }
     this.#selectedLogoFile    = file;
     this.logoNameTarget.value = file.name;
+    this.#refreshAttachmentsState();
   }
 
   async downloadLogo() {
+    // Defensa en profundidad: el botón ya está deshabilitado, pero la UI se
+    // puede manipular (§26).
+    const blocked = this.#logoDownloadBlockedReason();
+    if (blocked) {
+      showToast(blocked, 'info');
+      return;
+    }
+
     await this.#downloadBlob(
       `/api/companies/${this.companyIdValue}/logo`,
-      this.logoNameTarget.value || 'logo.png'
+      this.#savedLogoName() || 'logo.png'
     );
   }
 
@@ -976,38 +1193,94 @@ export default class extends Controller {
 
   onPrintFormatSelected() {
     const file = this.printFormatFileInputTarget.files[0];
-    if (!file) { this.printFormatNameTarget.value = ''; return; }
+
+    if (!file) {
+      this.#selectedPrintFormatFile    = null;
+      this.printFormatNameTarget.value = this.#savedPrintFormatName();
+      this.#refreshAttachmentsState();
+      return;
+    }
+
     if (!file.name.endsWith('.rpt')) {
       this.printFormatFileInputTarget.value = '';
       showToast('Seleccione un formato de impresión válido (.rpt).', 'error');
       return;
     }
-    this.#selectedPrintFormatFile   = file;
+    this.#selectedPrintFormatFile    = file;
     this.printFormatNameTarget.value = file.name;
+    this.#refreshAttachmentsState();
   }
 
   async downloadPrintFormat() {
+    const blocked = this.#printFormatDownloadBlockedReason();
+    if (blocked) {
+      showToast(blocked, 'info');
+      return;
+    }
+
     await this.#downloadBlob(
-      `/api/companies/${this.companyIdValue}/print-format`,
-      this.printFormatNameTarget.value || 'formato-impresion.rpt'
+      `/api/companies/${this.companyIdValue}/print_format`,
+      this.#savedPrintFormatName() || 'formato-impresion.rpt'
     );
   }
 
+  /**
+   * ⚠️ Lo único de esta sección que TODAVÍA va al .NET (y por eso usa
+   * `#apiFetch` y no `#railsFetch`).
+   *
+   * No se migró con el resto porque "restablecer" no es vaciar la columna: en el
+   * legado copiaba el formato por defecto —el del grupo— a la carpeta de la
+   * compañía y apuntaba la columna al archivo nuevo. Vaciarla dejaría a la
+   * compañía sin poder emitir: el servicio de emisión levanta si no hay formato
+   * ("No se ha configurado un formato de impresion para FE").
+   *
+   * En esta versión no hay grupos (§31) y el formato por defecto de la
+   * aplicación vive en las configuraciones generales, que todavía no tienen
+   * tabla — no hay de dónde copiar. Ver `TODOS.md` → Compañías.
+   */
   async resetPrintFormat() {
+    // Defensa en profundidad: el botón ya está deshabilitado, pero la UI se
+    // puede manipular (§26).
+    const blocked = this.#resetFormatBlockedReason();
+    if (blocked) {
+      showToast(blocked, 'info');
+      return;
+    }
+
     const confirmed = await confirm(
       'Esta acción restablecerá el formato de impresión de la compañía al por defecto. ¿Desea continuar?',
       'Restablecer formato'
     );
     if (!confirmed) return;
+
+    this.#showLoader(this.loaderAttachmentsTarget);
     try {
       await this.#apiFetch(
         `/api/Companies/ResetCompanyPrintFormat?companyId=${this.companyIdValue}`,
         { method: 'PATCH' }
       );
+      // El servidor cambió la ruta, así que el nombre que hay en pantalla ya no
+      // es el que quedó guardado: se relee la sección en vez de adivinarlo.
+      await this.#reloadAttachmentsSection();
       showToast('Formato de impresión restablecido con éxito', 'success');
     } catch (err) {
       showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al restablecer formato', message: err.message });
+    } finally {
+      this.#hideLoader(this.loaderAttachmentsTarget);
     }
+  }
+
+  /**
+   * Vuelve a leer la compañía y repinta solo la sección de adjuntos. La lectura
+   * del formulario es una sola (`GET /api/companies/:id`), así que se reusa esa
+   * y se refresca lo que cambió.
+   */
+  async #reloadAttachmentsSection() {
+    const resp = await this.#railsFetch(`/api/companies/${this.companyIdValue}`);
+    if (!resp.Data) return;
+
+    this.#companyData = resp.Data;
+    this.#fillAttachmentsSection(this.#companyData);
   }
 
   // ── EmailCC dinámico ───────────────────────────────────────────────────────
@@ -1456,13 +1729,62 @@ export default class extends Controller {
     return fd;
   }
 
+  /**
+   * Guarda SOLO la sección "Adjuntos de la compañía", contra su propio endpoint
+   * (`PATCH /api/companies/:id/attachments`).
+   *
+   * El cuerpo es multipart porque los dos campos de la sección son archivos. Las
+   * rutas NO se mandan: las deriva el servidor de la cédula de la compañía y del
+   * nombre del archivo, igual que la del certificado.
+   */
   async saveAttData() {
+    // Defensa en profundidad: la UI ya deshabilita el botón, pero se puede
+    // manipular (§26).
+    const blocked = this.#attachmentsSaveBlockedReason();
+    if (blocked) {
+      showToast(blocked, 'info');
+      return;
+    }
+
     this.#showLoader(this.loaderAttachmentsTarget);
     try {
-      await this.#sendEditRequest(3);
-      showToast('Adjuntos actualizados con éxito.', 'success');
-    } catch (err) { showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar adjuntos', message: err.message }); }
-    finally { this.#hideLoader(this.loaderAttachmentsTarget); }
+      const json = await this.#railsFetch(
+        `/api/companies/${this.companyIdValue}/attachments`,
+        { method: 'PATCH', body: this.#attachmentsPayload() },
+      );
+
+      // Se repinta con lo que quedó guardado, no con lo que había en pantalla: el
+      // servidor limpia el nombre del archivo antes de escribirlo, así que el que
+      // se eligió y el que quedó pueden no ser el mismo.
+      if (json.Data) {
+        this.#companyData = { ...this.#companyData, ...json.Data };
+        this.#fillAttachmentsSection(this.#companyData);
+      }
+
+      showToast(json.Message || 'Adjuntos actualizados con éxito.', 'success');
+    } catch (err) {
+      // Error de escritura → modal, no toast (§9).
+      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar adjuntos', message: err.message });
+    } finally {
+      this.#hideLoader(this.loaderAttachmentsTarget);
+    }
+  }
+
+  /**
+   * El cuerpo del PATCH de la sección — `FormData`, porque los dos campos son
+   * archivos.
+   *
+   * Cada uno viaja SOLO si el usuario eligió uno nuevo: la parte ausente le dice
+   * al endpoint que deje esa columna como está. Sin esa regla, guardar la sección
+   * para cambiar el logo borraría el formato de impresión, porque el campo
+   * muestra su nombre pero no vuelve a subir el archivo.
+   */
+  #attachmentsPayload() {
+    const fd = new FormData();
+    if (this.#selectedLogoFile)        fd.append('Logo',        this.#selectedLogoFile);
+    if (this.#selectedPrintFormatFile) fd.append('PrintFormat', this.#selectedPrintFormatFile);
+
+    return fd;
   }
 
   async saveSapData() {
@@ -1612,7 +1934,15 @@ export default class extends Controller {
   async #downloadBlob(url, filename) {
     try {
       const response = await fetch(url, { headers: this.#authHeaders() });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      // Los endpoints nativos contestan el motivo en el cuerpo (`ApiResponse`):
+      // "El logo de la compañía no está disponible en el servidor" le dice al
+      // usuario qué pasó, `HTTP 404` no.
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.Message || `HTTP ${response.status}`);
+      }
+
       const blob = await response.blob();
       const link = document.createElement('a');
       link.href     = URL.createObjectURL(blob);

@@ -71,7 +71,11 @@ module Api
 
         begin
           certificate = certificate_attributes
-        rescue Certificates::Error => e
+        rescue CompanyFiles::Error => e
+          # La de arriba de la jerarquía: cubre lo que levanta `Certificates::Store`
+          # (extensión, tamaño, cédula, disco) y lo que agrega el certificado
+          # (`Certificates::Error`, el PIN que no abre el `.p12`). Las dos son
+          # cosas que el usuario puede corregir, así que salen 422 con el motivo.
           return render_error(e.message)
         end
 
@@ -129,8 +133,8 @@ module Api
       # El orden importa: primero se abre el `.p12` y recién después se escribe en
       # disco, para que un PIN equivocado no deje el archivo tirado en el servidor.
       #
-      # @raise [Certificates::Error] PIN que no abre el archivo, cédula faltante,
-      #   extensión inválida, disco que falla.
+      # @raise [CompanyFiles::Error] PIN que no abre el archivo, cédula faltante,
+      #   extensión inválida, archivo demasiado grande, disco que falla.
       def certificate_attributes
         return {} if certificate_upload.blank?
 

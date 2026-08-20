@@ -141,10 +141,11 @@ module Api
     #
     # ⚠️ Los campos de cada sección tienen que coincidir con los que acepta el
     # controller de ESA sección (`Api::Companies::GeneralController`,
-    # `Api::Companies::TaxAuthorityController`). Si uno se agrega acá y no allá,
+    # `Api::Companies::TaxAuthorityController`,
+    # `Api::Companies::AttachmentsController`). Si uno se agrega acá y no allá,
     # el formulario lo muestra, el usuario lo edita, guarda, y no pasa nada — sin
-    # error. `company_general_spec.rb` y `company_tax_authority_spec.rb` comparan
-    # las dos listas de su sección.
+    # error. `company_general_spec.rb`, `company_tax_authority_spec.rb` y
+    # `company_attachments_spec.rb` comparan las dos listas de su sección.
     def serialize_detail(company)
       serialize(company).merge(
         # ── Sección "Datos Generales" ────────────────────────────────────────
@@ -175,6 +176,14 @@ module Api
         TokenUsr:       company.token_user,
         HasCertPin:     company.cert_pin_stored?,
         HasTokenPass:   company.token_password_stored?,
+
+        # ── Sección "Adjuntos de la compañía" ────────────────────────────────
+        # De los dos adjuntos sale el NOMBRE del archivo y no la ruta, por lo
+        # mismo que el certificado: la columna guarda la ruta absoluta que otro
+        # proceso abre —el servicio de correo el logo, el generador del PDF el
+        # `.rpt`—, es infraestructura, y el cliente ya no puede escribirla.
+        LogoFileName:        CompanyFiles::Store.file_name(company.logo_path),
+        PrintFormatFileName: CompanyFiles::Store.file_name(company.print_format_path),
 
         # ── Secciones que todavía no tienen su endpoint ──────────────────────
         # Se devuelven porque la lectura del formulario es una sola; se van a

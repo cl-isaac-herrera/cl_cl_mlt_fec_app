@@ -565,13 +565,15 @@ que armaba el Bearer para el proxy se borró con el último tab que lo usaba.
 ## Compañías — endpoints migrados a Rails (`/configurations/companies`)
 
 Migrados hasta ahora: el **listado** (`GET /api/companies`), la **lectura** del formulario
-de edición (`GET /api/companies/:id`), el guardado de dos secciones — **"Datos Generales"**
-(`PATCH /api/companies/:id/general`) y **"Hacienda (ATV)"**
-(`PATCH /api/companies/:id/tax_authority`) — y el **certificado digital**: se carga y se
-descarga desde Rails (`POST /api/certificate_inspections`,
-`GET /api/companies/:id/certificate`). Los datos salen de la tabla `companies` —el bloque
-del emisor estuvo un tiempo como UDFs de `OADM` y volvió a la base de la aplicación— y el
-`.p12` del disco, bajo `FILES_BASE_PATH`.
+de edición (`GET /api/companies/:id`), el guardado de tres secciones — **"Datos Generales"**
+(`PATCH /api/companies/:id/general`), **"Hacienda (ATV)"**
+(`PATCH /api/companies/:id/tax_authority`) y **"Adjuntos"**
+(`PATCH /api/companies/:id/attachments`) — y los **tres archivos** de la compañía, que se
+cargan y se descargan desde Rails (`POST /api/certificate_inspections`,
+`GET /api/companies/:id/{certificate,logo,print_format}`). Los datos salen de la tabla
+`companies` —el bloque del emisor estuvo un tiempo como UDFs de `OADM` y volvió a la base de
+la aplicación— y los archivos del disco, bajo `FILES_BASE_PATH` (`CompanyFiles::Store`,
+`CLAUDE.md` §34).
 
 ### Un endpoint por sección — la convención a seguir
 
@@ -584,7 +586,7 @@ en cada guardado, así que un campo mal cargado en una sección se propagaba al 
 El nombre de la subruta es el de la sección, a secas: sin sufijo `_settings` ni `_config` —
 el `PATCH` ya dice que es configuración. Las secciones migradas son la plantilla:
 `resource :general, only: [:update], module: :companies` bajo `resources :companies`, con su
-controller en `app/controllers/api/companies/`. Faltan las cuatro restantes:
+controller en `app/controllers/api/companies/`. Faltan las tres restantes:
 
 - [ ] `PATCH .../additional` — sección "Adicional". Solo tendría `email_cc`:
       `AdditionalInformation` se eliminó por no tener consumidor.
@@ -600,9 +602,18 @@ controller en `app/controllers/api/companies/`. Faltan las cuatro restantes:
       la clave ausente significa "dejalo como está" y la clave vacía, "borralo" — el cliente
       la manda solo si el usuario escribió algo. `client_id` y `grant_type` **no** están en
       el endpoint: no tienen campo en el formulario.
-- [ ] `PATCH .../attachments` — sección "Adjuntos". `logo_path` y `print_format_path`
-      guardan rutas del servidor .NET; antes de migrar hay que decidir si se replica ese
-      esquema o se pasa a Active Storage.
+- [x] `PATCH .../attachments` — sección "Adjuntos". Hecho. **Su cuerpo es multipart**: los
+      dos campos de la sección son archivos (`Logo` y `PrintFormat`), los dos opcionales, y
+      **la parte ausente significa "dejalo como está"** — si no, guardar la sección para
+      cambiar el logo borraría el formato de impresión, porque el campo muestra su nombre
+      pero no vuelve a subir el archivo.
+      `logo_path` y `print_format_path` **no se aceptan del cuerpo**: las deriva
+      `CompanyFiles::Store` de la cédula y del nombre del archivo, igual que `cert_path`.
+      **Se decidió disco, no Active Storage**, y con evidencia: el logo lo adjunta el
+      servicio de correo por su ruta (`new Attachment(companyLogoPath)`) y el `.rpt` lo abre
+      el generador del PDF (`CreatePdf(DocId, FEPrintFormat)`). Un blob con nombre de hash
+      dejaría a los dos sin poder abrir nada. La mecánica quedó compartida con el
+      certificado en `CompanyFiles::Store` (`CLAUDE.md` §34).
 - [ ] `PATCH .../economic_activities` — sección "Códigos de actividad". **No tiene tabla en
       la base nueva**: hay que crearla primero.
 - [ ] `PATCH .../purchase_invoice` — sección "Factura a proveedor".
@@ -660,18 +671,49 @@ controller en `app/controllers/api/companies/`. Faltan las cuatro restantes:
       **Pendiente:** decidir si la importación copia los archivos a `FILES_BASE_PATH` y
       reescribe la ruta, o si se recargan a mano compañía por compañía.
 
-- [ ] **El logo y el formato de impresión (sección "Adjuntos") siguen con rutas del
-      servidor .NET.** Ya tienen dónde ir —la misma raíz— cuando se migre esa sección.
+- [x] **El logo y el formato de impresión ya se guardan en la misma raíz** que el
+      certificado, `{FILES_BASE_PATH}/{cédula}/`, vía `Attachments::LogoStore` y
+      `Attachments::PrintFormatStore`. Comparten la mecánica con el `.p12` en
+      `CompanyFiles::Store` (`CLAUDE.md` §34).
+      El **logo queda siempre como `logo.{extensión}`** (`FIXED_BASENAME`), sin importar
+      cómo se llamara el archivo subido: un solo logo por compañía, con nombre predecible.
+      El `.rpt` sí conserva su nombre —puede decir de qué documento es—, limpiado.
+
+- [ ] **Las compañías importadas traen `logo_path` y `print_format_path` apuntando al
+      servidor .NET**, igual que `cert_path`. Hasta que se recarguen desde esta pantalla, la
+      descarga responde 404 y el archivo sigue viviendo donde el correo y el generador del
+      PDF lo tenían — que es justamente por lo que el `remove` del store no toca nada fuera
+      de la raíz configurada.
+      **Pendiente:** entra en la misma decisión que el certificado (copiar los archivos en
+      la importación y reescribir la ruta, o recargarlos a mano compañía por compañía).
+
+- [ ] **"Restablecer formato" (`F_ResetCompanyFormat`) sigue yendo al .NET.** Es lo único de
+      la sección "Adjuntos" que no se migró, y no es un olvido: en el legado "restablecer"
+      **no vaciaba la columna**, copiaba el formato por defecto del **grupo** a la carpeta de
+      la compañía y apuntaba `print_format_path` al archivo nuevo.
+      Vaciar la columna **no es un equivalente**: el servicio de emisión levanta si está
+      vacía ("No se ha configurado un formato de impresion para FE"), así que la compañía
+      quedaría sin poder emitir.
+      Bloquea dos cosas: no hay grupos (§31) y el formato por defecto de la aplicación vive
+      en las configuraciones generales, que **no tienen tabla** en la base nueva — no hay de
+      dónde copiar.
+      **Pendiente:** al migrar las configuraciones generales (`DefaultPrintFormatPath`),
+      agregar `DELETE /api/companies/:id/print_format` — semántica "borrar el formato PROPIO
+      de la compañía", implementada como copiar el de la aplicación — y cambiar
+      `resetPrintFormat()` de `#apiFetch` a `#railsFetch`. El botón ya está gateado por
+      permiso y por "hay formato propio" con su motivo en el tooltip (§26), así que del lado
+      de la UI no queda nada.
 
 ### Escritura que sigue en el .NET
 
-- [ ] **Las secciones "Adicional", "Adjuntos" y "Códigos de actividad" siguen llamando a
-      `#sendEditRequest`.** Van a `PATCH /api/Companies` con el shape viejo y hoy responden
-      401. Se reemplazan con los endpoints de arriba.
+- [ ] **Las secciones "Adicional", "Códigos de actividad" y "Factura a proveedor" siguen
+      llamando a `#sendEditRequest`.** Van a `PATCH /api/Companies` con el shape viejo y hoy
+      responden 401. Se reemplazan con los endpoints de arriba.
       **Ojo con los dos secretos:** `#buildCompanyFormData` manda `CertPin` y `TokenPass`
       con lo que haya en pantalla, que desde esta migración es siempre vacío (el valor
       guardado no vuelve del servidor). Si esos endpoints revivieran antes de migrarse,
-      guardar "Adjuntos" borraría el PIN y el token password del lado del .NET.
+      guardar cualquiera de esas secciones borraría el PIN y el token password del lado del
+      .NET. Era el caso de "Adjuntos" hasta que se migró.
 - [ ] **El alta (`POST`) sigue en el .NET.** Ver más abajo.
 - [ ] **Campo `Nombre` no se envía en el alta.** `#buildCompanyFormData` no lo manda: el
       endpoint .NET no tiene dónde ponerlo. Se resuelve al migrar el `POST`.
@@ -705,9 +747,12 @@ proxy .NET:
       certificado sale el NOMBRE, no la ruta: dónde lo guardó el servidor no es asunto de
       la pantalla, y el cliente ya no puede escribirla.
       `client_id` y `grant_type` siguen sin exponerse porque no tienen campo.
-- [ ] **Adjuntos** — `logo_path` y `print_format_path` guardan rutas del servidor .NET.
-      Antes de migrar la sección hay que decidir si se replica ese esquema o se pasa a
-      Active Storage.
+- [x] **Adjuntos** — cableada. La respuesta trae `LogoFileName` y `PrintFormatFileName`: el
+      NOMBRE del archivo, no la ruta, por lo mismo que el certificado. Los dos botones de
+      descarga se habilitan según su propio permiso (`…_DownloadLogo` /
+      `…_DownloadFEPrintFormat`, o su variante global) y según haya archivo guardado, con el
+      motivo en el tooltip (§26). El de "Restablecer formato" sigue apuntando al .NET (ver
+      más arriba).
 - [ ] **Códigos de actividad** — no tienen tabla en la base nueva ni UDT declarada.
 - [ ] **Factura a proveedor** — `PurchInvSeriesNum`, `DefaultXmlTaxCode` y
       `DefaultWarehouse` ya llegan en la respuesta. Falta exponer `UseApInvoice`
