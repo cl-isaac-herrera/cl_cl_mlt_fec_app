@@ -2367,3 +2367,141 @@ lado, y eso hay que mirarlo antes de crear un merge commit sin querer.
 (`feat(companias): migrar la seccion de Adjuntos`) — es la misma restricción de los títulos de
 issue del estándar global. El cuerpo sí lleva acentos y explica **por qué**, no qué: el diff
 ya dice qué cambió. Cierra con la línea `Co-Authored-By` cuando el commit lo hizo Claude.
+
+---
+
+## 36. Ajustes de la instalación — tabla `settings`, valor cifrado
+
+Todo parámetro de configuración que el operador administra desde la interfaz vive en la tabla
+`settings`: `code` (llave natural), `group_code`, `description`, `value` **cifrado** e
+`is_visible`. Es la contraparte del `Setting` del API .NET.
+
+> **Regla:** el catálogo se declara en `db/seeds.rb`. Desde la interfaz se escribe **únicamente
+> `value`**, por `Setting#update_value!`. `code`, `group_code`, `description` e `is_visible` son
+> metadatos del producto y ningún endpoint los toca.
+
+### Convención del `code`
+
+```
+{DOMINIO}_{SUBDOMINIO}_{CAMPO}     en SCREAMING_SNAKE
+```
+
+`Setting::CODE_FORMAT` la valida, así que un `code` en PascalCase **no se puede insertar** — es
+lo que impide que una importación desde el .NET meta los nombres del origen sin traducir. La
+equivalencia con los `code` viejos va a **`db/setting_code_map.yml`**, igual que
+`db/permission_name_map.yml` para permisos (§28): sin traducir, la importación deja el ajuste
+duplicado y el valor real se queda en la fila huérfana, sin que nadie reciba un error.
+
+`group_code` es una **columna**, no se deriva del `code`: partir `DOCS_DB_ODBC_QUERY_TIMEOUT`
+por el último `_` daría el grupo `DOCS_DB_ODBC_QUERY`.
+
+### `is_visible: false` — campos de solo escritura
+
+El valor **nunca sale del servidor**. La pantalla lo escribe, y para saber si ya hay uno
+guardado consulta `Setting#value?`, que devuelve un booleano y no el secreto.
+
+```ruby
+setting.value          # "s3cr3t"  — uso interno (armar un DSN, autenticar)
+setting.visible_value  # nil       — lo único que puede ir en una respuesta
+setting.value?         # true      — "hay una contraseña guardada"
+```
+
+Arregla un defecto real del .NET: `CrystalPassword` viaja hoy en claro al browser y la UI la
+enmascara con un `type="password"` con botón para revelarla.
+
+### ⚠️ El seed de `settings` NO borra — el de `permissions` sí
+
+`seeds.rb` hace `Permission.unscoped.delete_all` para poder forzar los Id del origen (§28).
+**Copiar ese patrón en `settings` borra las credenciales que escribió el operador**, y la
+instalación queda muda sin ningún error que lo explique.
+
+```ruby
+# ✅ CORRECTO — upsert por code, `value` intacto
+record = Setting.unscoped.find_or_initialize_by(code: code)  # unscoped: reactiva la dada de baja
+record.group_code  = group_code
+record.description = description
+record.is_visible  = is_visible
+record.save!                                                 # `value`: JAMÁS se asigna
+
+# ❌ INCORRECTO — se lleva puestas las credenciales de una base viva
+Setting.unscoped.delete_all
+```
+
+`unscoped` no es opcional: el índice único de `code` **no** excluye a las filas inactivas, así
+que sin él un ajuste dado de baja no se encuentra y el seed intenta insertar otro igual — y el
+que se pierde es el que tiene el valor.
+
+### Reglas del valor cifrado
+
+- **`t.text` y sin `limit:`.** Lo guardado es el sobre del cifrado: ~70 caracteres fijos más
+  4/3 del original (§29 regla 4). El largo del texto plano se valida en el modelo.
+- **No se puede buscar ni indexar por `value`** — el cifrado es no determinista. Toda lectura
+  entra por `code` (`Setting.value_for`, `Setting.group`).
+- **Todo `code` nuevo cuyo valor sea sensible nace con `is_visible: false`.**
+
+---
+
+## 37. Bases de datos externas — SIEMPRE por `ExternalDb`, y NUNCA contra SAP
+
+Consultar una base de datos externa (SQL Server o SAP HANA) pasa por
+`ExternalDb::Pool.with(grupo)`. **Está prohibido abrir una conexión ODBC a mano**, igual que
+está prohibido hablar HTTP a mano con el Service Layer (§29).
+
+```ruby
+ExternalDb::Pool.with('DOCS_DB_ODBC') do |client|
+  client.select('SELECT Id, Total FROM Documentos WHERE Fecha >= ?', [desde])
+  client.call('SP_DOCS_POR_FECHA', [desde, hasta])
+end
+```
+
+### ⚠️ Esto NO es una vía alterna para llegar a SAP
+
+| Destino | Vía | Regla |
+|---|---|---|
+| SAP Business One | `Clavisco::ServiceLayer::Client` | §29, sin excepciones |
+| Base de documentos (propia) | `ExternalDb::Pool` | esta sección |
+
+§29 sigue vigente tal como está. Consultar la base de compañía de SAP por ODBC saltaría la
+lógica de negocio de SAP y anularía su soporte: si aparece la tentación, la respuesta es una
+vista semántica expuesta por el Service Layer (`sl_resources` + `Sap::ResourceQuery`).
+
+### Los valores van SIEMPRE como parámetros
+
+La sentencia lleva `?` y los valores aparte — `?` es el placeholder de ODBC y funciona igual en
+los dos drivers. No existe ninguna API que reciba un string y lo ejecute sin pasar por el guard.
+
+```ruby
+client.select('SELECT * FROM docs WHERE id = ?', [params[:id]])   # ✅
+client.select("SELECT * FROM docs WHERE id = #{params[:id]}")     # ❌ inyección
+```
+
+### Toda diferencia entre motores vive en `dialect/`
+
+Un `if config.hana?` fuera de `app/services/external_db/dialect/` significa que la diferencia
+se escapó de su lugar. Las que ya están resueltas:
+
+| | SQL Server | HANA |
+|---|---|---|
+| Host | `Server=CLSQL01` | `SERVERNODE=clhna721:30015` |
+| Puerto | opcional, con **coma** | **obligatorio**, con **dos puntos** (`3<NN>15`) |
+| La base | `Database=` en el DSN | **NO va en el DSN** — califica cada consulta |
+| Calificación | `[CL_DOCS].[dbo].[SP]` | `CL_DOCS.SP` (la base ES el esquema) |
+| Paginación | `OFFSET/FETCH`, exige `ORDER BY` | `LIMIT/OFFSET` |
+| Sondeo | `SELECT 1` | `SELECT 1 FROM DUMMY` |
+
+**Los procedimientos se invocan con el escape ODBC `{CALL …}`**, que el driver traduce a `EXEC`
+o a `CALL` según el motor. Escribir cualquiera de los dos a mano ata la consulta a un motor,
+que es justo lo que el conector existe para evitar.
+
+### 🔒 La garantía de solo-lectura son los permisos de BD, no el código
+
+`ruby-odbc` **no expone `SQL_ATTR_ACCESS_MODE`**, así que la conexión no se puede abrir en modo
+lectura. `StatementGuard` es una red útil pero es un chequeo textual, y `#call` no pasa por él
+porque un procedimiento almacenado hace lo que quiera.
+
+> **Regla de despliegue:** el usuario de `*_USER` tiene permisos de **lectura y nada más**
+> (`db_datareader` en SQL Server, `SELECT` sobre el esquema en HANA). `GRANT EXECUTE` se concede
+> **procedimiento por procedimiento**, nunca sobre el esquema completo: un procedimiento corre
+> con los permisos de su dueño y puede escribir aunque quien lo llama no pueda.
+
+Referencia completa: **`docs/CONSULTA-BASE-EXTERNA.md`**.

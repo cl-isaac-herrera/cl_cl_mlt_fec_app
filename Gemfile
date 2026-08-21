@@ -22,6 +22,26 @@ gem 'tailwindcss-rails'
 # Base de datos
 gem 'sqlite3', '>= 2.1'
 
+# Consulta a la base externa de documentos (SQL Server o SAP HANA).
+#
+# ODBC es el único conector que habla con los dos motores con una sola gema: el
+# driver manager del sistema resuelve el destino y la app solo cambia la cadena
+# de conexión. La alternativa era `tiny_tds` + un cliente de HANA, o sea dos
+# dependencias nativas con dos APIs distintas.
+#
+# `require: false` a propósito: es una extensión nativa que se enlaza contra el
+# driver manager del sistema, y una instalación de ODBC rota no tiene por qué
+# tumbar el boot de toda la app. Lo carga `ExternalDb::Client` cuando se va a
+# usar, y ahí el fallo sale como un error del módulo de documentos y no como una
+# pantalla en blanco.
+gem 'ruby-odbc', '~> 0.99999', require: false
+
+# Pool de conexiones ODBC (`ExternalDb::Pool`). Ya estaba instalada como
+# dependencia transitiva de `solid_cache`, pero se declara acá porque la app la
+# usa directo: si mañana esa gema deja de traerla, el fallo aparecería como un
+# `NameError` en la primera consulta a la base de documentos.
+gem 'connection_pool', '~> 3.0'
+
 # Solid stack (cache, jobs, websockets)
 gem 'solid_cache'
 gem 'solid_queue'

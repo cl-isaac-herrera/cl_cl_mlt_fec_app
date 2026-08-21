@@ -814,6 +814,116 @@ columna. La regla completa está en `CLAUDE.md` §31. Lo que quedó sin limpiar:
 
 ---
 
+## Ajustes de la instalación — tabla `settings` migrada, UI todavía en el .NET
+
+La tabla, el modelo, el catálogo del seed y la lógica de negocio ya están
+(`db/migrate/20260821120000_create_settings.rb`, `app/models/setting.rb`). Lo que
+falta es el endpoint nativo y la pantalla. Ver `docs/CONSULTA-BASE-EXTERNA.md` §2.
+
+- [ ] **No existe `Api::SettingsController` — la pantalla sigue leyendo el .NET.**
+      `general_configs_controller.js` llama `GET /api/settings` y
+      `PATCH /api/settings` (con el `Code` en el cuerpo), que caen al catch-all del
+      proxy. La tabla de Rails está sembrada pero **nadie la lee**.
+      **Pendiente:** `GET /api/settings` y `PATCH /api/settings/:code` — el `code`
+      es la llave natural y va en la URL, no en el cuerpo (§28).
+
+- [ ] **La serialización tiene que respetar `is_visible`.**
+      Un ajuste oculto devuelve `Value: nil` y `HasValue: true`
+      (`Setting#visible_value` / `#value?`). Sin el segundo campo, un input de
+      contraseña vacío es indistinguible de uno sin configurar y el operador no
+      sabe si tiene que volver a escribirla.
+
+- [ ] **⚠️ `CrystalPassword` viaja HOY en claro al browser.**
+      `general_configs_controller.js:137` hace
+      `this.crystalPasswordInputTarget.value = crystalP.Json` y la enmascara solo
+      con un `type="password"` que tiene botón para revelarla. El endpoint del
+      .NET la manda entera.
+      **Pendiente:** al migrar la pantalla, `CRYSTAL_PASSWORD` ya está sembrada
+      con `is_visible: false`, así que el valor deja de salir del servidor. Hasta
+      entonces la fuga sigue viva.
+
+- [ ] **La columna del valor se llama `Json` en el .NET y `value` en Rails.**
+      En el origen nunca guardó JSON: son strings planos, y el nombre venía de un
+      tipo que se abandonó.
+      **Pendiente:** el JS lee `s.Json`; al migrar el endpoint pasa a `Value`.
+
+- [ ] **Falta la tarea de importación de los `Setting` del .NET.**
+      El origen es SQL Server `CLSQL03` / `CL_CL_MLT_FEC_APP_44`, tabla `Setting`.
+      **La importación DEBE traducir por `db/setting_code_map.yml`**: los `code`
+      del origen están en PascalCase y `Setting::CODE_FORMAT` los rechaza, así que
+      sin traducir la inserción falla — o peor, si alguien relaja la validación,
+      quedan filas duplicadas y la pantalla muestra la sembrada (vacía) mientras
+      el valor real se queda en la huérfana, sin error.
+
+- [ ] **No hay un permiso propio para editar ajustes.**
+      La pantalla se gatea con `Configurations_General_Access`, que es acceso de
+      lectura al módulo. Editar credenciales de base de datos y del servidor de
+      Crystal merece su propio permiso.
+      **Pendiente:** decidir si va uno nuevo (`Configurations_Settings_Update`) o
+      alcanza con el existente, y si es nuevo, seguir §28 —migración de datos
+      además del `seeds.rb`, no un re-seed.
+
+---
+
+## Base de documentos — conector ODBC (`ExternalDb`)
+
+Conector a la base externa de documentos, que según la instalación corre sobre SQL
+Server o SAP HANA. Documentado completo en `docs/CONSULTA-BASE-EXTERNA.md`.
+
+> ⚠️ Esto **no** toca SAP. La base de compañía de SAP B1 sigue siendo 100% Service
+> Layer y `CLAUDE.md` §29 sigue vigente sin excepciones.
+
+- [x] **Conector implementado y probado sin servidor real.** Dialectos por motor,
+      cadena de conexión, calificación de objetos, `{CALL}` portable, paginación,
+      pool indexado por fingerprint de la configuración. 94 ejemplos.
+
+- [ ] **`ruby-odbc` no expone `SQL_ATTR_ACCESS_MODE`.**
+      Verificado: la gema define `SQL_AUTOCOMMIT` pero ninguna constante de access
+      mode, así que **la conexión no se puede abrir en modo lectura**.
+      **Workaround en la app:** `StatementGuard` (chequeo textual),
+      `autocommit = false` + `rollback` en cada sentencia, y sin ningún método
+      público que ejecute DML.
+      **La garantía real son los permisos del usuario de base de datos** —
+      `db_datareader` en SQL Server, `SELECT` sobre el esquema en HANA. Está en el
+      §5 del documento; hay que verificarlo al desplegar.
+      **Pendiente gema:** un `read_only=` o al menos exponer `set_option` con las
+      constantes de access mode. Es una gema de terceros (`ruby-odbc`), no un
+      submódulo de Clavisco, así que no hay a quién pedírselo — la alternativa es
+      pasar el entero 101 crudo a `set_option`, que quedó descartado por ser
+      comportamiento no documentado.
+
+- [ ] **`#call` no pasa por el guard de solo lectura.**
+      Un procedimiento almacenado hace lo que quiera y desde la app no hay forma de
+      saber si lee o escribe. Es el patrón de estas instalaciones
+      (`CALL <db-code>.SP1`), así que no se puede prohibir.
+      **Pendiente:** conceder `GRANT EXECUTE` procedimiento por procedimiento
+      —nunca sobre el esquema completo en HANA— y revisar qué hace cada uno. Un
+      procedimiento corre con los permisos de su dueño, así que puede escribir
+      aunque quien lo llama no pueda.
+
+- [ ] **El pool no se cierra al reciclar el worker de Puma.**
+      `ExternalDb::Pool.shutdown!` existe pero no lo llama nadie: un
+      `phased-restart` deja las conexiones ODBC colgadas del lado del servidor de
+      base hasta que expiren solas.
+      **Pendiente:** llamarlo desde `before_fork` / `on_worker_shutdown` en
+      `config/puma.rb`.
+
+- [ ] **Falta el botón "Probar conexión" en la pantalla.**
+      `ExternalDb::HealthCheck.call('DOCS_DB_ODBC')` ya devuelve motor, versión,
+      latencia y el motivo cuando falla, sin levantar nunca.
+      **Pendiente:** el endpoint que lo expone y el botón. Es lo único que le dice
+      al operador si los diez ajustes que llenó sirven.
+
+- [ ] **La paginación de HANA no exige `ORDER BY`.**
+      En SQL Server `OFFSET/FETCH` no compila sin él, así que el dialecto levanta;
+      en HANA `LIMIT/OFFSET` compila igual y solo se avisa en el log. Pero el
+      segundo motivo del `ORDER BY` aplica a los dos motores: sin orden
+      determinista, dos páginas consecutivas pueden repetir u omitir filas.
+      **Pendiente:** decidir si se endurece a error en HANA también. Se dejó como
+      advertencia para no romper una consulta que hoy funcione.
+
+---
+
 ## Cumplimiento del estándar — pendientes y correcciones a proponer
 
 Revisión contra `ClavisCo/platform-standards` (commit `84752f1`). Lo que ya se corrigió está

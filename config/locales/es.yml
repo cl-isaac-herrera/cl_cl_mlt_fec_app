@@ -43,6 +43,17 @@ es:
         record_invalid: "La validación falló: %{errors}"
         taken: "ya está en uso"
 
+      # Mensajes específicos de un modelo. Sin esta clave, `message: :invalid_format`
+      # en `Setting#code` sale como el bloque literal "Translation missing…"
+      # directo al usuario (§30).
+      models:
+        setting:
+          attributes:
+            code:
+              invalid_format: >-
+                debe seguir la convención {DOMINIO}_{CAMPO} en mayúsculas, con
+                guiones bajos como separador (por ejemplo DOCS_DB_ODBC_USER)
+
     # Nombres visibles de modelos y atributos: sin esto el mensaje dice
     # "Sl url no puede estar en blanco" en vez de "La URL del Service Layer...".
     models:
@@ -67,6 +78,9 @@ es:
       sl_resource:
         one: Consulta de Service Layer
         other: Consultas de Service Layer
+      setting:
+        one: Ajuste
+        other: Ajustes
 
     attributes:
       connection:
@@ -75,6 +89,11 @@ es:
         sl_type: "El motor de base de datos"
       role:
         name: "El nombre"
+      setting:
+        code: "El código"
+        group_code: "El grupo"
+        description: "La descripción"
+        value: "El valor"
       permission:
         name: "El nombre"
         description: "La descripción"

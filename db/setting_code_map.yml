@@ -1,0 +1,57 @@
+# Correspondencia entre los `code` de la tabla `Setting` del API .NET y los de
+# este producto.
+#
+# ── Para qué existe ──────────────────────────────────────────────────────────
+# Los ajustes se importan desde SQL Server (`CLSQL03` / `CL_CL_MLT_FEC_APP_44`,
+# tabla `Setting`), y ahí conservan el `code` viejo. El `code` es la llave
+# natural —no hay Id que preservar—, así que una importación que no traduzca
+# inserta filas nuevas con el nombre de origen al lado de las sembradas, y queda
+# el ajuste duplicado: la pantalla muestra el sembrado (vacío) y el valor real se
+# queda en la fila huérfana, sin que nadie reciba un error.
+#
+# La tarea de importación DEBE leer este archivo y traducir antes de insertar.
+#
+# ── Por qué se renombran ─────────────────────────────────────────────────────
+# El origen usa PascalCase descriptivo (`CedulaProveedorSistemas`), que no
+# permite agrupar: el prefijo es lo que junta los ajustes de un mismo dominio en
+# la pantalla. La convención de este producto es `{DOMINIO}_{SUBDOMINIO}_{CAMPO}`
+# en SCREAMING_SNAKE, validada por `Setting::CODE_FORMAT` — o sea que un `code`
+# del origen **no puede** insertarse sin traducir: el modelo lo rechaza.
+#
+# ── Regla al agregar una entrada ─────────────────────────────────────────────
+# El `to` tiene que existir en el catálogo de `db/seeds.rb` y su `group_code`
+# tiene que ser el prefijo del `code`. Un ajuste del origen que no tenga sucesor
+# va en `orphaned:`, no en `renames:` con un `to` inventado.
+---
+renames:
+  # Cédula del proveedor de sistemas, que se incrusta en el XML de Hacienda.
+  # La consume el módulo Configuraciones → Generales.
+  - from: CedulaProveedorSistemas
+    to:   GENERAL_PROVIDER_ID
+    note: >-
+      Rename puro: el nombre nuevo no existe en el origen. Se le quita el
+      "Cedula" del nombre porque el dato es el identificador tributario del
+      proveedor y el tipo de documento depende del país; `PROVIDER_ID` no
+      presupone que sea una cédula costarricense.
+
+  # Usuario del servidor de Crystal Reports, para generar el PDF del documento.
+  - from: CrystalUser
+    to:   CRYSTAL_USER
+    note: >-
+      Rename puro. Solo cambia la caja: PascalCase → SCREAMING_SNAKE, para que
+      comparta el prefijo `CRYSTAL_` con la contraseña y las dos queden en el
+      mismo grupo de la pantalla.
+
+  # Contraseña del servidor de Crystal Reports.
+  - from: CrystalPassword
+    to:   CRYSTAL_PASSWORD
+    note: >-
+      Rename puro, pero NO es solo un cambio de nombre: se siembra con
+      `is_visible: false`. En el .NET este valor viaja en claro al browser y la
+      UI lo enmascara con un `type="password"` que tiene botón para revelarlo
+      (`general_configs_controller.js:137`). Al importar, el valor se copia a la
+      columna cifrada y deja de salir del servidor.
+
+# Ajustes del origen que NO tienen sucesor en este producto. No hay nada que
+# traducir; se listan para que nadie les busque un equivalente que no existe.
+orphaned: []

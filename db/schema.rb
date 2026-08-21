@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_19_140000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_21_120000) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
@@ -103,6 +103,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_19_140000) do
     t.string "name", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
+  end
+
+  create_table "settings", force: :cascade do |t|
+    t.string "code", null: false
+    t.datetime "created_at", null: false
+    t.string "created_by"
+    t.string "description", null: false
+    t.string "group_code", null: false
+    t.boolean "is_active", default: true, null: false
+    t.boolean "is_visible", default: true, null: false
+    t.datetime "updated_at", null: false
+    t.string "updated_by"
+    t.text "value"
+    t.index ["code"], name: "index_settings_on_code", unique: true
+    t.index ["group_code"], name: "index_settings_on_group_code"
   end
 
   create_table "sl_resources", force: :cascade do |t|

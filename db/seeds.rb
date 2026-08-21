@@ -516,3 +516,99 @@ ActiveRecord::Base.transaction do
        "(#{SlResource.views.count} vistas" \
        "#{preserved.positive? ? "; #{preserved} personalizadas, sin tocar" : ''})"
 end
+
+# ---------------------------------------------------------------------------
+# 6. Ajustes de la instalación (`settings`).
+#
+#    Cada fila se declara ACÁ y sin valor: el catálogo es del producto, el valor
+#    lo pone el operador desde Configuraciones → Generales. `code`, `group_code`,
+#    `description` e `is_visible` son metadatos y la interfaz no los edita.
+#
+#    ⚠️ ESTE SEED NO BORRA. Es la diferencia con el de `permissions`, que hace
+#    `delete_all` para poder forzar los Id del origen. Acá los valores son
+#    secretos que escribió el operador —credenciales de base de datos, la
+#    contraseña de Crystal—: un `delete_all` los borraría y la instalación
+#    quedaría muda hasta que alguien los volviera a escribir a mano, sin ningún
+#    error que dijera qué pasó. El seed hace upsert por `code` y **nunca asigna
+#    `value`**.
+#
+#    Ver `db/setting_code_map.yml` para la equivalencia con los `code` del .NET.
+# ---------------------------------------------------------------------------
+
+# Grupo de conexión a la base externa de documentos.
+#
+# El grupo describe el destino COMPLETO, pero los campos no significan lo mismo
+# en los dos motores. Lo resuelve el dialecto (`ExternalDb::Dialect::*`); acá se
+# documenta para que quien llene la pantalla sepa qué escribir:
+#
+#   SQL Server │ Server=CLSQL01;Database=CL_DOCS      → PORT casi nunca hace
+#              │                                        falta (1433 implícito)
+#   HANA       │ SERVERNODE=clhna721:30015            → PORT OBLIGATORIO, y
+#              │                                        DATABASE no va en el DSN:
+#              │                                        califica cada consulta
+#              │                                        (CALL <db>.SP1)
+DOCS_DB_SETTINGS = [
+  # code                          description                                              is_visible
+  ['DOCS_DB_ODBC_ENGINE',         'Motor de la base de documentos (SQL o HANA)',            true],
+  ['DOCS_DB_ODBC_DRIVER',         'Driver ODBC instalado en el servidor',                   true],
+  ['DOCS_DB_ODBC_SERVER',         'Nombre DNS del servidor de base de datos',               true],
+  ['DOCS_DB_ODBC_PORT',           'Puerto del servidor (obligatorio en HANA)',              true],
+  ['DOCS_DB_ODBC_DATABASE',       'Código de la base de datos o catálogo',                  true],
+  ['DOCS_DB_ODBC_SCHEMA',         'Esquema de los objetos (dbo en SQL Server)',             true],
+  ['DOCS_DB_ODBC_USER',           'Usuario de la base de datos (solo lectura)',              true],
+  # La única del grupo que no se devuelve: es la razón de ser de `is_visible`.
+  ['DOCS_DB_ODBC_PASSWORD',       'Contraseña del usuario de la base de datos',             false],
+  ['DOCS_DB_ODBC_QUERY_TIMEOUT',  'Tiempo máximo de una consulta, en segundos',             true],
+  ['DOCS_DB_ODBC_EXTRA_PARAMS',   'Parámetros extra de la cadena ODBC (clave=valor;…)',     true]
+].freeze
+
+# Ajustes heredados del .NET. Los `code` cambiaron de PascalCase a la convención
+# de este producto; la equivalencia está en `db/setting_code_map.yml` y la
+# importación tiene que traducir o deja el ajuste duplicado.
+LEGACY_SETTINGS = [
+  ['GENERAL_PROVIDER_ID', 'Identificación del proveedor de sistemas',   true],
+  ['CRYSTAL_USER',        'Usuario del servidor de Crystal Reports',    true],
+  # `is_visible: false` es el arreglo de la fuga: hoy el .NET manda esta
+  # contraseña en claro al browser (`general_configs_controller.js:137`).
+  ['CRYSTAL_PASSWORD',    'Contraseña del servidor de Crystal Reports', false]
+].freeze
+
+# El grupo es el prefijo del `code` sin el campo, y se declara junto a las filas
+# en vez de derivarlo: `DOCS_DB_ODBC_QUERY_TIMEOUT` partido por el último `_`
+# daría el grupo equivocado (ver el encabezado de la migración).
+SETTING_GROUPS = {
+  'DOCS_DB_ODBC' => DOCS_DB_SETTINGS,
+  'GENERAL'      => LEGACY_SETTINGS.select { |code, _, _| code.start_with?('GENERAL_') },
+  'CRYSTAL'      => LEGACY_SETTINGS.select { |code, _, _| code.start_with?('CRYSTAL_') }
+}.freeze
+
+ActiveRecord::Base.transaction do
+  created = 0
+
+  SETTING_GROUPS.each do |group_code, rows|
+    rows.each do |code, description, is_visible|
+      # `unscoped`: un ajuste dado de baja tiene que reactivarse, no duplicarse.
+      # El índice único de `code` no excluye a las inactivas, así que sin esto el
+      # `find_or_initialize_by` no la encontraría e intentaría insertar otra
+      # igual — y el que se perdería es el que TIENE el valor configurado.
+      record = Setting.unscoped.find_or_initialize_by(code: code)
+      created += 1 unless record.persisted?
+
+      record.group_code  = group_code
+      record.description = description
+      record.is_visible  = is_visible
+      record.is_active   = true
+
+      # `value` NO se asigna. Ni acá ni en ninguna otra rama de este archivo:
+      # es lo único que escribe el operador, y el seed corre en instalaciones
+      # que ya lo tienen configurado.
+      record.save!
+    end
+  end
+
+  configured = Setting.unscoped.where.not(value: nil).count
+  total      = Setting.unscoped.count
+
+  puts "Ajustes: #{total} (#{created} nuevos, #{configured} con valor configurado, " \
+       "#{Setting.unscoped.where(is_visible: false).count} ocultos)"
+end
