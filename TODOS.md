@@ -814,38 +814,35 @@ columna. La regla completa está en `CLAUDE.md` §31. Lo que quedó sin limpiar:
 
 ---
 
-## Ajustes de la instalación — tabla `settings` migrada, UI todavía en el .NET
+## Ajustes de la instalación — tabla `settings`, pantalla migrada
 
-La tabla, el modelo, el catálogo del seed y la lógica de negocio ya están
-(`db/migrate/20260821120000_create_settings.rb`, `app/models/setting.rb`). Lo que
-falta es el endpoint nativo y la pantalla. Ver `docs/CONSULTA-BASE-EXTERNA.md` §2.
+La tabla, el modelo, el catálogo del seed, los endpoints nativos y la pantalla ya
+están (`db/migrate/20260821120000_create_settings.rb`, `app/models/setting.rb`,
+`app/controllers/api/settings_controller.rb`,
+`app/views/configurations/general/index.html.erb`). Ver
+`docs/CONSULTA-BASE-EXTERNA.md` §2.
 
-- [ ] **No existe `Api::SettingsController` — la pantalla sigue leyendo el .NET.**
-      `general_configs_controller.js` llama `GET /api/settings` y
-      `PATCH /api/settings` (con el `Code` en el cuerpo), que caen al catch-all del
-      proxy. La tabla de Rails está sembrada pero **nadie la lee**.
-      **Pendiente:** `GET /api/settings` y `PATCH /api/settings/:code` — el `code`
-      es la llave natural y va en la URL, no en el cuerpo (§28).
+- [x] **`Api::SettingsController`.** `GET /api/settings?group=` y
+      `PATCH /api/settings/:code` — el `code` es la llave natural y va en la URL,
+      no en el cuerpo como en el .NET (§28). La pantalla dejó de caer al proxy.
 
-- [ ] **La serialización tiene que respetar `is_visible`.**
-      Un ajuste oculto devuelve `Value: nil` y `HasValue: true`
-      (`Setting#visible_value` / `#value?`). Sin el segundo campo, un input de
-      contraseña vacío es indistinguible de uno sin configurar y el operador no
-      sabe si tiene que volver a escribirla.
+- [x] **La serialización respeta `is_visible`.** Un ajuste oculto devuelve
+      `Value: nil` y `HasValue: true` (`Setting#visible_value` / `#value?`), y la
+      pantalla usa el segundo para el placeholder: sin él, un input de contraseña
+      vacío es indistinguible de uno sin configurar.
 
-- [ ] **⚠️ `CrystalPassword` viaja HOY en claro al browser.**
-      `general_configs_controller.js:137` hace
-      `this.crystalPasswordInputTarget.value = crystalP.Json` y la enmascara solo
-      con un `type="password"` que tiene botón para revelarla. El endpoint del
-      .NET la manda entera.
-      **Pendiente:** al migrar la pantalla, `CRYSTAL_PASSWORD` ya está sembrada
-      con `is_visible: false`, así que el valor deja de salir del servidor. Hasta
-      entonces la fuga sigue viva.
+- [x] **⚠️ La fuga de `CrystalPassword` está cerrada.** `CRYSTAL_PASSWORD` está
+      sembrada con `is_visible: false` y el endpoint nativo no devuelve su valor,
+      así que la contraseña ya no llega al browser. Hay un spec que falla si
+      alguien la vuelve a incluir en la respuesta.
 
-- [ ] **La columna del valor se llama `Json` en el .NET y `value` en Rails.**
-      En el origen nunca guardó JSON: son strings planos, y el nombre venía de un
-      tipo que se abandonó.
-      **Pendiente:** el JS lee `s.Json`; al migrar el endpoint pasa a `Value`.
+- [x] **La columna del valor se llama `Json` en el .NET y `value` en Rails.**
+      El JS ya lee `Value`; no queda ninguna referencia a `Json` ni a los `code`
+      en PascalCase (`grep -rn "CedulaProveedorSistemas\|CrystalUser" app/javascript`).
+
+- [x] **Botón "Probar conexión".** `POST /api/external_db_health_checks` sobre
+      `ExternalDb::HealthCheck`, con lista blanca de grupos. Prueba con los
+      valores **guardados**, y la pantalla avisa si hay cambios sin guardar.
 
 - [ ] **Falta la tarea de importación de los `Setting` del .NET.**
       El origen es SQL Server `CLSQL03` / `CL_CL_MLT_FEC_APP_44`, tabla `Setting`.
@@ -855,13 +852,25 @@ falta es el endpoint nativo y la pantalla. Ver `docs/CONSULTA-BASE-EXTERNA.md` �
       quedan filas duplicadas y la pantalla muestra la sembrada (vacía) mientras
       el valor real se queda en la huérfana, sin error.
 
-- [ ] **No hay un permiso propio para editar ajustes.**
-      La pantalla se gatea con `Configurations_General_Access`, que es acceso de
-      lectura al módulo. Editar credenciales de base de datos y del servidor de
-      Crystal merece su propio permiso.
-      **Pendiente:** decidir si va uno nuevo (`Configurations_Settings_Update`) o
-      alcanza con el existente, y si es nuevo, seguir §28 —migración de datos
-      además del `seeds.rb`, no un re-seed.
+- [ ] **No hay un permiso propio para editar ajustes — decisión tomada: se reusa
+      el existente.** `Api::SettingsController` y
+      `Api::ExternalDbHealthChecksController` exigen `Configurations_General_Access`,
+      que es acceso de **lectura** al módulo: quien puede abrir la pantalla puede
+      escribir credenciales de base de datos y del servidor de Crystal.
+      Se resolvió así a propósito, para no inventar un permiso de paso.
+      **Pendiente:** si más adelante hace falta separarlo, va
+      `Configurations_Settings_Update` siguiendo §28 —migración de datos además
+      del `seeds.rb`, no un re-seed— y de la mano un gate de UI por §26
+      (deshabilitar con tooltip, no ocultar).
+
+- [ ] **Un campo oculto no se puede vaciar desde la pantalla.**
+      El valor de un ajuste con `is_visible: false` no sale del servidor, así que
+      el input nace vacío y su baseline es la cadena vacía: dejarlo en blanco no
+      cuenta como cambio y no se manda. Es lo que protege la contraseña guardada
+      de un guardado distraído, pero también significa que borrarla hay que
+      hacerlo desde la base.
+      **Pendiente:** si el operador lo necesita, un botón "Borrar valor" que mande
+      `PATCH` con `Value: ""` explícito (el endpoint ya lo soporta).
 
 ---
 
@@ -908,11 +917,14 @@ Server o SAP HANA. Documentado completo en `docs/CONSULTA-BASE-EXTERNA.md`.
       **Pendiente:** llamarlo desde `before_fork` / `on_worker_shutdown` en
       `config/puma.rb`.
 
-- [ ] **Falta el botón "Probar conexión" en la pantalla.**
-      `ExternalDb::HealthCheck.call('DOCS_DB_ODBC')` ya devuelve motor, versión,
-      latencia y el motivo cuando falla, sin levantar nunca.
-      **Pendiente:** el endpoint que lo expone y el botón. Es lo único que le dice
-      al operador si los diez ajustes que llenó sirven.
+- [x] **Botón "Probar conexión" en la pantalla.**
+      `POST /api/external_db_health_checks` expone
+      `ExternalDb::HealthCheck.call('DOCS_DB_ODBC')` —motor, versión, latencia y
+      el motivo cuando falla— y el card "Base de documentos" de Configuraciones →
+      Generales lo muestra. Una conexión que falla responde 200 con `Ok: false`:
+      la verificación se hizo y su resultado ES la respuesta.
+      **Sigue sin cobertura la conexión real**, que necesita un servidor de base
+      al otro lado; el spec del endpoint mockea `HealthCheck`.
 
 - [ ] **La paginación de HANA no exige `ORDER BY`.**
       En SQL Server `OFFSET/FETCH` no compila sin él, así que el dialecto levanta;

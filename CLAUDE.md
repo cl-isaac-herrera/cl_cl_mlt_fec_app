@@ -1603,6 +1603,9 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 | `POST` + `DELETE /api/Permission/bulk-global-permissions` | `PUT /api/users/:id/permissions` |
 | `GET /api/Permission/global-permissions` | `GET /api/permissions/catalog?type=global` |
 | (nuevo — la compañía activa era `sessionStorage`) | `PUT /api/session/company` |
+| `GET /api/settings` (todos los ajustes) | `GET /api/settings?group=` — `Value` sale de `visible_value` y `HasValue` dice si hay uno guardado |
+| `PATCH /api/settings` (`{ Code, Json, IsActive }`) | `PATCH /api/settings/:code` ⚠️ el `code` pasa del cuerpo al path y el cuerpo queda en `{ Value }` |
+| (nuevo — no existía) | `POST /api/external_db_health_checks` — botón "Probar conexión" |
 
 > ⚠️ `GET /api/permissions/catalog` está mal nombrado a propósito: el catálogo
 > debería ser el `index` del recurso, pero `GET /api/permissions` ya estaba tomado por
@@ -2379,6 +2382,26 @@ Todo parámetro de configuración que el operador administra desde la interfaz v
 > **Regla:** el catálogo se declara en `db/seeds.rb`. Desde la interfaz se escribe **únicamente
 > `value`**, por `Setting#update_value!`. `code`, `group_code`, `description` e `is_visible` son
 > metadatos del producto y ningún endpoint los toca.
+
+### La pantalla y sus endpoints
+
+Configuraciones → Generales (`configurations/general/index.html.erb` +
+`general_configs_controller.js`) es la única pantalla que los administra, con
+`GET /api/settings` y `PATCH /api/settings/:code`.
+
+- **Agregar un ajuste al catálogo es agregar una fila en `seeds.rb` y un
+  `render 'configurations/general/setting_field'` en la vista.** Los inputs no tienen un target
+  por campo: comparten el target `settingInput` y se identifican por `data-setting-code`. Nada
+  en el JS enumera los ajustes.
+- **Se manda un PATCH por ajuste cambiado**, no la sección entera: cada ajuste es su propio
+  recurso. Por eso, si uno falla a mitad de la tanda, la pantalla recarga —algunos quedaron
+  guardados y otros no, y el formulario estaría mintiendo.
+- **Un campo oculto vacío no se manda.** Su baseline es la cadena vacía, así que dejarlo en
+  blanco no cuenta como cambio y la contraseña guardada sobrevive. Es la consecuencia directa
+  de no devolver nunca el valor: la pantalla no puede saber si lo que muestra es lo guardado.
+- **`POST /api/external_db_health_checks`** es el botón "Probar conexión", y prueba con los
+  valores **guardados** (el servidor arma la cadena desde `settings`): si hay cambios sin
+  guardar, la pantalla lo avisa en el resultado.
 
 ### Convención del `code`
 

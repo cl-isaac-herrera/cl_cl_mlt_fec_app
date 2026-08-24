@@ -139,6 +139,22 @@ Rails.application.routes.draw do
     # recurso y la query de las consultas que la app ya sabe consumir.
     resources :sl_resources, only: %i[index show update]
 
+    # Ajustes de la instalación (pantalla Configuraciones → Generales). Sin
+    # `create` ni `destroy`: el catálogo lo declara `db/seeds.rb` y la pantalla
+    # solo escribe el valor.
+    #
+    # `param: :code` porque la llave natural es el `code` y no el id — el .NET
+    # lo mandaba en el cuerpo del PATCH (§28). La restricción replica
+    # `Setting::CODE_FORMAT`, así que un `code` que el catálogo no puede tener
+    # ni siquiera entra al controller.
+    resources :settings, only: %i[index update], param: :code,
+                         constraints: { code: /[A-Z][A-Z0-9]*(_[A-Z0-9]+)+/ }
+
+    # Prueba de conexión a la base de documentos, con los ajustes ya guardados.
+    # Alimenta el botón "Probar conexión" de la misma pantalla: es lo único que
+    # le dice al operador si los diez campos que llenó sirven.
+    resources :external_db_health_checks, only: [:create]
+
     put 'session/company', to: 'sessions#update_company'
   end
 

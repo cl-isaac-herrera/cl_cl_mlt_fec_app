@@ -6,30 +6,22 @@
      class="p-6">
 
   <%# ---------------------------------------------------------------- %>
-  <%# GRID: 2 columnas fijas. El card Crystal span 2 cols (fila propia). %>
+  <%# GRID: 2 columnas fijas. Los cards de Crystal y Base de documentos %>
+  <%# ocupan la fila completa (grid-column: 1 / -1).                    %>
   <%# ---------------------------------------------------------------- %>
   <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:1.5rem;">
 
   <%# ---------------------------------------------------------------- %>
-  <%# SECCIÓN: Formato de Impresión por Defecto %>
+  <%# SECCIÓN: Formato de impresión por defecto                        %>
+  <%# El único card que NO sale de `settings`: el archivo lo administra %>
+  <%# todavía el .NET por proxy (GET/PATCH /api/GeneralConfigs).        %>
   <%# ---------------------------------------------------------------- %>
   <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6">
 
-    <%# Loader a nivel de sección (sin texto) %>
-    <div data-general-configs-target="formatLoader"
-         class="hidden absolute inset-0 z-30 flex items-center justify-center bg-white/60 rounded-xl">
-      <svg width="40" height="40" viewBox="0 0 50 50" aria-hidden="true">
-        <circle cx="25" cy="25" r="20" fill="none" stroke="#e5e7eb" stroke-width="5"></circle>
-        <circle cx="25" cy="25" r="20" fill="none" stroke="#2563eb" stroke-width="5"
-                stroke-linecap="round" stroke-dasharray="80 200">
-          <animateTransform attributeName="transform" attributeType="XML" type="rotate"
-                            from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"></animateTransform>
-        </circle>
-      </svg>
-    </div>
+    <%= render 'configurations/general/section_loader', target: 'formatLoader' %>
 
     <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-      Formato de Impresión
+      Formato de impresión
     </h2>
 
     <div class="flex flex-col md:flex-row gap-4 items-start md:items-end">
@@ -37,7 +29,7 @@
       <%# Campo readonly + botones sufijo (patrón matSuffix — CLAUDE.md §4) %>
       <div class="flex-1">
         <label class="block text-sm font-medium text-gray-700 mb-1">
-          Formato de Impresión por Defecto
+          Formato de impresión por defecto
         </label>
         <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden
                     focus-within:ring-2 focus-within:ring-blue-500 bg-gray-50">
@@ -102,7 +94,7 @@
 
     </div>
 
-    <%# Metadato de auditoría — última actualización (CLAUDE.md §24) %>
+    <%# Metadato de auditoría — última actualización %>
     <div data-general-configs-target="formatAudit"
          class="hidden mt-3 pt-2.5 border-t border-gray-100 flex items-center gap-1.5 text-xs text-gray-400">
       <span class="material-icons text-sm leading-none">history</span>
@@ -111,47 +103,31 @@
   </div>
 
   <%# ---------------------------------------------------------------- %>
-  <%# SECCIÓN: Cédula Proveedor Sistemas %>
+  <%# SECCIÓN: Proveedor de sistemas (grupo GENERAL)                   %>
   <%# ---------------------------------------------------------------- %>
   <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6">
 
-    <%# Loader a nivel de sección (sin texto) %>
-    <div data-general-configs-target="cedulaLoader"
-         class="hidden absolute inset-0 z-30 flex items-center justify-center bg-white/60 rounded-xl">
-      <svg width="40" height="40" viewBox="0 0 50 50" aria-hidden="true">
-        <circle cx="25" cy="25" r="20" fill="none" stroke="#e5e7eb" stroke-width="5"></circle>
-        <circle cx="25" cy="25" r="20" fill="none" stroke="#2563eb" stroke-width="5"
-                stroke-linecap="round" stroke-dasharray="80 200">
-          <animateTransform attributeName="transform" attributeType="XML" type="rotate"
-                            from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"></animateTransform>
-        </circle>
-      </svg>
-    </div>
+    <%= render 'configurations/general/section_loader', target: 'groupLoader', group: 'GENERAL' %>
 
     <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-      Configuración de Proveedor
+      Configuración de proveedor
     </h2>
 
     <div class="flex flex-col md:flex-row gap-4 items-start md:items-end">
 
       <div class="flex-1">
-        <label class="block text-sm font-medium text-gray-700 mb-1">
-          Cédula Proveedor Sistemas
-        </label>
-        <input type="text"
-               data-general-configs-target="cedulaInput"
-               data-action="input->general-configs#onCedulaInput"
-               data-testid="input-cedula"
-               placeholder="Ej: 3-101-123456"
-               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+        <%= render 'configurations/general/setting_field',
+              code:        'GENERAL_PROVIDER_ID',
+              label:       'Cédula del proveedor de sistemas',
+              placeholder: 'Ej: 3-101-123456' %>
       </div>
 
       <div class="shrink-0">
         <button type="button"
-                data-action="click->general-configs#updateCedula"
-                data-general-configs-target="btnUpdateCedula"
-                data-testid="btn-update-cedula"
+                data-action="click->general-configs#saveGroup"
+                data-general-configs-target="groupButton"
+                data-setting-group="GENERAL"
+                data-testid="btn-update-general"
                 disabled
                 class="flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm
                        font-medium hover:bg-blue-700 transition-colors
@@ -163,31 +139,20 @@
 
     </div>
 
-    <%# Metadato de auditoría — última actualización (CLAUDE.md §24) %>
-    <div data-general-configs-target="cedulaAudit"
+    <div data-general-configs-target="groupAudit" data-setting-group="GENERAL"
          class="hidden mt-3 pt-2.5 border-t border-gray-100 flex items-center gap-1.5 text-xs text-gray-400">
       <span class="material-icons text-sm leading-none">history</span>
-      <span data-general-configs-target="cedulaAuditText"></span>
+      <span data-audit-text></span>
     </div>
   </div>
 
   <%# ---------------------------------------------------------------- %>
-  <%# SECCIÓN: Credenciales Crystal — span 2 cols %>
+  <%# SECCIÓN: Credenciales Crystal (grupo CRYSTAL) — fila completa    %>
   <%# ---------------------------------------------------------------- %>
-  <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+  <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6"
+       style="grid-column: 1 / -1;">
 
-    <%# Loader a nivel de sección (sin texto) %>
-    <div data-general-configs-target="crystalLoader"
-         class="hidden absolute inset-0 z-30 flex items-center justify-center bg-white/60 rounded-xl">
-      <svg width="40" height="40" viewBox="0 0 50 50" aria-hidden="true">
-        <circle cx="25" cy="25" r="20" fill="none" stroke="#e5e7eb" stroke-width="5"></circle>
-        <circle cx="25" cy="25" r="20" fill="none" stroke="#2563eb" stroke-width="5"
-                stroke-linecap="round" stroke-dasharray="80 200">
-          <animateTransform attributeName="transform" attributeType="XML" type="rotate"
-                            from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"></animateTransform>
-        </circle>
-      </svg>
-    </div>
+    <%= render 'configurations/general/section_loader', target: 'groupLoader', group: 'CRYSTAL' %>
 
     <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
       Credenciales Crystal
@@ -204,44 +169,25 @@
     <div class="flex flex-col md:flex-row gap-4 items-start md:items-end">
 
       <div class="flex-1">
-        <label class="block text-sm font-medium text-gray-700 mb-1">
-          Usuario
-        </label>
-        <input type="text"
-               data-general-configs-target="crystalUserInput"
-               data-action="input->general-configs#onCrystalInput"
-               data-testid="input-crystal-user"
-               placeholder="Usuario de Crystal Reports"
-               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                      focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+        <%= render 'configurations/general/setting_field',
+              code:        'CRYSTAL_USER',
+              label:       'Usuario',
+              placeholder: 'Usuario de Crystal Reports' %>
       </div>
 
       <div class="flex-1">
-        <label class="block text-sm font-medium text-gray-700 mb-1">
-          Contraseña
-        </label>
-        <div class="relative">
-          <input type="password"
-                 data-general-configs-target="crystalPasswordInput"
-                 data-action="input->general-configs#onCrystalInput"
-                 data-testid="input-crystal-password"
-                 placeholder="Contraseña de Crystal Reports"
-                 class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm
-                        focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-          <button type="button"
-                  data-action="click->general-configs#toggleCrystalPassword"
-                  data-general-configs-target="crystalPasswordToggle"
-                  title="Mostrar/ocultar contraseña"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-gray-700 transition-colors">
-            <span class="material-icons text-base">visibility_off</span>
-          </button>
-        </div>
+        <%= render 'configurations/general/setting_field',
+              code:        'CRYSTAL_PASSWORD',
+              label:       'Contraseña',
+              type:        'password',
+              placeholder: 'Contraseña de Crystal Reports' %>
       </div>
 
       <div class="shrink-0">
         <button type="button"
-                data-action="click->general-configs#updateCrystal"
-                data-general-configs-target="btnUpdateCrystal"
+                data-action="click->general-configs#saveGroup"
+                data-general-configs-target="groupButton"
+                data-setting-group="CRYSTAL"
                 data-testid="btn-update-crystal"
                 disabled
                 class="flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm
@@ -254,15 +200,150 @@
 
     </div>
 
-    <%# Metadato de auditoría — última actualización (CLAUDE.md §24) %>
-    <div data-general-configs-target="crystalAudit"
+    <div data-general-configs-target="groupAudit" data-setting-group="CRYSTAL"
          class="hidden mt-3 pt-2.5 border-t border-gray-100 flex items-center gap-1.5 text-xs text-gray-400">
       <span class="material-icons text-sm leading-none">history</span>
-      <span data-general-configs-target="crystalAuditText"></span>
+      <span data-audit-text></span>
     </div>
   </div>
 
-  </div><%# /grid auto-fit %>
+  <%# ---------------------------------------------------------------- %>
+  <%# SECCIÓN: Base de documentos (grupo DOCS_DB_ODBC) — fila completa %>
+  <%#                                                                  %>
+  <%# Los mismos campos NO significan lo mismo en los dos motores: el  %>
+  <%# puerto es obligatorio en HANA y la base de datos no entra al DSN.%>
+  <%# Los textos de ayuda los reescribe el controller según el motor.  %>
+  <%# ---------------------------------------------------------------- %>
+  <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6"
+       style="grid-column: 1 / -1;">
 
+    <%= render 'configurations/general/section_loader', target: 'groupLoader', group: 'DOCS_DB_ODBC' %>
+
+    <div class="flex items-start justify-between gap-4 mb-4">
+      <div>
+        <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+          Base de documentos
+        </h2>
+        <p class="mt-1 text-xs text-gray-400">
+          Conexión ODBC a la base donde el servicio de facturación deja los documentos.
+        </p>
+      </div>
+
+      <button type="button"
+              data-action="click->general-configs#testExternalDb"
+              data-general-configs-target="btnTestDb"
+              data-testid="btn-test-db"
+              class="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 text-gray-700
+                     text-sm font-medium hover:bg-gray-50 transition-colors flex-shrink-0
+                     disabled:opacity-40 disabled:cursor-not-allowed">
+        <span class="material-icons text-base">cable</span>
+        <span>Probar conexión</span>
+      </button>
+    </div>
+
+    <%# Aviso de las diferencias del motor seleccionado. %>
+    <div data-general-configs-target="engineNotice"
+         class="hidden mb-4 flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
+      <span class="material-icons text-sm text-blue-500 flex-shrink-0 mt-px">info</span>
+      <p data-general-configs-target="engineNoticeText" class="text-xs text-blue-700"></p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+
+      <%= render 'configurations/general/setting_field',
+            code:    'DOCS_DB_ODBC_ENGINE',
+            label:   'Motor de base de datos',
+            type:    'select',
+            options: [['SQL', 'SQL Server'], ['HANA', 'SAP HANA']] %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'DOCS_DB_ODBC_DRIVER',
+            label:       'Driver ODBC',
+            placeholder: 'ODBC Driver 17 for SQL Server',
+            hint:        'Tal como está registrado en el servidor, sin llaves.' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'DOCS_DB_ODBC_SERVER',
+            label:       'Servidor',
+            placeholder: 'CLSQL01' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'DOCS_DB_ODBC_PORT',
+            label:       'Puerto',
+            placeholder: '30015' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'DOCS_DB_ODBC_DATABASE',
+            label:       'Base de datos',
+            placeholder: 'CL_DOCS' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'DOCS_DB_ODBC_SCHEMA',
+            label:       'Esquema',
+            placeholder: 'dbo' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'DOCS_DB_ODBC_USER',
+            label:       'Usuario',
+            placeholder: 'Usuario de solo lectura',
+            hint:        'Debe tener permisos de lectura únicamente.' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'DOCS_DB_ODBC_PASSWORD',
+            label:       'Contraseña',
+            type:        'password',
+            placeholder: 'Contraseña del usuario' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'DOCS_DB_ODBC_QUERY_TIMEOUT',
+            label:       'Tiempo máximo de consulta (segundos)',
+            type:        'number',
+            placeholder: '30' %>
+
+      <div class="md:col-span-2 xl:col-span-3">
+        <%= render 'configurations/general/setting_field',
+              code:        'DOCS_DB_ODBC_EXTRA_PARAMS',
+              label:       'Parámetros extra de la cadena ODBC',
+              placeholder: 'Encrypt=yes;TrustServerCertificate=yes',
+              hint:        'Opcional. Pares clave=valor separados por punto y coma.' %>
+      </div>
+
+    </div>
+
+    <%# Resultado de "Probar conexión". Una conexión que falla no es un error de
+        la pantalla: es el resultado de la prueba, y se muestra acá. %>
+    <div data-general-configs-target="healthResult"
+         class="hidden mt-4 flex items-start gap-2 rounded-lg border px-3 py-2.5">
+      <span data-general-configs-target="healthIcon"
+            class="material-icons text-sm flex-shrink-0 mt-px">info</span>
+      <div class="min-w-0">
+        <p data-general-configs-target="healthMessage" class="text-xs font-medium"></p>
+        <p data-general-configs-target="healthDetail" class="mt-0.5 text-xs opacity-80"></p>
+      </div>
+    </div>
+
+    <div class="mt-4 flex items-center justify-between gap-4">
+      <div data-general-configs-target="groupAudit" data-setting-group="DOCS_DB_ODBC"
+           class="hidden flex items-center gap-1.5 text-xs text-gray-400">
+        <span class="material-icons text-sm leading-none">history</span>
+        <span data-audit-text></span>
+      </div>
+
+      <button type="button"
+              data-action="click->general-configs#saveGroup"
+              data-general-configs-target="groupButton"
+              data-setting-group="DOCS_DB_ODBC"
+              data-testid="btn-update-docs-db"
+              disabled
+              class="ml-auto flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm
+                     font-medium hover:bg-blue-700 transition-colors
+                     disabled:opacity-40 disabled:cursor-not-allowed">
+        <span class="material-icons text-base">loop</span>
+        <span>Actualizar</span>
+      </button>
+    </div>
+  </div>
+
+  </div><%# /grid %>
 
 </div>
