@@ -1,0 +1,31 @@
+# Tareas periódicas — el cron de Solid Queue.
+#
+# Lo lee el Scheduler cuando arranca `bin/jobs`, y con eso llena la tabla
+# `solid_queue_recurring_tasks`. La aplicación web NO lee este archivo: sin un worker
+# corriendo, acá no pasa nada.
+#
+# `schedule` se interpreta con Fugit, que entiende tanto cron (`*/2 * * * *`) como la
+# forma en inglés (`every 2 minutes`, `every hour at minute 12`). Las dos producen lo
+# mismo; se usa la segunda por legibilidad.
+#
+# Cada corrida encola un job nuevo y deja la marca en `solid_queue_recurring_executions`,
+# con índice único sobre (task_key, run_at). Ese índice es lo que garantiza que la tarea
+# se encole UNA vez por horario aunque haya varios workers levantados.
+
+default: &default
+  sync_documents:
+    class: SyncDocumentsJob
+    schedule: every 2 minutes
+
+development:
+  <<: *default
+
+production:
+  <<: *default
+
+  # `preserve_finished_jobs` viene en `true`: los jobs terminados se quedan en
+  # `solid_queue_jobs` para poder inspeccionarlos. Sin esta limpieza la tabla crece sin
+  # techo, y en SQLite eso se siente antes que en Postgres.
+  clear_solid_queue_finished_jobs:
+    command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
+    schedule: every hour at minute 12

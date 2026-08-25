@@ -10,6 +10,17 @@ Rails.application.configure do
 
   # Caché en memoria en desarrollo
   config.cache_store = :memory_store
+
+  # Mismo adaptador de jobs que producción, a propósito. El default de Rails en
+  # desarrollo (`:async`) corre el job en un thread del propio Puma: ve las mismas
+  # variables de proceso y la misma conexión, así que esconde justo la clase de bug
+  # que solo aparece cuando el job corre aparte — típicamente algo que dependía de
+  # `Current.user` / `Current.company_id`, que en el worker no existen.
+  #
+  # `connects_to` tiene que estar acá y no en un initializer: `SolidQueue::Record` lo
+  # lee al DEFINIR la clase, y para entonces los initializers todavía no corrieron.
+  config.active_job.queue_adapter = :solid_queue
+  config.solid_queue.connects_to = { database: { writing: :queue } }
   config.public_file_server.headers = { 'cache-control' => "public, max-age=#{2.days.to_i}" }
 
   # Logs detallados

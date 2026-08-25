@@ -1,16 +1,49 @@
 default: &default
   adapter: sqlite3
-  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  # El pool ya no puede ser solo `RAILS_MAX_THREADS`: con Solid Queue corriendo dentro de
+  # Puma (ver config/puma.rb), al proceso le piden conexiones los threads de Puma Y los de
+  # la cola — workers + dispatcher + scheduler. Con el pool en 5 se quedaban esperando, y
+  # `SolidQueue::Configuration` aborta el arranque si el pool es menor a los threads que
+  # tiene configurados.
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 3 }.to_i + ENV.fetch("JOB_THREADS") { 3 }.to_i + 4 %>
   timeout: 5000
 
+# La cola de Solid Queue vive en su PROPIO archivo, no en la base de la aplicación.
+#
+# SQLite admite un solo escritor por archivo. El worker escribe todo el tiempo aunque
+# no haya trabajo — sondea `ready_executions` cada 0.1s, reclama filas y publica un
+# heartbeat cada 60s — así que compartir archivo con la app pondría a cada request que
+# escribe a competir contra la cola por el mismo lock. Con archivos separados, cada uno
+# tiene el suyo y no se estorban.
+#
+# `migrations_paths` apunta a un directorio propio (vacío a propósito): sin él, las
+# migraciones de `db/migrate` se aplicarían también sobre la base de la cola. El schema
+# de la cola no se versiona con migraciones — lo carga `db/queue_schema.rb`, que Rails
+# asocia a esta conexión por el nombre (`queue` → `db/queue_schema.rb`).
+
 development:
-  <<: *default
-  database: db/development.sqlite3
+  primary:
+    <<: *default
+    database: db/development.sqlite3
+  queue:
+    <<: *default
+    database: db/development_queue.sqlite3
+    migrations_paths: db/queue_migrate
 
 test:
-  <<: *default
-  database: db/test.sqlite3
+  primary:
+    <<: *default
+    database: db/test.sqlite3
+  queue:
+    <<: *default
+    database: db/test_queue.sqlite3
+    migrations_paths: db/queue_migrate
 
 production:
-  <<: *default
-  database: db/production.sqlite3
+  primary:
+    <<: *default
+    database: db/production.sqlite3
+  queue:
+    <<: *default
+    database: db/production_queue.sqlite3
+    migrations_paths: db/queue_migrate

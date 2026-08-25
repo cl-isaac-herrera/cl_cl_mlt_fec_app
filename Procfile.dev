@@ -1,2 +1,8 @@
 web: env RUBY_DEBUG_OPEN=true bin/rails server -p 3000
 css: bin/rails tailwindcss:watch
+
+# No hay línea `jobs:` a propósito. En Windows el worker va DENTRO de Puma (plugin
+# declarado en config/puma.rb) porque `bin/jobs` no puede arrancar ahí — ver el comentario
+# de ese archivo. En Linux, en cambio, conviene sacarlo a su propio proceso:
+#
+#   jobs: bin/jobs
