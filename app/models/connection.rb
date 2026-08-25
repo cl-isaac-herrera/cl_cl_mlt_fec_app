@@ -20,6 +20,22 @@ class Connection < ApplicationRecord
   # consultas y de las funciones de fecha, no cómo se habla con el Service Layer.
   SL_TYPES = %w[SQL HANA].freeze
 
+  # Credenciales de licencia del servidor, para los procesos que hablan con SAP
+  # sin una persona detrás (`SyncIssuedDocumentsJob`). Ver la migración
+  # `20260825140000_add_sap_license_to_connections.rb` para el razonamiento de
+  # por qué viven acá y no en `companies`.
+  #
+  # Cifrado reversible y no digest: el `/Login` del Service Layer necesita la
+  # contraseña en claro. `encrypts` solo actúa al ESCRIBIR el atributo, así que
+  # una fila insertada por SQL directo o por una importación queda en texto plano
+  # y nadie avisa (`CLAUDE.md` §29 regla 1).
+  encrypts :sap_license_password
+
+  # El largo se valida sobre el texto en claro, que es lo que el usuario escribe.
+  # La columna no lleva `limit:` porque guarda el sobre del cifrado, que es más
+  # largo que el dato (§29 regla 4).
+  validates :sap_license_password, length: { maximum: 100 }, allow_nil: true
+
   # La asociación inversa se llama `sap_connection` en Company para no pisar
   # `ActiveRecord::Base#connection`.
   has_many :companies, foreign_key: :connection_id, inverse_of: :sap_connection, dependent: :nullify
@@ -34,6 +50,16 @@ class Connection < ApplicationRecord
     allow_blank: true
   }
   validates :sl_type, inclusion: { in: SL_TYPES, message: 'no es un motor válido' }, allow_blank: true
+  validates :sap_license, length: { maximum: 100 }, allow_nil: true
+
+  # ¿Se puede autenticar un proceso de fondo contra este servidor?
+  #
+  # Las dos mitades tienen que estar: el Client valida sus argumentos con
+  # `ArgumentError`, y un usuario sin contraseña produciría un rechazo de SAP que
+  # se lee como "credenciales inválidas" en vez de "faltó configurarlas".
+  def sap_license?
+    sap_license.present? && sap_license_password.present?
+  end
 
   # Filtro de la pantalla de conexiones. Ambos parámetros son opcionales y se
   # aplican como "contiene"; en blanco no filtran nada.

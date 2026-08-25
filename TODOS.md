@@ -874,6 +874,68 @@ están (`db/migrate/20260821120000_create_settings.rb`, `app/models/setting.rb`,
 
 ---
 
+## Emisión de documentos — sincronización de emitidos (`SyncIssuedDocumentsJob`)
+
+Primera etapa del flujo de `docs/sync-documents-flow.md`: se lee la cola de documentos
+pendientes, se traen los detalles de SAP y se arma el objeto unificado. **No se envía
+nada a Hacienda ni se actualiza ningún estado** — es el corte del punto 12 del
+documento.
+
+- [ ] **Las credenciales de licencia de SAP no tienen UI.** La migración
+      `20260825140000_add_sap_license_to_connections.rb` agregó `connections.sap_license`
+      y `connections.sap_license_password` (cifrada), y `Sap::CompanyClient` las consume,
+      pero el formulario de conexión **no las muestra**: hoy solo se pueden cargar desde
+      la consola. Sin ellas el job registra "no tiene credenciales de licencia" y no
+      procesa esa compañía.
+      **Pendiente:** agregar los dos campos al formulario de conexión — que está
+      **duplicado en tres lugares** (`CLAUDE.md` §22): el panel de
+      `configurations/connections/index.html.erb`, el panel inline de
+      `configurations/companies/_form.html.erb` y el partial legacy
+      `configurations/connections/_form.html.erb`, cada uno con su controller. La
+      contraseña va con el patrón de "solo escritura" de §36: nunca se devuelve, y el
+      endpoint expone `HasSapLicensePassword` en vez del valor.
+
+- [ ] **`use_additional_fields` tampoco tiene UI.** La columna existe
+      (`20260825140100_add_use_additional_fields_to_companies.rb`) y decide si se consulta
+      el bloque `Otros` del XML, pero no hay checkbox en el formulario de compañías.
+      Nace en `false`, que es el comportamiento de hoy.
+      **Pendiente:** un check en la sección correspondiente de
+      `configurations/companies/_form.html.erb` + el `PATCH` de esa sección.
+
+- [ ] **Tres campos del objeto unificado no tienen origen.** `Documents::UnifiedBuilder`
+      los deja en `nil`/`[]` y **no los inventa**:
+      · `ProveedorSistemas` — ninguna vista lo devuelve. Se lee de la cabecera por si la
+        vista termina exponiéndolo; probablemente sea una constante del producto (la
+        cédula del proveedor de software ante Hacienda).
+      · `DetalleSurtido` — el mapeo del punto 10 lo nombra, pero
+        `docs/sync-documents-flow.md` no define la vista de surtidos.
+      · `CodigoActividadEmisor` — resuelto con `companies.economic_activity_code`; la
+        cabecera solo trae el del receptor. Confirmar que es lo correcto.
+
+- [ ] **Las seis vistas todavía no existen en SAP.** Las filas de `sl_resources` ya están
+      sembradas (`db/seeds.rb` → `SL_RESOURCES_OWN`) y definen el contrato:
+      `CL_D_CL_MLT_FEC_SLT_DOC{HEADER,LINES,OTHERCHARGES,PAYMENTMETHODS,REFERENCE,OTHERS}INFO_B1SLQuery`,
+      todas filtrando por `@DocEntry` y `@DocType`.
+      **Pendiente:** crearlas en la base de SAP y confirmar que exponen esas dos columnas
+      para filtrar — el esquema del documento lista lo que cada vista *devuelve*, no
+      necesariamente lo que admite en el `$filter`.
+
+- [ ] **Sembrar el catálogo en una base viva no es `db:seed`.** Las seis filas nuevas de
+      `sl_resources` llegan con el seed, pero `db/seeds.rb` hace
+      `RolePermission.unscoped.delete_all` para recrear el catálogo de permisos: correrlo
+      contra una base con datos reales **borra todas las asignaciones de roles**
+      (`CLAUDE.md` §36). En la base de desarrollo se insertaron con un script aparte.
+      **Pendiente:** decidir si el catálogo de `sl_resources` necesita su propia migración
+      de datos, como ya la tienen los permisos
+      (`20260812130000_apply_permission_catalog_changes.rb`).
+
+- [ ] **Pasos 4 y 5 del flujo, sin empezar.** Envío al Ministerio de Hacienda,
+      actualización del estado en la cola (`Sent` / `Error` con su detalle) y en SAP
+      (clave y número consecutivo). El punto 12 del documento los deja explícitamente
+      para la siguiente etapa.
+
+---
+
 ## Base de documentos — conector ODBC (`ExternalDb`)
 
 Conector a la base externa de documentos, que según la instalación corre sobre SQL

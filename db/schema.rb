@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_21_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_25_140100) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
@@ -42,6 +42,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_21_120000) do
     t.string "token_user"
     t.datetime "updated_at", null: false
     t.string "updated_by"
+    t.boolean "use_additional_fields", default: false, null: false
     t.boolean "use_ap_invoice", default: false, null: false
     t.string "uuid"
     t.index ["environment_id"], name: "index_companies_on_environment_id"
@@ -53,6 +54,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_21_120000) do
     t.string "created_by"
     t.boolean "is_active", default: true, null: false
     t.string "name", null: false
+    t.string "sap_license", limit: 100
+    t.text "sap_license_password"
     t.string "sl_type"
     t.string "sl_url", null: false
     t.datetime "updated_at", null: false

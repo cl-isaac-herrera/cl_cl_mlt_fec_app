@@ -19,4 +19,5 @@
 Rails.application.config.filter_parameters += %i[
   passw secret token _key crypt salt certificate otp ssn
   sappass sap_password cert_pin certpin
+  saplicensepass sap_license_password
 ]

@@ -474,10 +474,56 @@ SL_RESOURCES = [
 # Mismas convenciones: `resource` sin prefijo (lo agrega `SlResourceSeed.qualify`
 # según el motor) y `page_size` en 0 cuando no pagina.
 #
-# Hoy está vacía: la única que hubo (`GetCompanyInfo`, que leía la configuración
-# de FE de la compañía desde una vista sobre `OADM`) se eliminó cuando esos datos
-# pasaron a vivir en la tabla `companies` de la base de la aplicación.
-SL_RESOURCES_OWN = [].freeze
+# La única que hubo antes (`GetCompanyInfo`, que leía la configuración de FE de
+# la compañía desde una vista sobre `OADM`) se eliminó cuando esos datos pasaron
+# a vivir en la tabla `companies` de la base de la aplicación.
+#
+# ── Las seis consultas de detalle del documento a emitir ─────────────────────
+# Son las que `Sap::DocumentDetails` ejecuta por cada documento que la cola
+# devuelve como pendiente. Cada una es una vista (`_B1SLQuery`), así que el
+# prefijo lo pone `SlResourceSeed.qualify` según el motor.
+#
+# ⚠️ TODAS filtran por `@DocEntry` y `@DocType`, que son los dos datos que trae
+# el procedimiento `CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS` y lo único que
+# identifica un documento dentro de una compañía. `DocEntry` solo es único por
+# tabla de SAP: la factura 25 y la nota de crédito 25 comparten número, así que
+# filtrar únicamente por `DocEntry` traería líneas de otro documento. Verificar
+# que las vistas expongan las dos columnas al crearlas — el esquema documentado
+# en `docs/sync-documents-flow.md` lista lo que la vista *devuelve*, no
+# necesariamente todo lo que expone para filtrar.
+#
+# `page_size`: la cabecera es una sola fila; el resto son listas y llevan el
+# mismo 999 que usa el catálogo importado para no quedarse en las 20 filas que
+# el Service Layer devuelve por defecto.
+SL_RESOURCES_OWN = [
+  ['qsGetDocumentHeaderInfo',
+   'Cabecera del documento a emitir, para el envio a Hacienda',
+   'CL_D_CL_MLT_FEC_SLT_DOCHEADERINFO_B1SLQuery',
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 0],
+  ['qsGetDocumentLinesInfo',
+   'Lineas de detalle del documento a emitir',
+   'CL_D_CL_MLT_FEC_SLT_DOCLINESINFO_B1SLQuery',
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999],
+  ['qsGetDocumentOtherChargesInfo',
+   'Otros cargos del documento a emitir',
+   'CL_D_CL_MLT_FEC_SLT_DOCOTHERCHARGESINFO_B1SLQuery',
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999],
+  ['qsGetDocumentPaymentMethodsInfo',
+   'Medios de pago del documento a emitir',
+   'CL_D_CL_MLT_FEC_SLT_DOCPAYMENTMETHODSINFO_B1SLQuery',
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999],
+  ['qsGetDocumentReferenceInfo',
+   'Informacion de referencia del documento a emitir',
+   'CL_D_CL_MLT_FEC_SLT_DOCREFERENCEINFO_B1SLQuery',
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999],
+  # Solo se ejecuta cuando la compañía tiene `use_additional_fields` en true
+  # (`docs/sync-documents-flow.md` punto 8). La fila se siembra igual: el
+  # catálogo describe lo que se puede consultar, no lo que se consulta siempre.
+  ['qsGetDocumentOthersInfo',
+   'Bloque Otros del documento a emitir (campos adicionales)',
+   'CL_D_CL_MLT_FEC_SLT_DOCOTHERSINFO_B1SLQuery',
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999]
+].freeze
 
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta

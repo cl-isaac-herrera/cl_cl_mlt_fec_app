@@ -87,6 +87,8 @@ es:
         name: "El nombre"
         sl_url: "La URL del Service Layer"
         sl_type: "El motor de base de datos"
+        sap_license: "El usuario de licencia de SAP"
+        sap_license_password: "La contraseña de licencia de SAP"
       role:
         name: "El nombre"
       setting:
