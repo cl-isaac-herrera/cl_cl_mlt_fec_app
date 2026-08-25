@@ -13,8 +13,8 @@
 # se encole UNA vez por horario aunque haya varios workers levantados.
 
 default: &default
-  sync_documents:
-    class: SyncDocumentsJob
+  sync_issued_documents:
+    class: SyncIssuedDocumentsJob
     schedule: every 2 minutes
 
 development:
