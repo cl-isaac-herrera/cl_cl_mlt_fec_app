@@ -1,0 +1,51 @@
+{
+  "table_name": "@CL_FEC_SUCURSALES",
+  "IsUDT": true,
+  "table_description": "FEC · Sucursales del emisor",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "SucursalNum", "Description": "FEC · Número de sucursal en SAP",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES" },
+
+    { "Name": "EmsrUbProvincia", "Description": "FEC · Código de provincia de la ubicación",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 1, "Mandatory": "tYES" },
+
+    { "Name": "EmsrUbCanton", "Description": "FEC · Código de cantón de la ubicación",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES" },
+
+    { "Name": "EmsrUbDistrito", "Description": "FEC · Código de distrito de la ubicación",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES" },
+
+    { "Name": "EmsrUbBarrio", "Description": "FEC · Barrio de la ubicación del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "EmsrUbOtrasSenas", "Description": "FEC · Otras señas de la ubicación del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 250, "Mandatory": "tNO" },
+
+    { "Name": "EmsrTlfCodigoPais", "Description": "FEC · Código de país del teléfono del emisor",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES", "DefaultValue": "506" },
+
+    { "Name": "EmsrTlfNumTelefono", "Description": "FEC · Número de teléfono del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 15, "Mandatory": "tNO" },
+
+    { "Name": "EmsrFaxCodigoPais", "Description": "FEC · Código de país del fax del emisor",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES", "DefaultValue": "506" },
+
+    { "Name": "EmsrFaxNumTelefono", "Description": "FEC · Número de fax del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "EmsrCorreoElectronico", "Description": "FEC · Correo electrónico de la sucursal",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "Active", "Description": "FEC · Indica si la sucursal está activa",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 1, "Mandatory": "tYES", "DefaultValue": "Y",
+      "ValidValues": [
+        { "Value": "Y", "Description": "Sí" },
+        { "Value": "N", "Description": "No" }
+      ]
+    },
+
+    { "Name": "Alias", "Description": "FEC · Alias de la sucursal",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" }
+  ]
+}
