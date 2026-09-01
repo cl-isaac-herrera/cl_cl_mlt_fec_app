@@ -912,13 +912,110 @@ documento.
       · `CodigoActividadEmisor` — resuelto con `companies.economic_activity_code`; la
         cabecera solo trae el del receptor. Confirmar que es lo correcto.
 
-- [ ] **Las seis vistas todavía no existen en SAP.** Las filas de `sl_resources` ya están
-      sembradas (`db/seeds.rb` → `SL_RESOURCES_OWN`) y definen el contrato:
-      `CL_D_CL_MLT_FEC_SLT_DOC{HEADER,LINES,OTHERCHARGES,PAYMENTMETHODS,REFERENCE,OTHERS}INFO_B1SLQuery`,
-      todas filtrando por `@DocEntry` y `@DocType`.
-      **Pendiente:** crearlas en la base de SAP y confirmar que exponen esas dos columnas
-      para filtrar — el esquema del documento lista lo que cada vista *devuelve*, no
-      necesariamente lo que admite en el `$filter`.
+### Correcciones pendientes tras revisar el SQL real de las vistas (2026-08-29)
+
+Se recibió el `CREATE VIEW` de las cinco vistas que ya existen. El contrato que se sembró
+en `sl_resources` **no coincide** con lo que las vistas devuelven. Nada de esto está
+corregido todavía: se documenta para arreglarlo en una tanda aparte.
+
+El chequeo se puede repetir comparando lo que lee `Documents::UnifiedBuilder` contra las
+columnas de cada vista; los nombres de campo del builder están todos en llamadas
+`.string(…)` / `.decimal(…)` / `.integer(…)`, así que son grepeables.
+
+- [ ] **⛔ EL FILTRO NO FUNCIONA EN CINCO DE LAS SEIS VISTAS.** Se sembró
+      `$filter=(DocEntry eq @DocEntry and DocType eq @DocType)` y esas columnas casi no
+      existen con ese nombre:
+
+      | Vista          | DocEntry            | DocType                |
+      |----------------|---------------------|------------------------|
+      | Cabecera       | ❌ es `ConsecutivoId` | ✅                     |
+      | Líneas         | ✅                  | ❌ es `TipoDocumento`   |
+      | Otros cargos   | ✅                  | ✅  ← la única correcta |
+      | Otros          | ✅                  | ❌ es `TipoDocumento`   |
+      | Referencias    | ❌ no existe        | ❌ no existe            |
+      | Medios de pago | ⚠️ sin verificar    | ⚠️ sin verificar        |
+
+      **Decisión pendiente antes de tocar nada:** o se adapta el `query_params` de cada
+      fila de `sl_resources` a los nombres que ya tiene cada vista, o se normalizan las
+      vistas para que todas expongan `DocEntry` y `DocType`. Lo segundo es lo correcto
+      para el par que forma el filtro —es el contrato— pero hay que tocarlo en cada base
+      de compañía: las vistas llevan la compañía hardcodeada (`'DEVDEMOCR'`,
+      `'TST_CL_DISUMED'`), así que cada instalación tiene su copia.
+
+- [ ] **La vista de referencias es un stub de prueba.**
+      `CL_D_CL_MLT_FEC_SLT_DOCREFERENCEINFO_B1SLQuery` no tiene `FROM`: devuelve una fila
+      fija (`'Pruebas Referencias'`) para todos los documentos. Los nombres de columna sí
+      coinciden con lo que espera el builder.
+      **Ojo:** la vista de cabecera ya trae `InfRefTipoDoc`, `InfRefNumero`,
+      `InfRefFechaEmision`, `InfRefCodigo` e `InfRefRazon`, así que puede que la referencia
+      salga de ahí —una por documento— y esta vista no haga falta. Lo que la cabecera NO
+      trae es `InfCodigoReferenciaOTRO` ni `InfRefTipoDocRefOTRO`.
+
+- [ ] **⛔ El emisor no viene de SAP y falta la mitad de sus datos.** La cabecera no
+      devuelve **ningún** campo `Emsr*`. Lo que hay resuelto y lo que no:
+
+      | Campo | Fuente |
+      |---|---|
+      | Nombre, Identificación | `companies.issuer_legal_name` / `issuer_id_type` / `issuer_id_number` |
+      | Nombre comercial | `companies.name` |
+      | Código de actividad | la vista, o `companies.economic_activity_code` |
+      | **Ubicación** (provincia, cantón, distrito, barrio, otras señas) | **no existe en ningún lado** |
+      | **Teléfono** (código país, número) | **no existe en ningún lado** |
+      | **Correo electrónico** | **no existe** (`companies.email_cc` es copia, no remitente) |
+
+      Hacienda exige `Emisor.Ubicacion` y `CorreoElectronico`. Hay que decidir si se
+      agregan columnas a `companies` o si las vistas pasan a devolver los `Emsr*`. Es el
+      punto de fondo: sin esto el comprobante no pasa validación.
+
+- [ ] **Campos que el builder lee y la vista no devuelve.** Hay que quitarlos del builder,
+      o agregarlos a la vista, según cuál sea el dato real:
+      · **Cabecera:** `FechaEmision` (la vista tiene `DocDate` y `FechaCrea`),
+        `CondicionVentaOtros`, `TotalImpAsumEmisorFabrica`, `TotalOtrosCargos` (está
+        comentado dentro de la vista).
+      · **Líneas:** `RegistroMedicamento`, `FormaFarmaceutica`, `IVACobradoFabrica`,
+        `ImpCodigoImpuestoOTRO`, `ImpuestoAsumidoEmisorFabrica`, y `ENombreInstitucion`
+        —que la vista expone como `NombreInstitucion`.
+      · **Otros cargos:** `TipoIdentidadTercero` y `TipoDocumentoOTROS`. Además
+        `Porcentaje` viene fijo en `0`.
+
+- [ ] **`Registrofiscal8707` está en el bloque equivocado.** El builder lo pone bajo
+      `Emisor` (venía así del mapeo del documento, como `EmsrRegistrofiscal8707`), pero la
+      vista devuelve `RcprRegistrofiscal8707` y la 4.4 lo define como dato del **receptor**
+      (comprador de bebidas alcohólicas). Mover a `Receptor`.
+
+- [ ] **Falta la definición de las tablas de medios de pago.** La vista es
+      `SELECT * FROM CLVS_FE_SYNC_MEDIOPAGOBASE44 UNION ALL SELECT * FROM CLVS_FE_SYNC_MEDIOPAGOREPBASE44`,
+      así que no se puede verificar qué columnas expone.
+      **Pista preocupante:** la vista de "Otros" referencia
+      `CLVS_FE_SYNC_MEDIOPAGO44 Z WHERE A."DocEntry" = Z."DocEntryFactura"` — la clave ahí
+      se llama `DocEntryFactura`, no `DocEntry`.
+
+- [ ] **Tres defectos de las vistas mismas, para reportar a quien las mantiene:**
+      · `CodigoActividadEmisor` sale como `'7020.0'`, con punto decimal. Hacienda espera
+        seis dígitos (`702000`); ese punto casi seguro produce un rechazo.
+      · `NombreInstitucion` se llama distinto en dos ramas del `UNION` de la vista de
+        líneas (`NombreInstitucion` en facturas, `ENombreInstitucion` en NC). SQL Server
+        toma los nombres de la primera rama, así que hoy gana `NombreInstitucion` — pero
+        se rompe solo si alguien reordena las ramas.
+      · Cortes de fecha fijos en el `WHERE`: `DocDate >= '20260427'` en cabecera y líneas,
+        `'20210801'` en otros cargos, `'20251001'` en otros. Un documento anterior al corte
+        no aparece y el job lo reporta como `HeaderNotFound`, sin ninguna pista de que la
+        causa es el filtro de la vista.
+
+- [x] **`ProveedorSistemas` sí tiene origen.** La cabecera lo devuelve hardcodeado
+      (`,'3101822733' "ProveedorSistemas"`). Deja de ser un campo sin fuente.
+
+- [x] **La corrección de `ND`/`NC` quedó confirmada por las vistas.** El mapeo de series de
+      la vista de líneas dice `Series '75' → '02' --Nota débito` y `Series '74' → '03' --NC`,
+      que es lo que fija `DocType` y lo contrario de los comentarios del `DocTypesString`
+      del .NET.
+
+### Estado de las vistas en SAP
+
+- [ ] **Faltan las vistas de la etapa que sigue.** De las seis sembradas, existen cinco
+      (cabecera, líneas, otros cargos, otros, medios de pago) más el stub de referencias.
+      Ninguna se probó todavía contra el job porque la credencial ODBC de desarrollo está
+      rechazada.
 
 - [ ] **Sembrar el catálogo en una base viva no es `db:seed`.** Las seis filas nuevas de
       `sl_resources` llegan con el seed, pero `db/seeds.rb` hace
