@@ -601,6 +601,10 @@ DOCS_DB_SETTINGS = [
   ['DOCS_DB_ODBC_PORT',           'Puerto del servidor (obligatorio en HANA)',              true],
   ['DOCS_DB_ODBC_DATABASE',       'Código de la base de datos o catálogo',                  true],
   ['DOCS_DB_ODBC_SCHEMA',         'Esquema de los objetos (dbo en SQL Server)',             true],
+  # Autenticación integrada de Windows. Solo SQL Server: con esto en `true`, la
+  # conexión va con la identidad de la cuenta que corre el proceso y USER y
+  # PASSWORD dejan de ser obligatorios (el driver los ignora).
+  ['DOCS_DB_ODBC_TRUSTED',        'Autenticación integrada de Windows (solo SQL Server)',   true],
   ['DOCS_DB_ODBC_USER',           'Usuario de la base de datos (solo lectura)',              true],
   # La única del grupo que no se devuelve: es la razón de ser de `is_visible`.
   ['DOCS_DB_ODBC_PASSWORD',       'Contraseña del usuario de la base de datos',             false],

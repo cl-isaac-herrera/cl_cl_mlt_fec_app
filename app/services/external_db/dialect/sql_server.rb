@@ -24,16 +24,43 @@ module ExternalDb
       # es una calificación inválida (base + objeto, sin esquema en medio).
       DEFAULT_SCHEMA = 'dbo'
 
+      # ── Autenticación integrada ─────────────────────────────────────────────
+      # Con `Trusted_Connection=Yes` el driver se autentica con la identidad de
+      # Windows del proceso e **ignora `UID`/`PWD`**. Se omiten en vez de
+      # mandarlos igual: dejarlos daba una cadena que dice una cosa y hace otra,
+      # y era lo que hacía creer que un `Login failed` era la contraseña cuando
+      # en realidad esas credenciales nunca se usaron.
       def connection_string
         with_extra(
           build_dsn(
-            'Driver'   => config.driver,
-            'Server'   => server_with_port,
-            'Database' => config.database,
-            'UID'      => config.user,
-            'PWD'      => config.password
+            'Driver'             => config.driver,
+            'Server'             => server_with_port,
+            'Database'           => config.database,
+            'Trusted_Connection' => (config.trusted? ? 'Yes' : nil),
+            'UID'                => (config.trusted? ? nil : config.user),
+            'PWD'                => (config.trusted? ? nil : config.password)
           )
         )
+      end
+
+      # SQL Server invoca procedimientos con `EXEC`, y los parámetros van
+      # separados por coma y SIN paréntesis:
+      #
+      #   EXEC [CL_DOCS].[dbo].[SP_DOCS] ?, ?
+      #   EXEC [CL_DOCS].[dbo].[SP_DOCS]        ← sin parámetros
+      #
+      # `CALL` es de SAP HANA y acá no compila. El escape ODBC `{CALL …}` que
+      # había antes es traducible por el driver, pero su lista de argumentos se
+      # comporta distinto según la versión: con `()` vacío el driver `SQL Server`
+      # la interpreta como una lista presente y rechaza la llamada con
+      # "Procedure … has no parameters and arguments were supplied" — un mensaje
+      # que miente, porque no se envió ninguno. Con la sintaxis nativa de cada
+      # motor no hay traducción de por medio ni ese margen de interpretación.
+      def call_statement(procedure, arity)
+        statement = "EXEC #{qualify(procedure)}"
+        return statement if arity.to_i.zero?
+
+        "#{statement} #{Array.new(arity, '?').join(', ')}"
       end
 
       # Corchetes, y se duplica el `]` de cierre — es el escape de SQL Server.

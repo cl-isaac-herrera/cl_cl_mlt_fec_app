@@ -77,6 +77,25 @@ RSpec.describe ExternalDb::Dialect do
         expect(sql('EXTRA_PARAMS' => 'Encrypt=yes;TrustServerCertificate=yes').connection_string)
           .to end_with(';Encrypt=yes;TrustServerCertificate=yes')
       end
+
+      # Con autenticación integrada el driver IGNORA UID/PWD. Se omiten en vez de
+      # mandarlos igual: una cadena que los lleva dice una cosa y hace otra, y es
+      # lo que hacía perseguir una contraseña cuando esas credenciales nunca se
+      # usaron.
+      context 'con autenticación integrada' do
+        let(:trusted) { sql('TRUSTED' => 'true') }
+
+        it 'manda Trusted_Connection en lugar de UID y PWD' do
+          expect(trusted.connection_string).to eq(
+            'Driver={ODBC Driver 17 for SQL Server};Server=CLSQL01;' \
+            'Database=CL_DOCS;Trusted_Connection=Yes'
+          )
+        end
+
+        it 'no filtra el usuario ni la contraseña guardados' do
+          expect(trusted.connection_string).not_to include('fec_ro', 'secret')
+        end
+      end
     end
 
     describe '#qualify' do
@@ -93,15 +112,18 @@ RSpec.describe ExternalDb::Dialect do
     end
 
     describe '#call_statement' do
-      # La sintaxis de escape ODBC: el driver la traduce a `EXEC`. Escribir
-      # `EXEC` a mano ataría la consulta a un motor.
-      it 'usa el escape ODBC con un placeholder por parámetro' do
+      # `EXEC`, la sintaxis nativa. `CALL` es de HANA y acá no compila.
+      it 'usa EXEC con un placeholder por parámetro, separados por coma' do
         expect(sql.call_statement('SP_DOCS', 2))
-          .to eq('{CALL [CL_DOCS].[dbo].[SP_DOCS](?, ?)}')
+          .to eq('EXEC [CL_DOCS].[dbo].[SP_DOCS] ?, ?')
       end
 
-      it 'soporta un procedimiento sin parámetros' do
-        expect(sql.call_statement('SP_DOCS', 0)).to eq('{CALL [CL_DOCS].[dbo].[SP_DOCS]()}')
+      # Un `()` vacío no es "cero argumentos": el driver lo lee como una lista de
+      # argumentos presente y rechaza la llamada con "Procedure … has no
+      # parameters and arguments were supplied", un mensaje que miente porque no
+      # se envió ninguno. En `EXEC` la lista simplemente no está.
+      it 'no lleva lista de argumentos en un procedimiento sin parámetros' do
+        expect(sql.call_statement('SP_DOCS', 0)).to eq('EXEC [CL_DOCS].[dbo].[SP_DOCS]')
       end
     end
 
@@ -173,8 +195,14 @@ RSpec.describe ExternalDb::Dialect do
     end
 
     describe '#call_statement' do
-      it 'usa el escape ODBC, que el driver traduce a CALL' do
-        expect(hana.call_statement('SP1', 1)).to eq('{CALL CL_DOCS.SP1(?)}')
+      it 'usa CALL, la sintaxis nativa de HANA' do
+        expect(hana.call_statement('SP1', 1)).to eq('CALL CL_DOCS.SP1(?)')
+      end
+
+      # Al revés que SQL Server: acá la lista va SIEMPRE entre paréntesis, aunque
+      # esté vacía. Es la gramática de `CALL` en HANA.
+      it 'conserva los paréntesis vacíos en un procedimiento sin parámetros' do
+        expect(hana.call_statement('SP1', 0)).to eq('CALL CL_DOCS.SP1()')
       end
     end
 

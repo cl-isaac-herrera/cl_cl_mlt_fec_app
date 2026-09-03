@@ -25,6 +25,9 @@ RSpec.describe SyncIssuedDocumentsJob do
 
   def queue(*entries)
     allow(Documents::PendingQueue).to receive(:pending).and_return(entries)
+    # Toda falla devuelve el documento a la cola como `Error`. Se dobla siempre:
+    # sin esto un ejemplo que falla intentaría hablar con la base externa.
+    allow(Documents::PendingQueue).to receive(:mark_error)
   end
 
   def entry(id: 1, doc_entry: 25, doc_type: DocType::FE, sap_db: 'SBO_ACME')
@@ -86,7 +89,7 @@ RSpec.describe SyncIssuedDocumentsJob do
 
       described_class.perform_now
 
-      expect(Rails.logger).to have_received(:warn).with(/tipo de documento desconocido/)
+      expect(Rails.logger).to have_received(:warn).with(/El tipo de documento "99"/)
       expect(Sap::CompanyClient).not_to have_received(:for)
     end
 
@@ -96,7 +99,7 @@ RSpec.describe SyncIssuedDocumentsJob do
 
       described_class.perform_now
 
-      expect(Rails.logger).to have_received(:warn).with(/no hay compañía activa con sap_db/)
+      expect(Rails.logger).to have_received(:warn).with(/No hay una compañía activa/)
     end
 
     it 'omite la compañía sin credenciales de licencia sin tratarlo como error' do
@@ -110,6 +113,53 @@ RSpec.describe SyncIssuedDocumentsJob do
 
       expect(Rails.logger).to have_received(:warn).with(/faltan credenciales/)
       expect(Sentry).not_to have_received(:capture_exception)
+    end
+  end
+
+  # Sin esto la fila se queda en `Processing` —el estado en que la dejó el
+  # reclamo— y desde afuera no hay dónde leer qué pasó.
+  describe 'la falla vuelve a la cola' do
+    it 'marca el error con el motivo cuando SAP revienta' do
+      failing = entry(id: 7)
+      queue(failing)
+      allow(client).to receive(:get).and_raise('SAP se cayó')
+      allow(Sentry).to receive(:capture_exception)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue)
+        .to have_received(:mark_error).with(failing, /SAP se cayó/)
+    end
+
+    it 'marca también el tipo desconocido, que si no reintentaría para siempre' do
+      unknown = entry(doc_type: '99')
+      queue(unknown)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue)
+        .to have_received(:mark_error).with(unknown, /no es un comprobante/)
+    end
+
+    it 'no marca nada cuando el documento se armó bien' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).not_to have_received(:mark_error)
+    end
+
+    # La cola es donde se anota la falla, no una dependencia para poder seguir:
+    # si no acepta la marca, los documentos que siguen igual se procesan.
+    it 'sigue con el resto si la cola rechaza la marca' do
+      queue(entry(id: 1, doc_type: '99'), entry(id: 2, doc_entry: 26))
+      allow(Documents::PendingQueue).to receive(:mark_error)
+        .and_raise(ExternalDb::QueryError, 'la cola no responde')
+      allow(Sentry).to receive(:capture_exception)
+      allow(Documents::UnifiedBuilder).to receive(:new).and_call_original
+
+      expect { described_class.perform_now }.not_to raise_error
+      expect(Documents::UnifiedBuilder).to have_received(:new)
     end
   end
 

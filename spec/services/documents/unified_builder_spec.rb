@@ -3,7 +3,13 @@
 require 'rails_helper'
 
 RSpec.describe Documents::UnifiedBuilder do
-  let(:company) { Company.new(name: 'ACME S.A.', sap_db: 'SBO_ACME', economic_activity_code: '620100') }
+  # La identidad del emisor sale de acá y no de la vista: es una por compañía y no
+  # depende del documento. `name` es además el nombre comercial del XML.
+  let(:company) do
+    Company.new(name: 'ACME S.A.', sap_db: 'SBO_ACME', economic_activity_code: '620100',
+                issuer_legal_name: 'Acme Sociedad Anónima', issuer_id_type: '02',
+                issuer_id_number: '3101123456', tax_registry_8707: '8707-99')
+  end
 
   def row(attrs) = Documents::Row.new(attrs)
 
@@ -25,9 +31,11 @@ RSpec.describe Documents::UnifiedBuilder do
       expect(build(doc_type: DocType::NC)['DocType']).to eq('03')
     end
 
+    # La del emisor sale de la compañía y la del receptor de la vista, pero tienen
+    # que ser las MISMAS que van en el XML: si el cuerpo del POST y el comprobante
+    # no coinciden, Hacienda rechaza el envío.
     it 'arma el cuerpo del envío a Hacienda con las dos identificaciones' do
-      payload = build(header: { 'FechaEmision' => '2026-08-25', 'EmsrIdeNumero' => '3101123456',
-                                'EmsrIdeTipo' => '02', 'RcprIdeNumero' => '112345678',
+      payload = build(header: { 'FechaEmision' => '2026-08-25', 'RcprIdeNumero' => '112345678',
                                 'RcprIdeTipo' => '01' })
 
       expect(payload['SendDocumentHacienda']).to eq(
@@ -117,6 +125,36 @@ RSpec.describe Documents::UnifiedBuilder do
   end
 
   describe 'emisor y receptor' do
+    # La identidad no cambia por sucursal: es la misma cédula jurídica emita desde
+    # donde emita, así que sale de `companies` y no del documento.
+    it 'toma la identidad del emisor de la compañía y no de la vista' do
+      payload = build(header: { 'EmsrNombre' => 'De la vista', 'EmsrIdeNumero' => '999999999' })
+
+      expect(payload['Document']['Emisor']).to include(
+        'Nombre' => 'Acme Sociedad Anónima',
+        'Identificacion' => { 'Tipo' => '02', 'Numero' => '3101123456' },
+        'Registrofiscal8707' => '8707-99'
+      )
+    end
+
+    # No tiene columna propia: el nombre comercial es `companies.name`, el mismo
+    # que usa el selector de compañía y el listado.
+    it 'usa el nombre de la compañía como nombre comercial del emisor' do
+      expect(build['Document']['Emisor']['NombreComercial']).to eq('ACME S.A.')
+    end
+
+    # Estos tres SÍ cambian por sucursal: los trae la cabecera desde la UDT
+    # `@CL_FEC_SUCURSALES`, no `companies`.
+    it 'toma ubicación, teléfono y correo del emisor de la cabecera' do
+      payload = build(header: { 'EmsrUbBarrio' => 'Escalante', 'EmsrTlfNumTelefono' => '22334455',
+                                'EmsrCorreoElectronico' => 'sucursal@acme.cr' })
+      emisor = payload['Document']['Emisor']
+
+      expect(emisor['Ubicacion']).to include('Barrio' => 'Escalante')
+      expect(emisor['Telefono']).to include('NumTelefono' => '22334455')
+      expect(emisor['CorreoElectronico']).to eq('sucursal@acme.cr')
+    end
+
     # El mismo bloque con distinto prefijo. Se arma una sola vez para que no
     # puedan divergir.
     it 'arma la ubicación de los dos desde su prefijo' do

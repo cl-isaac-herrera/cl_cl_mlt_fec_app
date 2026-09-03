@@ -50,6 +50,49 @@ RSpec.describe ExternalDb::Config do
     end
   end
 
+  describe 'autenticación integrada de Windows' do
+    let(:trusted_values) { sql_values.except('USER', 'PASSWORD').merge('TRUSTED' => 'true') }
+
+    it 'no exige usuario ni contraseña: no hay credenciales que escribir' do
+      expect(build_config(trusted_values)).to be_trusted
+    end
+
+    it 'los sigue exigiendo cuando está apagada' do
+      expect { build_config(sql_values.except('USER', 'PASSWORD')) }
+        .to raise_error(ExternalDb::ConfigurationError,
+                        /DOCS_DB_ODBC_USER, DOCS_DB_ODBC_PASSWORD/)
+    end
+
+    # Lista explícita de valores verdaderos, y no `ActiveModel::Type::Boolean`,
+    # que trata como verdadero todo lo que no esté en su lista de falsos: un
+    # "no" escrito a mano activaría la autenticación integrada sin que nadie lo
+    # note.
+    it 'no interpreta como "sí" cualquier texto' do
+      expect { build_config(sql_values.except('USER', 'PASSWORD').merge('TRUSTED' => 'no')) }
+        .to raise_error(ExternalDb::ConfigurationError, /DOCS_DB_ODBC_USER/)
+    end
+
+    %w[true 1 yes sí on].each do |value|
+      it "acepta #{value.inspect} como sí" do
+        expect(build_config(trusted_values.merge('TRUSTED' => value))).to be_trusted
+      end
+    end
+
+    # El driver de HANA no tiene `Trusted_Connection`. Activarla ahí conectaría
+    # sin usuario y fallaría con un error del driver que no menciona el ajuste.
+    it 'la rechaza en HANA, nombrando el ajuste' do
+      expect { build_config(hana_values.merge('TRUSTED' => 'true')) }
+        .to raise_error(ExternalDb::ConfigurationError, /DOCS_DB_ODBC_TRUSTED.*SAP HANA/m)
+    end
+
+    # Cambiar de credenciales a integrada cambia con qué identidad se conecta:
+    # el pool tiene que descartar las conexiones abiertas.
+    it 'cambia el fingerprint, para que el pool no reutilice la conexión anterior' do
+      expect(build_config(trusted_values).fingerprint)
+        .not_to eq(build_config(sql_values).fingerprint)
+    end
+  end
+
   describe 'el puerto según el motor' do
     # `SERVERNODE` exige `host:puerto` y no hay valor implícito. El puerto de
     # instancia es 3<NN>15 — 30015 para la instancia 00.

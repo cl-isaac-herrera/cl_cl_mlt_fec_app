@@ -282,6 +282,15 @@
             label:       'Esquema',
             placeholder: 'dbo' %>
 
+      <%# Con autenticación integrada la conexión va con la identidad de Windows
+          del proceso: usuario y contraseña se deshabilitan porque el driver los
+          ignora, y dejarlos habilitados haría creer que se están usando. %>
+      <%= render 'configurations/general/setting_field',
+            code:    'DOCS_DB_ODBC_TRUSTED',
+            label:   'Autenticación integrada de Windows',
+            type:    'select',
+            options: [['false', 'No — usuario y contraseña'], ['true', 'Sí — identidad del servicio']] %>
+
       <%= render 'configurations/general/setting_field',
             code:        'DOCS_DB_ODBC_USER',
             label:       'Usuario',

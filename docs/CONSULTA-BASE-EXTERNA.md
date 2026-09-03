@@ -142,8 +142,9 @@ filas intactas, con sus valores, y reactiva las dadas de baja sin duplicarlas.
 | `DOCS_DB_ODBC_PORT` | Puerto. **Obligatorio en HANA** | ✅ |
 | `DOCS_DB_ODBC_DATABASE` | Código de base / catálogo | ✅ |
 | `DOCS_DB_ODBC_SCHEMA` | Esquema (`dbo` por defecto en SQL Server) | ✅ |
-| `DOCS_DB_ODBC_USER` | Usuario de BD, **solo lectura** | ✅ |
-| `DOCS_DB_ODBC_PASSWORD` | Contraseña | ❌ |
+| `DOCS_DB_ODBC_TRUSTED` | Autenticación integrada de Windows. **Solo SQL Server** | ✅ |
+| `DOCS_DB_ODBC_USER` | Usuario de BD, **solo lectura**. Opcional con `TRUSTED` | ✅ |
+| `DOCS_DB_ODBC_PASSWORD` | Contraseña. Opcional con `TRUSTED` | ❌ |
 | `DOCS_DB_ODBC_QUERY_TIMEOUT` | Segundos. Default 30 | ✅ |
 | `DOCS_DB_ODBC_EXTRA_PARAMS` | Pares `clave=valor;` extra de la cadena | ✅ |
 
@@ -235,21 +236,69 @@ el día que escriba el código de base en minúscula: `"cl_docs"` no existe,
 | `cl_docs` | `CL_DOCS` | Desnudo y en mayúscula: HANA lo normalizaría igual |
 | `CL-DOCS` | `"CL-DOCS"` | El guion exige comillas; ahí la caja se respeta |
 
-### 3.4 Procedimientos almacenados — `{CALL …}`
+### 3.4 Procedimientos almacenados — `EXEC` en SQL Server, `CALL` en HANA
 
-El patrón de estas instalaciones es invocar procedimientos (`CALL <db>.SP1`). El
-conector usa la **sintaxis de escape ODBC**, que el driver manager traduce a lo
-que entienda cada motor:
+Cada motor tiene su palabra clave y su forma de escribir la lista de argumentos.
+Lo resuelve el dialecto, así que quien llama no escribe ninguna de las dos:
 
 ```ruby
 client.call('SP_DOCS_POR_FECHA', [desde, hasta])
+client.call('SP_PENDIENTES')
 
-# SQL Server → {CALL [CL_DOCS].[dbo].[SP_DOCS_POR_FECHA](?, ?)}   → EXEC
-# HANA       → {CALL CL_DOCS.SP_DOCS_POR_FECHA(?, ?)}             → CALL
+# SQL Server → EXEC [CL_DOCS].[dbo].[SP_DOCS_POR_FECHA] ?, ?
+#              EXEC [CL_DOCS].[dbo].[SP_PENDIENTES]              ← sin lista
+# HANA       → CALL CL_DOCS.SP_DOCS_POR_FECHA(?, ?)
+#              CALL CL_DOCS.SP_PENDIENTES()                      ← lista vacía
 ```
 
-Escribir `CALL` o `EXEC` a mano ataría la consulta a un motor, que es justamente
-lo que este conector existe para evitar.
+**La lista de argumentos se comporta al revés en los dos motores.** En `EXEC` un
+procedimiento sin parámetros no lleva nada; en `CALL` lleva los paréntesis
+vacíos, que su gramática exige.
+
+#### `commit:` — cuando el procedimiento SÍ tiene que escribir
+
+La conexión se abre con `autocommit = false` y toda sentencia se revierte al
+salir. Es la defensa de solo-lectura del conector, y por defecto también aplica a
+`call`. Pero hay procedimientos **diseñados para escribir** que no son una fuga:
+
+```ruby
+client.call('CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS', [], commit: true)
+```
+
+Ese es un `UPDATE … OUTPUT` que reclama las filas de la cola y las devuelve en la
+misma operación atómica. Revertirlo lo deja sin efecto: la cola nunca avanza, la
+misma tanda se reprocesa en cada corrida y la ventana de reintento de diez
+minutos del procedimiento no llega a activarse nunca.
+
+- **Se confirma solo si la ejecución terminó bien.** Después de un error se
+  revierte igual: dejar la mitad del trabajo hecha es peor que no hacer nada.
+- **Un commit fallido LEVANTA**, al revés que el rollback, que se traga el error.
+  Si no, el llamador creería que reclamó documentos que en realidad siguen
+  libres y los tomaría de nuevo en la próxima corrida.
+- **No relaja los permisos.** Un procedimiento corre con los permisos de su
+  dueño, así que la cuenta de la aplicación sigue necesitando solo `EXECUTE`
+  sobre él, nunca escritura sobre las tablas.
+- **`select` no lo tiene y no lo va a tener.** La excepción es de `call` y punto;
+  quién escribe se audita con un `grep commit: true`.
+
+> En .NET esto no existía porque ADO.NET trabaja en **autocommit**: allá confirmar
+> era el comportamiento normal y nadie lo escribía. Acá el default es al revés, y
+> por eso la excepción tiene que ser explícita.
+
+#### Por qué no el escape ODBC `{CALL …}`
+
+El conector usaba `{CALL …}`, que es portable en teoría: el driver manager lo
+traduce a `EXEC` o a `CALL` según el motor. En la práctica esa traducción no es
+transparente. El driver `SQL Server` lee un `()` vacío como una lista de
+argumentos **presente** y rechaza la llamada:
+
+```
+37000 (8146) Procedure … has no parameters and arguments were supplied.
+```
+
+El mensaje miente —no se envió ningún argumento— y cuesta caro de diagnosticar.
+Emitir la sintaxis nativa quita esa capa de interpretación, y es además lo que
+pide la regla de que toda diferencia entre motores viva en `dialect/`.
 
 ### 3.5 Paginación y sondeo
 
@@ -398,6 +447,14 @@ El guard limpia comentarios y literales antes de buscar verbos, así que
 > **El usuario de `DOCS_DB_ODBC_USER` tiene que tener permisos de LECTURA Y NADA
 > MÁS.** Es lo único que un procedimiento almacenado no puede eludir, y es lo que
 > hay que verificar al desplegar.
+
+> ⚠️ **Con `DOCS_DB_ODBC_TRUSTED` activo, el usuario NO es el de la pantalla.** La
+> conexión se autentica con la identidad de Windows del proceso Rails: la cuenta
+> del servicio en el servidor, la del programador en desarrollo. El `GRANT` hay
+> que dárselo a **esa** cuenta, y cambiar la cuenta del servicio cambia con qué
+> credenciales se conecta la aplicación sin que la pantalla se vea distinta.
+> `DOCS_DB_ODBC_USER` y `_PASSWORD` quedan sin usar — el driver los ignora, así
+> que la cadena de conexión ni siquiera los manda.
 
 ```sql
 -- SQL Server

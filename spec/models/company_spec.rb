@@ -48,9 +48,40 @@ RSpec.describe Company, type: :model do
         .to include('La razón social del emisor es demasiado largo (máximo 100 caracteres)')
     end
 
+    # 20 y no los 12 del UDF de OADM: ese `Size` no alcanzaba para el DIMEX ni
+    # para el NITE, y desde que la identificación del emisor sale de acá el
+    # recorte se llevaría puesto el comprobante.
+    it 'acepta una identificación de hasta 20 caracteres' do
+      expect(build(:company, issuer_id_number: '1' * 20)).to be_valid
+    end
+
+    it 'rechaza una identificación más larga que 20 caracteres' do
+      company = build(:company, issuer_id_number: '1' * 21)
+
+      expect(company).not_to be_valid
+      expect(company.errors.full_messages)
+        .to include('El número de identificación del emisor es demasiado largo (máximo 20 caracteres)')
+    end
+
     it 'deja el bloque en blanco: una compañía puede estar configurada a medias' do
       expect(build(:company, issuer_legal_name: nil, issuer_id_type: nil,
                              issuer_id_number: nil)).to be_valid
+    end
+  end
+
+  # `name` no es solo la etiqueta del selector: viaja en el XML como
+  # `Emisor.NombreComercial`, y 80 es el máximo del esquema 4.4 de Hacienda.
+  describe 'nombre comercial' do
+    it 'acepta hasta 80 caracteres' do
+      expect(build(:company, name: 'A' * 80)).to be_valid
+    end
+
+    it 'rechaza más de 80 caracteres' do
+      company = build(:company, name: 'A' * 81)
+
+      expect(company).not_to be_valid
+      expect(company.errors.full_messages)
+        .to include('El nombre es demasiado largo (máximo 80 caracteres)')
     end
   end
 

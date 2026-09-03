@@ -205,7 +205,8 @@ export default class extends Controller {
   onSettingInput(event) {
     this.#refreshGroupButtons()
 
-    if (event?.target?.dataset?.settingCode === 'DOCS_DB_ODBC_ENGINE') {
+    const code = event?.target?.dataset?.settingCode
+    if (code === 'DOCS_DB_ODBC_ENGINE' || code === 'DOCS_DB_ODBC_TRUSTED') {
       this.#applyEngineHints()
     }
   }
@@ -306,6 +307,45 @@ export default class extends Controller {
     this.#setHint('DOCS_DB_ODBC_SCHEMA', hana
       ? 'En SAP HANA la base de datos ES el esquema; este campo no se usa.'
       : 'Normalmente dbo.')
+
+    this.#applyTrustedState(hana)
+  }
+
+  /**
+   * Autenticación integrada de Windows: la conexión va con la identidad de la
+   * cuenta que corre el servicio, y el driver IGNORA usuario y contraseña. Se
+   * deshabilitan los dos campos en vez de dejarlos escribibles, porque un
+   * usuario escrito ahí no autentica nada — y creer que sí es lo que hace
+   * perseguir una contraseña cuando el problema es otro.
+   *
+   * El select NO se deshabilita en HANA aunque ahí no aplique: si la instalación
+   * quedó con el valor en `true`, deshabilitarlo dejaría al operador sin forma
+   * de corregirlo desde la pantalla.
+   */
+  #applyTrustedState(hana) {
+    const trusted = this.#inputFor('DOCS_DB_ODBC_TRUSTED')?.value === 'true'
+    const active  = trusted && !hana
+
+    this.#setHint('DOCS_DB_ODBC_TRUSTED', hana
+      ? 'Solo SQL Server: el driver de SAP HANA no admite Trusted_Connection.'
+      : 'Con “Sí”, la conexión usa la identidad de Windows del servicio. Ese es el usuario que necesita el permiso de solo lectura.')
+
+    for (const code of ['DOCS_DB_ODBC_USER', 'DOCS_DB_ODBC_PASSWORD']) {
+      const input = this.#inputFor(code)
+      if (!input) continue
+
+      input.disabled = active
+      input.classList.toggle('bg-gray-50', active)
+      input.classList.toggle('text-gray-400', active)
+    }
+
+    if (active) {
+      this.#setHint('DOCS_DB_ODBC_USER', 'No se usa con autenticación integrada: el driver lo ignora.')
+      this.#setHint('DOCS_DB_ODBC_PASSWORD', 'No se usa con autenticación integrada: el driver la ignora.')
+    } else {
+      this.#setHint('DOCS_DB_ODBC_USER', 'Debe tener permisos de lectura únicamente.')
+      this.#setHint('DOCS_DB_ODBC_PASSWORD', '')
+    }
   }
 
   #setHint(code, text) {

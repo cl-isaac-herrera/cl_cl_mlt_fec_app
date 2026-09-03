@@ -2551,9 +2551,22 @@ se escapó de su lugar. Las que ya están resueltas:
 | Paginación | `OFFSET/FETCH`, exige `ORDER BY` | `LIMIT/OFFSET` |
 | Sondeo | `SELECT 1` | `SELECT 1 FROM DUMMY` |
 
-**Los procedimientos se invocan con el escape ODBC `{CALL …}`**, que el driver traduce a `EXEC`
-o a `CALL` según el motor. Escribir cualquiera de los dos a mano ata la consulta a un motor,
-que es justo lo que el conector existe para evitar.
+**Los procedimientos se invocan con la sintaxis nativa de cada motor**, que resuelve el
+dialecto: `EXEC [db].[dbo].[SP] ?, ?` en SQL Server y `CALL db.SP(?, ?)` en HANA. Ojo con la
+lista de argumentos, que se comporta al revés: un procedimiento **sin parámetros** va sin
+nada en `EXEC` y con **paréntesis vacíos** en `CALL`.
+
+> El conector usaba el escape ODBC `{CALL …}`, portable en teoría. No lo es: el driver
+> `SQL Server` lee un `()` vacío como una lista de argumentos presente y rechaza la llamada
+> con `Procedure … has no parameters and arguments were supplied` — un mensaje que miente,
+> porque no se envió ninguno. Quien llama sigue sin escribir `EXEC` ni `CALL`: es el dialecto
+> el que los emite.
+
+**Toda sentencia se REVIERTE al salir** (`autocommit = false`). La única excepción es
+`call(..., commit: true)`, para el procedimiento que está diseñado para escribir — el de la
+cola es un `UPDATE … OUTPUT` que reclama filas, y revertirlo deja la cola sin avanzar. Se
+confirma solo si la ejecución terminó bien, y un commit fallido levanta en vez de avisar en
+el log. `select` no tiene esa opción: quién escribe se audita con `grep 'commit: true'`.
 
 ### 🔒 La garantía de solo-lectura son los permisos de BD, no el código
 
@@ -2565,5 +2578,12 @@ porque un procedimiento almacenado hace lo que quiera.
 > (`db_datareader` en SQL Server, `SELECT` sobre el esquema en HANA). `GRANT EXECUTE` se concede
 > **procedimiento por procedimiento**, nunca sobre el esquema completo: un procedimiento corre
 > con los permisos de su dueño y puede escribir aunque quien lo llama no pueda.
+
+**Con `*_TRUSTED` activo, ese usuario NO es el de la pantalla.** La autenticación integrada de
+Windows (solo SQL Server) conecta con la identidad del **proceso Rails** —la cuenta del servicio
+en el servidor, la del programador en desarrollo—, así que el `GRANT` va a esa cuenta y
+`*_USER`/`*_PASSWORD` quedan sin usar: el driver los ignora y la cadena ni siquiera los manda.
+Cambiar la cuenta del servicio cambia con qué credenciales se conecta la aplicación sin que la
+pantalla se vea distinta. En HANA no existe: `Config` levanta si se activa ahí.
 
 Referencia completa: **`docs/CONSULTA-BASE-EXTERNA.md`**.

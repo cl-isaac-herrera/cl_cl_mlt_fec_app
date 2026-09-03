@@ -25,19 +25,14 @@ module Documents
   # contra los suyos. Un centavo de diferencia por coma flotante es un rechazo.
   #
   # ── Lo que todavía NO se puede llenar ────────────────────────────────────────
-  # Tres campos del mapeo no tienen origen en las vistas declaradas hoy. Se dejan
-  # en `nil`/`[]` y NO se inventan:
+  # Un campo del mapeo no tiene origen en las vistas declaradas hoy. Se deja en
+  # `[]` y NO se inventa: `DetalleSurtido`, porque no hay vista de surtidos (el
+  # mapeo la nombra, pero `docs/sync-documents-flow.md` no la define).
   #
-  #   · `ProveedorSistemas`  — ninguna vista lo devuelve. Se lee de la cabecera por
-  #     si la vista termina exponiéndolo; si no, queda nulo.
-  #   · `DetalleSurtido`     — no hay vista de surtidos (el mapeo la nombra, pero
-  #     `docs/sync-documents-flow.md` no la define). Queda como lista vacía.
-  #   · `CodigoActividadEmisor` — la cabecera trae el del RECEPTOR nada más. Se
-  #     toma de `companies.economic_activity_code`, que es donde vive el del
-  #     emisor desde que la configuración de FE bajó de los UDFs de `OADM`
-  #     (migración `20260819130000_add_issuer_fields_to_companies.rb`).
-  #
-  # Están anotados en `TODOS.md` → Emisión de documentos.
+  # `ProveedorSistemas` se sigue leyendo de la cabecera, donde la vista lo trae
+  # hardcodeado. Está decidido que se mueve al ajuste `GENERAL_PROVIDER_ID` —es un
+  # dato del producto y no del documento— pero mientras la vista lo devuelva, esto
+  # funciona. Anotado en `TODOS.md` → Emisión de documentos.
   class UnifiedBuilder
     # @param company [Company]
     # @param doc_type [String] código de Hacienda (`DocType::FE`, …).
@@ -93,15 +88,34 @@ module Documents
       header.string('CodigoActividadEmisor') || company.economic_activity_code.presence
     end
 
+    # El emisor tiene DOS orígenes, y la línea que los separa es si el dato cambia
+    # por sucursal:
+    #
+    #   · Identidad (nombre, identificación, nombre comercial, registro 8707) —
+    #     `companies`. Es una por compañía y no depende del documento: la misma
+    #     cédula jurídica emite desde cualquier sucursal.
+    #   · Ubicación, teléfono y correo — la cabecera, que los trae de la UDT
+    #     `@CL_FEC_SUCURSALES` (`config/sap_schemas/sucursales_udt.json`) con el
+    #     prefijo `Emsr`. Estos SÍ cambian por sucursal, así que no podrían salir
+    #     de `companies`, que es una sola fila.
+    #
+    # Por eso `#ubicacion` y `#telefono` siguen leyendo de `header` mientras el
+    # resto sale de `company`.
     def emisor
       {
-        'Nombre' => header.string('EmsrNombre'),
+        'Nombre' => company.issuer_legal_name.presence,
         'Identificacion' => {
-          'Tipo' => header.string('EmsrIdeTipo'),
-          'Numero' => header.string('EmsrIdeNumero')
+          'Tipo' => company.issuer_id_type.presence,
+          'Numero' => company.issuer_id_number.presence
         },
-        'Registrofiscal8707' => header.string('EmsrRegistrofiscal8707'),
-        'NombreComercial' => header.string('EmsrNombreComercial'),
+        # La columna nació como el UDF `CL_FEC_EmsrRegFiscal8707`: es el registro
+        # del emisor, no el del receptor —que la cabecera trae aparte como
+        # `RcprRegistrofiscal8707` y no se usa acá.
+        'Registrofiscal8707' => company.tax_registry_8707.presence,
+        # El nombre comercial NO tiene columna propia: es `companies.name`, que ya
+        # existía y es el que usa el resto de la app. Ver la migración
+        # `20260819130000_add_issuer_fields_to_companies.rb`.
+        'NombreComercial' => company.name.presence,
         'Ubicacion' => ubicacion(header, 'Emsr'),
         'Telefono' => telefono(header, 'Emsr'),
         'CorreoElectronico' => header.string('EmsrCorreoElectronico')
@@ -351,9 +365,11 @@ module Documents
     def send_document_hacienda
       {
         'fecha' => header.string('FechaEmision'),
+        # La misma identificación que va en el XML, del mismo lugar: si el cuerpo
+        # del POST y el comprobante no coinciden, Hacienda rechaza el envío.
         'emisor' => {
-          'numeroIdentificacion' => header.string('EmsrIdeNumero'),
-          'tipoIdentificacion' => header.string('EmsrIdeTipo')
+          'numeroIdentificacion' => company.issuer_id_number.presence,
+          'tipoIdentificacion' => company.issuer_id_type.presence
         },
         'receptor' => {
           'numeroIdentificacion' => header.string('RcprIdeNumero'),

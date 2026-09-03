@@ -131,32 +131,36 @@ RSpec.describe Setting, type: :model do
     end
   end
 
+  # Grupo inventado y no `DOCS_DB_ODBC`: el del catálogo real lo pueblan las
+  # migraciones de datos, así que un ejemplo que compara el contenido EXACTO se
+  # rompería cada vez que se agregue un ajuste — y solo en las bases migradas,
+  # porque la de CI se carga desde `schema.rb` y no trae filas.
   describe '.group' do
     before do
-      create(:setting, group_code: 'DOCS_DB_ODBC', code: 'DOCS_DB_ODBC_SERVER', value: 'CLSQL01')
-      create(:setting, group_code: 'DOCS_DB_ODBC', code: 'DOCS_DB_ODBC_USER',   value: 'fec_ro')
+      create(:setting, group_code: 'GRUPO_PRUEBA', code: 'GRUPO_PRUEBA_SERVER', value: 'CLSQL01')
+      create(:setting, group_code: 'GRUPO_PRUEBA', code: 'GRUPO_PRUEBA_USER',   value: 'fec_ro')
       create(:setting, group_code: 'OTRO_GRUPO',   code: 'OTRO_GRUPO_SERVER',   value: 'no-va')
     end
 
     it 'devuelve los valores del grupo con el prefijo recortado' do
-      expect(described_class.group('DOCS_DB_ODBC'))
+      expect(described_class.group('GRUPO_PRUEBA'))
         .to eq('SERVER' => 'CLSQL01', 'USER' => 'fec_ro')
     end
 
     # Recorta por el largo del `group_code` y no partiendo por `_`: si partiera,
     # el campo quedaría en 'TIMEOUT' en vez de 'QUERY_TIMEOUT'.
     it 'conserva un campo de dos palabras' do
-      create(:setting, group_code: 'DOCS_DB_ODBC',
-                       code: 'DOCS_DB_ODBC_QUERY_TIMEOUT', value: '45')
+      create(:setting, group_code: 'GRUPO_PRUEBA',
+                       code: 'GRUPO_PRUEBA_QUERY_TIMEOUT', value: '45')
 
-      expect(described_class.group('DOCS_DB_ODBC')['QUERY_TIMEOUT']).to eq('45')
+      expect(described_class.group('GRUPO_PRUEBA')['QUERY_TIMEOUT']).to eq('45')
     end
 
     # Es lo que permite que `Config` nombre exactamente los ajustes que faltan.
     it 'omite los que están sin valor' do
-      create(:setting, group_code: 'DOCS_DB_ODBC', code: 'DOCS_DB_ODBC_PORT', value: nil)
+      create(:setting, group_code: 'GRUPO_PRUEBA', code: 'GRUPO_PRUEBA_PORT', value: nil)
 
-      expect(described_class.group('DOCS_DB_ODBC')).not_to have_key('PORT')
+      expect(described_class.group('GRUPO_PRUEBA')).not_to have_key('PORT')
     end
   end
 

@@ -77,34 +77,73 @@ class SyncIssuedDocumentsJob < ApplicationJob
   # @return [Symbol] cómo terminó, para el resumen del final.
   def process(entry)
     unless entry.known_type?
-      Rails.logger.warn(
-        "[SyncIssuedDocuments] #{entry} tiene un tipo de documento desconocido; se omite."
-      )
-      return :tipo_desconocido
+      return failed(entry, :tipo_desconocido,
+                    "El tipo de documento #{entry.doc_type.inspect} no es un comprobante " \
+                    'electrónico que este producto sepa emitir.')
     end
 
     company = @directory.fetch(entry.sap_db)
     if company.nil?
-      Rails.logger.warn(
-        "[SyncIssuedDocuments] #{entry}: no hay compañía activa con sap_db " \
-        "#{entry.sap_db.inspect}. Configuradas: #{@directory.known_databases.inspect}."
-      )
-      return :sin_compania
+      return failed(entry, :sin_compania,
+                    'No hay una compañía activa con el código de base de SAP ' \
+                    "#{entry.sap_db.inspect}. Configuradas: #{@directory.known_databases.inspect}.")
     end
 
     build(entry, company)
   rescue Sap::CompanyClient::MissingConfiguration => e
     # No se llegó a hablar con SAP: falta configuración de la instalación. Es
     # accionable por quien administra, así que va como warn y no como error.
-    Rails.logger.warn("[SyncIssuedDocuments] #{entry}: #{e.message}")
-    :sin_configuracion
+    failed(entry, :sin_configuracion, e.message, level: :warn)
   rescue StandardError => e
     # `Sentry.capture_exception` explícito: este rescue impide que la excepción
     # llegue al `on_thread_error` de Solid Queue (`config/initializers/solid_queue.rb`),
     # así que sin esto el fallo de un documento se quedaría solo en el log.
-    Rails.logger.error("[SyncIssuedDocuments] #{entry}: #{e.class} — #{e.message}")
     Sentry.capture_exception(e)
-    :error
+    failed(entry, :error, "#{e.class}: #{e.message}", level: :error)
+  end
+
+  # Registra la falla en el log Y en la cola.
+  #
+  # Las dos cosas, y no una: el log es para quien está mirando el servidor, y la
+  # cola es donde el operador puede ver qué pasó con SU documento sin pedirle a
+  # nadie que le lea un archivo. Sin marcar la fila, queda en `Processing` —el
+  # estado en que la dejó el reclamo— indistinguible de una que se está
+  # procesando ahora, y el procedimiento la vuelve a repartir cada diez minutos
+  # sin que nadie se entere de por qué nunca avanza.
+  #
+  # ── `Error` es TERMINAL, y es lo correcto ───────────────────────────────────
+  # El procedimiento no vuelve a repartir un documento en estado `Error`, y así
+  # tiene que ser: la causa más común es un problema del documento mismo —una
+  # validación que no pasa, un dato que falta— y reintentarlo sin que nadie lo
+  # toque daría el mismo resultado indefinidamente.
+  #
+  # El camino de vuelta NO es el reintento sino SAP: cuando alguien corrige el
+  # documento allá, el add-on lo vuelve a encolar con
+  # `CL_D_CL_MLT_FEC_CRT_DOCUMENTTOQUEUE`, que inserta una fila NUEVA. Por eso la
+  # cola es un historial de intentos y no un registro por documento — el `Id` de
+  # `Entry` es el del intento (ver `Documents::PendingQueue::Entry`).
+  #
+  # La consecuencia a tener presente: una falla de INSTALACIÓN (una licencia de
+  # SAP sin llenar, un `$filter` mal sembrado) marca en error todo lo que haya en
+  # la cola en ese momento, y esos documentos no vuelven solos. Está evaluado y
+  # aceptado; la salida sería un estado aparte de "error técnico" que sí se
+  # reintente, anotado en `TODOS.md` → Emisión de documentos.
+  #
+  # No puede tumbar la tanda: si la cola no acepta la marca, se avisa y se sigue
+  # con el resto de los documentos.
+  def failed(entry, outcome, details, level: :warn)
+    Rails.logger.public_send(level, "[SyncIssuedDocuments] #{entry}: #{details}")
+
+    begin
+      Documents::PendingQueue.mark_error(entry, details)
+    rescue StandardError => e
+      Rails.logger.error(
+        "[SyncIssuedDocuments] #{entry}: no se pudo marcar el error en la cola — #{e.message}"
+      )
+      Sentry.capture_exception(e)
+    end
+
+    outcome
   end
 
   def build(entry, company)

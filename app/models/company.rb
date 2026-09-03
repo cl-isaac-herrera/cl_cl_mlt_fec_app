@@ -43,7 +43,12 @@ class Company < ApplicationRecord
   # La columna es `not null`: sin esto, guardar el formulario con el nombre en
   # blanco revienta contra la restricción de la base y llega como un 500 en vez de
   # un mensaje.
-  validates :name, presence: true
+  #
+  # El máximo de 80 no es una preferencia de la pantalla: `name` es el nombre
+  # comercial que viaja en el XML como `Emisor.NombreComercial`, y ese es el largo
+  # que acepta el esquema 4.4 de Hacienda. Un nombre más largo no se ve mal, se
+  # rechaza — y el rechazo llega mucho después de que alguien lo escribió.
+  validates :name, presence: true, length: { maximum: 80 }
 
   # `belongs_to ... optional: true` no valida nada cuando el id SÍ viene: una
   # conexión inexistente pasaría el modelo y la rechazaría la llave foránea, que
@@ -54,8 +59,13 @@ class Company < ApplicationRecord
   # Los largos replican el `Size` que estos campos tenían como UDFs de `OADM`,
   # que es el límite con el que se venían guardando. La validación mira el texto
   # original; el `limit:` de la columna es la otra mitad (ver la migración).
+  #
+  # `issuer_id_number` es la excepción: subió de 12 a 20 porque el `Size` del UDF
+  # no alcanzaba para el DIMEX ni para el NITE, y desde que la identificación del
+  # emisor sale de acá (`Documents::UnifiedBuilder#emisor`) el recorte se llevaría
+  # puesto el comprobante. Ver `20260901120000_tighten_company_identity_limits.rb`.
   validates :issuer_legal_name,      length: { maximum: 100 }, allow_nil: true
-  validates :issuer_id_number,       length: { maximum: 12 },  allow_nil: true
+  validates :issuer_id_number,       length: { maximum: 20 },  allow_nil: true
   validates :economic_activity_code, length: { maximum: 6 },   allow_nil: true
   validates :tax_registry_8707,      length: { maximum: 12 },  allow_nil: true
   validates :default_xml_tax_code,   length: { maximum: 8 },   allow_nil: true

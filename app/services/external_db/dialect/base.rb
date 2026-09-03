@@ -47,6 +47,27 @@ module ExternalDb
         raise NotImplementedError, "#{self.class}#paginate"
       end
 
+      # Llamado a un procedimiento almacenado, con un `?` por parámetro.
+      #
+      #   SQL Server │ EXEC [CL_DOCS].[dbo].[SP_DOCS] ?, ?
+      #   HANA       │ CALL CL_DOCS.SP_DOCS(?, ?)
+      #
+      # Cada motor tiene su palabra clave y su forma de escribir la lista de
+      # argumentos, así que esto es contrato y no comportamiento compartido.
+      #
+      # ── Por qué ya no se usa el escape ODBC `{CALL …}` ───────────────────────
+      # El escape es portable en teoría —el driver manager lo traduce a `EXEC` o
+      # a `CALL`— y por eso estaba acá, en la clase base. En la práctica la
+      # traducción no es transparente: el driver `SQL Server` lee un `()` vacío
+      # como una lista de argumentos presente y rechaza la llamada con
+      # "Procedure … has no parameters and arguments were supplied", un mensaje
+      # que miente porque no se envió ninguno. Emitir la sintaxis nativa de cada
+      # motor quita esa capa de interpretación, y es además lo que `CLAUDE.md`
+      # §37 pide: toda diferencia entre motores vive en `dialect/`.
+      def call_statement(_procedure, _arity)
+        raise NotImplementedError, "#{self.class}#call_statement"
+      end
+
       # ----------------------------------------------------------------
       # Compartido
       # ----------------------------------------------------------------
@@ -62,20 +83,6 @@ module ExternalDb
       # sesión.
       def qualify(object_name)
         qualifier_parts.push(object_name).compact.map { |part| quote_ident(part) }.join('.')
-      end
-
-      # Llamado a procedimiento almacenado en la sintaxis de escape ODBC.
-      #
-      #   {CALL [CL_DOCS].[dbo].[SP_DOCS](?, ?)}
-      #
-      # Es la forma PORTABLE de invocar un procedimiento: el driver manager la
-      # traduce a lo que cada motor entienda (`EXEC` en SQL Server, `CALL` en
-      # HANA). Escribir `CALL` o `EXEC` a mano ataría la consulta a un motor, que
-      # es justamente lo que este conector existe para evitar.
-      def call_statement(procedure, arity)
-        placeholders = Array.new(arity, '?').join(', ')
-
-        "{CALL #{qualify(procedure)}(#{placeholders})}"
       end
 
       # Clave cuyo valor va SIEMPRE entre llaves.

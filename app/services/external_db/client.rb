@@ -126,10 +126,11 @@ module ExternalDb
       select_one(sql, binds)&.values&.first
     end
 
-    # Invoca un procedimiento almacenado con la sintaxis de escape ODBC
-    # (`{CALL …}`), que el driver traduce a lo que entienda cada motor.
+    # Invoca un procedimiento almacenado con la sintaxis nativa del motor
+    # (`EXEC` en SQL Server, `CALL` en HANA), que resuelve el dialecto.
     #
     #   call('SP_DOCS_POR_FECHA', [desde, hasta])
+    #   call('SP_PENDIENTES', [], commit: true)
     #
     # El nombre lo califica el dialecto con la base y el esquema configurados, así
     # que acá se pasa pelado — es lo que hace que la misma llamada sirva contra
@@ -138,7 +139,28 @@ module ExternalDb
     # ⚠️ El guard de solo-lectura NO aplica: desde acá no hay forma de saber si el
     # procedimiento lee o escribe. Que sea de lectura lo tienen que garantizar los
     # permisos del usuario de base de datos (ver `StatementGuard`).
-    def call(procedure, binds = [])
+    #
+    # ── `commit:` — la ÚNICA forma de que una escritura quede ────────────────
+    # Por defecto `false`, igual que todo lo demás: la sentencia se revierte al
+    # salir. Con `true`, el trabajo se confirma si —y solo si— el procedimiento
+    # terminó sin error.
+    #
+    # Hace falta porque hay procedimientos que **están diseñados para escribir** y
+    # no son una fuga: el de la cola de documentos es un `UPDATE … OUTPUT` que
+    # reclama las filas y las devuelve en una sola operación atómica. Revertirlo
+    # lo deja sin efecto y la cola nunca avanza — la misma tanda se reprocesa en
+    # cada corrida, y la ventana de reintento del procedimiento no llega a
+    # activarse nunca.
+    #
+    # Que sea explícito y no el default es a propósito. En .NET esto no existía
+    # porque ADO.NET trabaja en autocommit: allá confirmar era el comportamiento
+    # normal y nadie lo escribía. Acá el default es al revés, así que la excepción
+    # se ve en el call site y se puede auditar con un grep quién escribe.
+    #
+    # **No relaja los permisos.** Un procedimiento corre con los permisos de su
+    # dueño, así que la cuenta de la aplicación sigue necesitando solo `EXECUTE`
+    # sobre él — nunca escritura sobre las tablas (`CLAUDE.md` §37).
+    def call(procedure, binds = [], commit: false)
       unless procedure.to_s.match?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
         # El nombre se intercala en el texto de la sentencia —un identificador no
         # puede ir como parámetro—, así que se acota a lo que un identificador
@@ -149,17 +171,19 @@ module ExternalDb
               'identificador válido.'
       end
 
-      run(dialect.call_statement(procedure, binds.size), binds)
+      run(dialect.call_statement(procedure, binds.size), binds, commit: commit)
     end
 
     private
 
-    # Ejecuta y materializa el resultado. La sentencia se cierra siempre y la
-    # transacción se revierte siempre — ver el comentario del `ensure`.
-    def run(sql, binds)
+    # Ejecuta y materializa el resultado. La sentencia se cierra siempre; la
+    # transacción se revierte salvo que quien llama haya pedido `commit: true` y
+    # la ejecución haya terminado bien — ver el comentario del `ensure`.
+    def run(sql, binds, commit: false)
       connect unless connected?
 
       statement = nil
+      succeeded = false
       started   = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
       begin
@@ -168,6 +192,7 @@ module ExternalDb
 
         rows = collect(statement)
         log_query(sql, binds, rows.size, started)
+        succeeded = true
         rows
       rescue ODBC::Error => e
         raise QueryError,
@@ -179,12 +204,24 @@ module ExternalDb
           Rails.logger.warn("[ExternalDb] no se pudo liberar la sentencia: #{sanitize(e.message)}")
         end
 
-        # `autocommit` está en `false` y acá NUNCA se hace commit: si una
-        # sentencia llegó a modificar algo —un procedimiento con un UPDATE
-        # adentro, un `WITH … DELETE` que el guard no atrapó— el rollback lo
-        # deshace. Es la única defensa técnica real que queda del lado de la app,
-        # y no cubre a un procedimiento que haga su propio commit.
-        rollback_quietly
+        # `autocommit` está en `false`, así que acá se decide el destino de todo
+        # lo que la sentencia haya tocado.
+        #
+        # Por defecto se REVIERTE: si algo llegó a modificar la base —un
+        # procedimiento con un UPDATE adentro, un `WITH … DELETE` que el guard no
+        # atrapó— el rollback lo deshace. Es la única defensa técnica que queda
+        # del lado de la app, y no cubre a un procedimiento que haga su propio
+        # commit.
+        #
+        # `commit: true` es la excepción explícita, y **solo si la ejecución
+        # terminó bien**: confirmar después de un error dejaría la mitad del
+        # trabajo hecha, que es peor que no haber hecho nada. Cuando el cuerpo
+        # falló, `succeeded` sigue en `false` y se revierte igual.
+        if commit && succeeded
+          commit!
+        else
+          rollback_quietly
+        end
       end
     end
 
@@ -236,6 +273,25 @@ module ExternalDb
       # Un driver sin transacciones (o una conexión ya cerrada) levanta acá. No
       # hay nada que hacer y no es un error del llamador.
       nil
+    end
+
+    # El commit SÍ levanta, al revés que el rollback.
+    #
+    # Quien pidió `commit: true` lo hizo porque el efecto del procedimiento tiene
+    # que quedar. Si el commit falla, el trabajo se perdió pero las filas ya
+    # volvieron: el llamador creería que reclamó documentos que en realidad
+    # siguen libres, y los tomaría de nuevo en la próxima corrida. Un warning en
+    # el log no alcanza para eso.
+    #
+    # Se levanta desde el `ensure`, y eso está bien acá: solo se llega si el
+    # cuerpo terminó sin excepción, así que no hay ningún error anterior que
+    # enmascarar.
+    def commit!
+      @db&.commit
+    rescue ODBC::Error => e
+      raise QueryError,
+            'La base de documentos no confirmó la transacción: ' \
+            "#{sanitize(e.message)}"
     end
 
     # ⚠️ La consulta se loguea SIN los valores. Los parámetros son datos del

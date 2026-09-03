@@ -81,6 +81,19 @@ module ExternalDb
         'SELECT VERSION FROM M_DATABASE'
       end
 
+      # `CALL` es la sintaxis nativa de HANA, y la lista de parámetros va SIEMPRE
+      # entre paréntesis — también cuando está vacía, que es lo contrario del
+      # `EXEC` de SQL Server:
+      #
+      #   CALL CL_DOCS.SP1(?)
+      #   CALL CL_DOCS.SP1()     ← sin parámetros
+      #
+      # Es la calificación de un solo tramo de `#qualifier_parts`: en HANA el
+      # código de base ES el esquema.
+      def call_statement(procedure, arity)
+        "CALL #{qualify(procedure)}(#{Array.new(arity.to_i, '?').join(', ')})"
+      end
+
       # `LIMIT … OFFSET …`, como PostgreSQL y MySQL. Sin la exigencia de
       # `ORDER BY` que tiene SQL Server: acá la sintaxis compila sin él.
       #

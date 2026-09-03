@@ -935,15 +935,15 @@ documento.
       **Pendiente:** un check en la sección correspondiente de
       `configurations/companies/_form.html.erb` + el `PATCH` de esa sección.
 
-- [ ] **Tres campos del objeto unificado no tienen origen.** `Documents::UnifiedBuilder`
-      los deja en `nil`/`[]` y **no los inventa**:
-      · `ProveedorSistemas` — ninguna vista lo devuelve. Se lee de la cabecera por si la
-        vista termina exponiéndolo; probablemente sea una constante del producto (la
-        cédula del proveedor de software ante Hacienda).
-      · `DetalleSurtido` — el mapeo del punto 10 lo nombra, pero
-        `docs/sync-documents-flow.md` no define la vista de surtidos.
-      · `CodigoActividadEmisor` — resuelto con `companies.economic_activity_code`; la
-        cabecera solo trae el del receptor. Confirmar que es lo correcto.
+- [ ] **Un campo del objeto unificado sigue sin origen.** `Documents::UnifiedBuilder` lo
+      deja en `[]` y **no lo inventa**: `DetalleSurtido` — el mapeo del punto 10 lo nombra,
+      pero `docs/sync-documents-flow.md` no define la vista de surtidos.
+      Los otros dos que estaban en esta lista ya se resolvieron:
+      · `ProveedorSistemas` — pasa a `settings` (`GENERAL_PROVIDER_ID`); ver el ítem en
+        *Correcciones pendientes* más abajo.
+      · `CodigoActividadEmisor` — la vista de cabecera **sí** lo devuelve, con punto
+        decimal y eso es válido. El respaldo a `companies.economic_activity_code` queda
+        como está: si la vista trae valor, gana el que viajó con el documento.
 
 ### Correcciones pendientes tras revisar el SQL real de las vistas (2026-08-29)
 
@@ -954,6 +954,14 @@ corregido todavía: se documenta para arreglarlo en una tanda aparte.
 El chequeo se puede repetir comparando lo que lee `Documents::UnifiedBuilder` contra las
 columnas de cada vista; los nombres de campo del builder están todos en llamadas
 `.string(…)` / `.decimal(…)` / `.integer(…)`, así que son grepeables.
+
+**Repaso del 2026-09-01:** se revisaron los hallazgos uno por uno y se decidió de qué lado
+se corrige cada uno. Quedaron **cinco cerrados** —el vacío del emisor (UDT por sucursal),
+su identidad (pasa a `companies`, ya implementado), la UDT ya declarada, el punto decimal
+del código de actividad y la ubicación de `Registrofiscal8707`— y **dos pasaron a
+corregirse en las vistas** y no en la aplicación (`NombreInstitucion`,
+`ProveedorSistemas`). Los que siguen abiertos son el filtro, el stub de referencias, los
+campos faltantes por vista, los medios de pago sin verificar y los cortes de fecha.
 
 - [ ] **⛔ EL FILTRO NO FUNCIONA EN CINCO DE LAS SEIS VISTAS.** Se sembró
       `$filter=(DocEntry eq @DocEntry and DocType eq @DocType)` y esas columnas casi no
@@ -984,21 +992,51 @@ columnas de cada vista; los nombres de campo del builder están todos en llamada
       salga de ahí —una por documento— y esta vista no haga falta. Lo que la cabecera NO
       trae es `InfCodigoReferenciaOTRO` ni `InfRefTipoDocRefOTRO`.
 
-- [ ] **⛔ El emisor no viene de SAP y falta la mitad de sus datos.** La cabecera no
-      devuelve **ningún** campo `Emsr*`. Lo que hay resuelto y lo que no:
+- [x] **El vacío del emisor se resolvió con una UDT por sucursal (2026-09-01).** La
+      ubicación, el teléfono y el correo del emisor **cambian por sucursal**, así que no
+      podían salir de `companies` —que es una fila por compañía— ni ser constantes del
+      producto. Viven en una UDT de SAP y la vista de cabecera pasa a devolverlos con el
+      prefijo `Emsr`, que es exactamente lo que el builder ya lee:
 
-      | Campo | Fuente |
+      ```sql
+      sucursal.U_EmsrCorreoElectronico AS EmsrCorreoElectronico,
+      sucursal.U_EmsrTlfCodigoPais     AS EmsrTlfCodigoPais,
+      sucursal.U_EmsrTlfNumTelefono    AS EmsrTlfNumTelefono,
+      sucursal.U_EmsrUbProvincia       AS EmsrUbProvincia,
+      sucursal.U_EmsrUbCanton          AS EmsrUbCanton,
+      sucursal.U_EmsrUbDistrito        AS EmsrUbDistrito,
+      sucursal.U_EmsrUbBarrio          AS EmsrUbBarrio,
+      sucursal.U_EmsrUbOtrasSenas      AS EmsrUbOtrasSenas
+      ```
+
+      `Documents::UnifiedBuilder#ubicacion` y `#telefono` no se tocan: ya arman esos dos
+      bloques leyendo `#{prefix}Ub…` / `#{prefix}Tlf…` de la cabecera.
+
+- [x] **La identidad del emisor pasa a salir de `companies` (2026-09-01).** La UDT cubrió
+      lo que cambia por sucursal; lo que es una sola cosa por compañía —la misma cédula
+      jurídica emita desde donde emita— ya vivía en la base de la aplicación y el builder
+      dejó de esperarlo de la vista:
+
+      | Campo del XML | Fuente |
       |---|---|
-      | Nombre, Identificación | `companies.issuer_legal_name` / `issuer_id_type` / `issuer_id_number` |
-      | Nombre comercial | `companies.name` |
-      | Código de actividad | la vista, o `companies.economic_activity_code` |
-      | **Ubicación** (provincia, cantón, distrito, barrio, otras señas) | **no existe en ningún lado** |
-      | **Teléfono** (código país, número) | **no existe en ningún lado** |
-      | **Correo electrónico** | **no existe** (`companies.email_cc` es copia, no remitente) |
+      | `Emisor.Nombre` | `companies.issuer_legal_name` |
+      | `Emisor.Identificacion` | `companies.issuer_id_type` / `issuer_id_number` |
+      | `Emisor.NombreComercial` | `companies.name` |
+      | `Emisor.Registrofiscal8707` | `companies.tax_registry_8707` |
 
-      Hacienda exige `Emisor.Ubicacion` y `CorreoElectronico`. Hay que decidir si se
-      agregan columnas a `companies` o si las vistas pasan a devolver los `Emsr*`. Es el
-      punto de fondo: sin esto el comprobante no pasa validación.
+      `send_document_hacienda` toma la identificación del **mismo** lugar: si el cuerpo del
+      POST y el comprobante no coinciden, Hacienda rechaza el envío.
+      Cierra también el ítem de `Registrofiscal8707`: la columna nació como el UDF
+      `CL_FEC_EmsrRegFiscal8707`, así que es del emisor y no había que moverla a `Receptor`
+      ni leer la `Rcpr…` de la vista.
+
+      Con esto, **la vista de cabecera ya no necesita devolver ningún `Emsr*` fuera de los
+      ocho de la UDT**.
+
+- [x] **La UDT del emisor ya está declarada** en `config/sap_schemas/sucursales_udt.json`
+      (`@CL_FEC_SUCURSALES`, 12 columnas, descripciones con el prefijo `FEC ·` como pide
+      §32). La vista hace `JOIN` contra ella y devuelve los campos con el prefijo `Emsr`.
+      Se había anotado como pendiente por error.
 
 - [ ] **Campos que el builder lee y la vista no devuelve.** Hay que quitarlos del builder,
       o agregarlos a la vista, según cuál sea el dato real:
@@ -1011,10 +1049,12 @@ columnas de cada vista; los nombres de campo del builder están todos en llamada
       · **Otros cargos:** `TipoIdentidadTercero` y `TipoDocumentoOTROS`. Además
         `Porcentaje` viene fijo en `0`.
 
-- [ ] **`Registrofiscal8707` está en el bloque equivocado.** El builder lo pone bajo
-      `Emisor` (venía así del mapeo del documento, como `EmsrRegistrofiscal8707`), pero la
-      vista devuelve `RcprRegistrofiscal8707` y la 4.4 lo define como dato del **receptor**
-      (comprador de bebidas alcohólicas). Mover a `Receptor`.
+- [x] **`Registrofiscal8707` sí va en `Emisor`** (confirmado 2026-09-01). Se había anotado
+      como mal ubicado; **no lo está**: en factura de **venta** el registro fiscal 8707 es
+      el del emisor, que es como lo arma el builder. (Puede cambiar en factura de
+      **compra**, donde el rol se invierte; no es el caso que se está implementando.)
+      Resuelto junto con el resto de la identidad: sale de `companies.tax_registry_8707`.
+      La `RcprRegistrofiscal8707` que devuelve la vista queda sin usar.
 
 - [ ] **Falta la definición de las tablas de medios de pago.** La vista es
       `SELECT * FROM CLVS_FE_SYNC_MEDIOPAGOBASE44 UNION ALL SELECT * FROM CLVS_FE_SYNC_MEDIOPAGOREPBASE44`,
@@ -1023,20 +1063,38 @@ columnas de cada vista; los nombres de campo del builder están todos en llamada
       `CLVS_FE_SYNC_MEDIOPAGO44 Z WHERE A."DocEntry" = Z."DocEntryFactura"` — la clave ahí
       se llama `DocEntryFactura`, no `DocEntry`.
 
-- [ ] **Tres defectos de las vistas mismas, para reportar a quien las mantiene:**
-      · `CodigoActividadEmisor` sale como `'7020.0'`, con punto decimal. Hacienda espera
-        seis dígitos (`702000`); ese punto casi seguro produce un rechazo.
-      · `NombreInstitucion` se llama distinto en dos ramas del `UNION` de la vista de
-        líneas (`NombreInstitucion` en facturas, `ENombreInstitucion` en NC). SQL Server
-        toma los nombres de la primera rama, así que hoy gana `NombreInstitucion` — pero
-        se rompe solo si alguien reordena las ramas.
-      · Cortes de fecha fijos en el `WHERE`: `DocDate >= '20260427'` en cabecera y líneas,
-        `'20210801'` en otros cargos, `'20251001'` en otros. Un documento anterior al corte
-        no aparece y el job lo reporta como `HeaderNotFound`, sin ninguna pista de que la
-        causa es el filtro de la vista.
+- [ ] **Cortes de fecha fijos en el `WHERE` de las vistas.** `DocDate >= '20260427'` en
+      cabecera y líneas, `'20210801'` en otros cargos, `'20251001'` en otros. Un documento
+      anterior al corte no aparece y el job lo reporta como `HeaderNotFound`, sin ninguna
+      pista de que la causa es el filtro de la vista. Para reportar a quien las mantiene.
 
-- [x] **`ProveedorSistemas` sí tiene origen.** La cabecera lo devuelve hardcodeado
-      (`,'3101822733' "ProveedorSistemas"`). Deja de ser un campo sin fuente.
+- [ ] **`NombreInstitucion` — inconsistente entre ramas del `UNION`, se corrige en la
+      vista.** Se llama `NombreInstitucion` en la rama de facturas y `ENombreInstitucion`
+      en la de NC; SQL Server toma los nombres de la primera rama, así que hoy gana
+      `NombreInstitucion` y se rompería solo si alguien reordena las ramas. El builder lee
+      `ENombreInstitucion`. **Queda del lado de las vistas** (lo asumió Isaac, 2026-09-01):
+      cuando ambas ramas expongan `ENombreInstitucion`, el builder no se toca y este ítem
+      sale también del listado de "campos que el builder lee y la vista no devuelve".
+
+- [ ] **`ProveedorSistemas` se saca de las vistas y pasa a `settings`.** Hoy la cabecera lo
+      devuelve hardcodeado (`,'3101822733' "ProveedorSistemas"`) — la cédula del proveedor
+      de software es del **producto**, no del documento, así que no tiene por qué estar
+      repetida en la vista de cada base de compañía. Se elimina de las vistas y se lee de
+      Configuraciones → Generales.
+      **El ajuste ya existe, no hay que crearlo:** `GENERAL_PROVIDER_ID`
+      («Identificación del proveedor de sistemas», grupo `GENERAL`, `is_visible: true`),
+      sembrado en `db/seeds.rb` y ya presente en la pantalla
+      (`configurations/general/index.html.erb:120`).
+      **Cambio en el builder:** `header.string('ProveedorSistemas')` →
+      `Setting.value_for('GENERAL_PROVIDER_ID')`. Decidir qué pasa si el operador no lo
+      llenó: hoy quedaría `nil` y Hacienda lo exige, así que probablemente valga la pena
+      cortar el armado con un mensaje claro en vez de emitir un comprobante que va a ser
+      rechazado.
+
+- [x] **`CodigoActividadEmisor` con punto decimal NO es un defecto** (confirmado
+      2026-09-01). Se había anotado que `'7020.0'` produciría un rechazo; el código de
+      actividad **sí puede llevar punto**. La vista se deja como está y el builder tampoco
+      lo normaliza.
 
 - [x] **La corrección de `ND`/`NC` quedó confirmada por las vistas.** El mapeo de series de
       la vista de líneas dice `Series '75' → '02' --Nota débito` y `Series '74' → '03' --NC`,
@@ -1060,9 +1118,27 @@ columnas de cada vista; los nombres de campo del builder están todos en llamada
       (`20260812130000_apply_permission_catalog_changes.rb`).
 
 - [ ] **Pasos 4 y 5 del flujo, sin empezar.** Envío al Ministerio de Hacienda,
-      actualización del estado en la cola (`Sent` / `Error` con su detalle) y en SAP
-      (clave y número consecutivo). El punto 12 del documento los deja explícitamente
-      para la siguiente etapa.
+      actualización del estado en la cola a `Sent` y en SAP (clave y número
+      consecutivo). El punto 12 del documento los deja explícitamente para la
+      siguiente etapa.
+      **Ya hecho de esa lista:** el `Error` con su detalle
+      (`Documents::PendingQueue#mark_error` → `CL_D_CL_MLT_FEC_UPT_DOCUMENT`), que
+      se adelantó porque sin él una falla es invisible desde afuera.
+
+- [ ] **Evaluar un estado de "error técnico" que sí se reintente.** Hoy `Error` (4) es
+      terminal a propósito: la causa más común es del documento —una validación que no
+      pasa, un dato que falta— y reintentarlo sin que nadie lo toque daría el mismo
+      resultado. El camino de vuelta es SAP: al corregir el documento allá, el add-on
+      lo vuelve a encolar con `CL_D_CL_MLT_FEC_CRT_DOCUMENTTOQUEUE`, que inserta una
+      fila nueva.
+      **Lo que eso no cubre:** una falla de infraestructura —SAP caído, un timeout, la
+      base externa sin responder— no es culpa del documento y quema igual todo lo que
+      hubiera en la cola en ese momento, sin que vuelva solo. Un estado aparte que el
+      procedimiento sí reparta lo resolvería.
+      **Decidido el 2026-09-02 (Isaac):** no se agrega ahora, se valora más adelante.
+      Si se agrega, toca `dbo.StatusCodes`, el `WHERE` de
+      `CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS` y el `outcome` de
+      `SyncIssuedDocumentsJob#failed`, que es donde ya se distingue el tipo de falla.
 
 ---
 

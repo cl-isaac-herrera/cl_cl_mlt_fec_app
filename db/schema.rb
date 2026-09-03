@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_25_140100) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_01_140000) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
@@ -29,11 +29,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_25_140100) do
     t.integer "freight_type", default: 1, null: false
     t.string "grant_type"
     t.boolean "is_active", default: true, null: false
-    t.string "issuer_id_number", limit: 12
+    t.string "issuer_id_number", limit: 20
     t.string "issuer_id_type", limit: 2
     t.string "issuer_legal_name", limit: 100
     t.string "logo_path"
-    t.string "name", null: false
+    t.string "name", limit: 80, null: false
     t.string "print_format_path"
     t.integer "purchase_invoice_series"
     t.string "sap_db"
