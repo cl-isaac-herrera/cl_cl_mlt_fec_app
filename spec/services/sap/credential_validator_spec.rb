@@ -9,7 +9,7 @@ RSpec.describe Sap::CredentialValidator do
   end
 
   def validate(sap_user: 'manager', sap_password: 'secreto')
-    described_class.new(company: company, sap_user: sap_user, sap_password: sap_password).call
+    described_class.for_company(company: company, sap_user: sap_user, sap_password: sap_password).call
   end
 
   # Estos tres no llegan a tocar SAP: se cortan antes de armar el client.
@@ -107,8 +107,8 @@ RSpec.describe Sap::CredentialValidator do
         headers: { 'Content-Type' => 'application/json' }
       )
 
-      result = described_class.new(company: company, sap_user: 'manager',
-                                   sap_password: 'INCORRECTA').call
+      result = described_class.for_company(company: company, sap_user: 'manager',
+                                          sap_password: 'INCORRECTA').call
 
       expect(result).not_to be_valid
       # Lo que prueba el arreglo: se pidió el /Login en vez de reusar la sesión.
@@ -131,6 +131,66 @@ RSpec.describe Sap::CredentialValidator do
       expect(result).not_to be_valid
       # Sin el prefijo del cliente: al usuario le sirve el motivo de SAP.
       expect(result.message).to eq('usuario o clave incorrectos')
+    end
+  end
+
+  # Es el camino de las credenciales de LICENCIA de una conexión: se prueban
+  # desde el formulario, con una conexión que puede no estar guardada, así que no
+  # hay compañía de la que derivar el destino.
+  describe 'destino explícito (credenciales de licencia)' do
+    def validate_license(base_url: 'https://sap.test:50000/b1s/v1/', company_db: 'SBO_ACME',
+                         sap_user: 'licencia', sap_password: 'secreto')
+      described_class.new(base_url: base_url, company_db: company_db,
+                          sap_user: sap_user, sap_password: sap_password).call
+    end
+
+    it 'sondea contra la URL y la base recibidas, sin pasar por una compañía' do
+      SlResource.create!(code: 'qsValidateSapCredentials', resource: 'BusinessPartners',
+                         query_params: '$top=1', page_size: 0, is_standard: true)
+      client = instance_double(Clavisco::ServiceLayer::Client)
+      allow(Clavisco::ServiceLayer::Client).to receive(:new).and_return(client)
+      allow(client).to receive(:get).and_return([])
+      allow(client).to receive(:logout)
+
+      expect(validate_license).to be_valid
+      expect(Clavisco::ServiceLayer::Client).to have_received(:new).with(
+        hash_including(base_url: 'https://sap.test:50000/b1s/v1/', company_db: 'SBO_ACME',
+                       username: 'licencia', password: 'secreto')
+      )
+    end
+
+    # Los motivos por defecto no pueden hablar de "la compañía": acá no hay una, y
+    # decirle eso a quien está llenando el formulario de conexiones lo mandaría a
+    # buscar el problema al lugar equivocado.
+    it 'pide la URL sin culpar a una compañía' do
+      expect(validate_license(base_url: '').message)
+        .to eq('No hay una URL de Service Layer contra la que probar.')
+    end
+
+    it 'pide la base de datos sin culpar a una compañía' do
+      expect(validate_license(company_db: '').message)
+        .to eq('Indique la base de datos de SAP contra la que probar.')
+    end
+
+    it 'acepta motivos propios del llamador' do
+      result = described_class.new(
+        base_url: '', company_db: 'SBO_ACME', sap_user: 'licencia', sap_password: 'secreto',
+        missing_messages: { base_url: 'Ingrese la URL del Service Layer antes de probar.' }
+      ).call
+
+      expect(result.message).to eq('Ingrese la URL del Service Layer antes de probar.')
+    end
+
+    # Sobreescribir un motivo no puede dejar el otro en nil: un `missing_messages`
+    # parcial se completa con los defaults.
+    it 'conserva los motivos por defecto que el llamador no sobreescribió' do
+      result = described_class.new(
+        base_url: 'https://sap.test:50000/b1s/v1/', company_db: '',
+        sap_user: 'licencia', sap_password: 'secreto',
+        missing_messages: { base_url: 'Ingrese la URL del Service Layer antes de probar.' }
+      ).call
+
+      expect(result.message).to eq('Indique la base de datos de SAP contra la que probar.')
     end
   end
 end

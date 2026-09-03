@@ -1,9 +1,24 @@
 # frozen_string_literal: true
 
 module Sap
-  # Comprueba que un par usuario/contraseña de SAP sirva para entrar al Service
-  # Layer de una compañía. Equivale a `SAPConnectionService.ValidateUserSAPCredentialsAsync`
-  # del API .NET: arma el contexto con la conexión de la compañía y se autentica.
+  # Comprueba que un par usuario/contraseña de SAP sirva para entrar a un Service
+  # Layer. Equivale a `SAPConnectionService.ValidateUserSAPCredentialsAsync`
+  # del API .NET: arma el contexto y se autentica.
+  #
+  # Recibe el destino ya resuelto (`base_url` + `company_db`) porque los dos
+  # consumidores lo obtienen de lugares distintos:
+  #
+  #   - `.for_company` — las credenciales personales de alguien contra la conexión
+  #     de una compañía ya guardada (pantalla de perfil y de usuarios).
+  #   - `.new` directo — las credenciales de licencia de una conexión que puede no
+  #     estar guardada todavía, porque se prueban desde el formulario de conexiones
+  #     antes de crearla. Ahí no hay compañía de la que derivar nada: la URL sale
+  #     del campo que se está llenando y la base la escribe quien configura.
+  #
+  # La lógica delicada —el sondeo, la llave desechable del pool y la
+  # desambiguación por sesión— vive UNA sola vez acá a propósito: es de donde
+  # salió el falso positivo que se describe más abajo, y una segunda copia para el
+  # caso de la licencia lo habría revivido en silencio.
   #
   # Usa `Clavisco::ServiceLayer::Client` (CLAVISCO-PLATFORM-STANDARDS §2.7) — nunca
   # HTTP a mano contra SAP. El Client no expone un `login` suelto: se autentica solo
@@ -48,14 +63,45 @@ module Sap
     # lee la respuesta: solo importa si la autenticación previa funcionó.
     PROBE_CODE = 'qsValidateSapCredentials'
 
+    # Motivos por defecto cuando falta el destino. Los sobreescribe el llamador con
+    # `missing_messages:`, que sí puede nombrar de quién es la configuración que
+    # falta: "la compañía no tiene conexión" es accionable, "no hay URL" no dice
+    # dónde ponerla.
+    MISSING_MESSAGES = {
+      base_url:   'No hay una URL de Service Layer contra la que probar.',
+      company_db: 'Indique la base de datos de SAP contra la que probar.'
+    }.freeze
+
     Result = Struct.new(:valid, :message, keyword_init: true) do
       def valid? = valid
     end
 
-    def initialize(company:, sap_user:, sap_password:)
-      @company      = company
-      @sap_user     = sap_user.to_s
-      @sap_password = sap_password.to_s
+    # Credenciales personales contra la conexión de una compañía ya guardada.
+    #
+    # @param company [Company]
+    def self.for_company(company:, sap_user:, sap_password:)
+      new(
+        # La URL sale de `connections` y no de SAP_SL_URL porque el producto es
+        # multi-compañía (§8, nota de nomenclatura de `connections`).
+        base_url:         company.sap_connection&.sl_url,
+        company_db:       company.sap_db,
+        sap_user:         sap_user,
+        sap_password:     sap_password,
+        missing_messages: {
+          base_url:   'La compañía no tiene una conexión SAP configurada.',
+          company_db: 'La compañía no tiene una base de datos de SAP asignada.'
+        }
+      )
+    end
+
+    # @param missing_messages [Hash] motivos a mostrar cuando falta el destino,
+    #   por clave (`:base_url`, `:company_db`). Lo que no venga usa el default.
+    def initialize(base_url:, company_db:, sap_user:, sap_password:, missing_messages: {})
+      @base_url         = base_url.to_s
+      @company_db       = company_db.to_s
+      @sap_user         = sap_user.to_s
+      @sap_password     = sap_password.to_s
+      @missing_messages = MISSING_MESSAGES.merge(missing_messages)
     end
 
     # @return [Result]
@@ -91,7 +137,7 @@ module Sap
 
     private
 
-    attr_reader :company, :sap_user, :sap_password
+    attr_reader :base_url, :company_db, :sap_user, :sap_password, :missing_messages
 
     # Fuerza el `/Login` con la consulta que el catálogo define para esto.
     #
@@ -114,16 +160,11 @@ module Sap
     # @return [String, nil] motivo por el que ni vale la pena llamar a SAP.
     def missing_prerequisite
       return 'Ingrese el usuario y la contraseña de SAP.' if sap_user.blank? || sap_password.blank?
-      return 'La compañía no tiene una conexión SAP configurada.' if base_url.blank?
-      return 'La compañía no tiene una base de datos de SAP asignada.' if company_db.blank?
+      return missing_messages[:base_url]   if base_url.blank?
+      return missing_messages[:company_db] if company_db.blank?
 
       nil
     end
-
-    # La URL sale de `connections` y no de SAP_SL_URL porque el producto es
-    # multi-compañía (§8, nota de nomenclatura de `connections`).
-    def base_url   = company.sap_connection&.sl_url.to_s
-    def company_db = company.sap_db.to_s
 
     def client
       @client ||= Clavisco::ServiceLayer::Client.new(

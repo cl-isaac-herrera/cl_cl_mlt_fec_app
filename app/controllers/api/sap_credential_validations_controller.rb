@@ -28,7 +28,7 @@ module Api
                       status: :forbidden
       end
 
-      result = Sap::CredentialValidator.new(
+      result = Sap::CredentialValidator.for_company(
         company:      company,
         sap_user:     params[:SapUser],
         sap_password: params[:SapPass]

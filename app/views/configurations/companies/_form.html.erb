@@ -31,10 +31,14 @@
     <%# <NombreComercial> del XML de Hacienda.                                   %>
     <div class="flex flex-col gap-1">
       <label class="text-xs font-medium text-gray-600">Nombre <span class="text-red-500">*</span></label>
+      <%# 80 es el máximo del <NombreComercial> en el esquema 4.4 de Hacienda, el %>
+      <%# mismo que valida `Company`. Se corta acá para que el aviso llegue al    %>
+      <%# escribir y no como un 422 al guardar.                                   %>
       <input type="text"
              data-company-form-target="name"
              data-testid="field-name"
              data-action="input->company-form#onFormChange"
+             maxlength="80"
              required
              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
     </div>
@@ -848,20 +852,76 @@
         <span data-company-form-target="connSlUrlError" class="hidden text-xs text-red-500">La URL debe empezar con http:// o https://.</span>
       </div>
 
-      <%# Motor de Base de Datos %>
+      <%# ------------------------------------------------------------ %>
+      <%# Credenciales de licencia de SAP %>
+      <%# Las usa la sincronización de emitidos, que corre sin nadie en sesión. %>
+      <%# ------------------------------------------------------------ %>
+      <div class="sm:col-span-2 pt-2 mt-1 border-t border-gray-100">
+        <h4 class="text-sm font-semibold text-gray-700">Credenciales de licencia de SAP</h4>
+        <p class="mt-1 text-xs text-gray-500">
+          Con estas credenciales se autentican los procesos que hablan con SAP sin una
+          persona detrás, como la sincronización de documentos emitidos. Son del servidor,
+          no de un usuario de la aplicación.
+        </p>
+      </div>
+
+      <%# Usuario de licencia %>
       <div class="sm:col-span-2 flex flex-col gap-1">
-        <label class="text-xs font-medium text-gray-600">Motor de Base de Datos</label>
-        <select data-company-form-target="connSlType"
-                data-testid="conn-panel-sl-type"
-                class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="">Seleccione...</option>
-          <option value="SQL"  title="SAP corriendo sobre SQL Server">SQL (SQL Server)</option>
-          <option value="HANA" title="SAP corriendo sobre SAP HANA">HANA (SAP HANA)</option>
-        </select>
+        <label class="text-xs font-medium text-gray-600">Usuario de licencia</label>
+        <input type="text"
+               data-company-form-target="connSapLicense"
+               data-testid="conn-panel-sap-license"
+               autocomplete="off"
+               placeholder="manager"
+               class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+
+      <%# Contraseña de licencia — toggle de visibilidad (CLAUDE.md §4) %>
+      <div class="sm:col-span-2 flex flex-col gap-1">
+        <label class="text-xs font-medium text-gray-600">Contraseña de licencia</label>
+        <div class="relative">
+          <input type="password"
+                 data-company-form-target="connSapLicensePassword"
+                 data-testid="conn-panel-sap-license-password"
+                 autocomplete="new-password"
+                 placeholder="Contraseña de licencia"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <button type="button"
+                  data-action="click->company-form#toggleConnLicensePassword"
+                  data-testid="conn-panel-btn-toggle-password"
+                  aria-label="Mostrar/ocultar contraseña"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-gray-700">
+            <span data-company-form-target="connEyeIcon" class="material-icons text-base">visibility_off</span>
+          </button>
+        </div>
+      </div>
+
+      <%# Base de datos de SAP — solo para la prueba, no se guarda %>
+      <div class="sm:col-span-2 flex flex-col gap-1">
+        <label class="text-xs font-medium text-gray-600">Base de datos de SAP para la prueba</label>
+        <input type="text"
+               data-company-form-target="connCompanyDb"
+               data-testid="conn-panel-company-db"
+               autocomplete="off"
+               placeholder="SBO_EMPRESA"
+               class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         <span class="text-xs text-gray-500">
-          Motor sobre el que corre SAP. Solo afecta la sintaxis de las consultas, no cómo se
-          conecta el Service Layer.
+          No se guarda en la conexión: el Service Layer exige una base para iniciar sesión.
+          Se propone la base de datos de SAP de esta compañía.
         </span>
+      </div>
+
+      <%# Botón: comprobar credenciales de SAP %>
+      <div class="sm:col-span-2">
+        <button type="button"
+                data-company-form-target="connBtnTestLicense"
+                data-testid="conn-panel-btn-test-license"
+                data-action="click->company-form#testConnLicense"
+                disabled
+                class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-400 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed">
+          <span data-company-form-target="connTestLicenseIcon" class="material-icons text-base">wifi_tethering</span>
+          <span data-company-form-target="connTestLicenseLabel">Comprobar credenciales de SAP</span>
+        </button>
       </div>
 
     </div>

@@ -14,9 +14,10 @@ import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
  *   - edit:   connectionIdValue > 0  → botón "Actualizar", carga data vía GET
  *
  * Endpoints nativos de Rails (ver CLAUDE.md §28):
- *   - GET   /api/connections/:id   (modo edición)
- *   - POST  /api/connections       (crear)
- *   - PATCH /api/connections/:id   (actualizar)
+ *   - GET   /api/connections/:id           (modo edición)
+ *   - POST  /api/connections               (crear)
+ *   - PATCH /api/connections/:id           (actualizar)
+ *   - POST  /api/sap_license_validations   (comprobar credenciales)
  */
 export default class extends Controller {
   static values = { connectionId: Number };
@@ -24,7 +25,9 @@ export default class extends Controller {
   static targets = [
     'name',  'nameError',
     'slUrl', 'slUrlError',
-    'slType',
+    'sapLicense', 'sapLicensePassword', 'sapLicensePasswordHint', 'eyeIcon',
+    'companyDb', 'companyDbList',
+    'btnTestLicense', 'testLicenseIcon', 'testLicenseLabel',
     'submitBtn', 'submitIcon', 'submitLabel',
   ];
 
@@ -32,6 +35,13 @@ export default class extends Controller {
 
   #isEditMode  = false;
   #permissions = [];
+
+  // Prueba de credenciales de licencia. La contraseña es de solo escritura: el
+  // servidor no la devuelve, solo si existe (`HasSapLicensePassword`).
+  #hasStoredPassword = false;
+  #isTesting = false;
+  /** Huella de los valores con los que la prueba salió bien (ver #licenseFingerprint). */
+  #verifiedFingerprint = null;
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -99,35 +109,55 @@ export default class extends Controller {
   }
 
   #fillForm(conn) {
-    this.nameTarget.value  = conn.Name  ?? '';
-    this.slUrlTarget.value = conn.SlUrl ?? '';
-    this.#applySelectValue(this.slTypeTarget, conn.SlType ?? '');
+    this.nameTarget.value       = conn.Name       ?? '';
+    this.slUrlTarget.value      = conn.SlUrl      ?? '';
+    this.sapLicenseTarget.value = conn.SapLicense ?? '';
+
+    // La contraseña no viene nunca — solo si existe. El campo queda en blanco y
+    // el hint explica que dejarlo así la conserva.
+    this.#hasStoredPassword = conn.HasSapLicensePassword === true;
+    this.sapLicensePasswordHintTarget.classList.toggle('hidden', !this.#hasStoredPassword);
+
+    this.#fillSapDbOptions(conn.SapDbs ?? []);
+
     this.refreshSubmitState();
   }
 
   /**
-   * Asigna un valor a un <select>; si el valor no corresponde a ninguna opción
-   * (p. ej. una conexión importada con un motor fuera del catálogo actual),
-   * agrega una opción temporal para no perder el dato al editar.
+   * Sugerencias para la base de la prueba: las bases de SAP de las compañías que
+   * ya usan esta conexión. Con una sola se preselecciona — es la única respuesta
+   * posible y hacerla escribir no aporta nada.
    */
-  #applySelectValue(select, value) {
-    if (value && ![...select.options].some(o => o.value === value)) {
-      const opt = document.createElement('option');
-      opt.value = value;
-      opt.textContent = value;
-      select.appendChild(opt);
-    }
-    select.value = value;
+  #fillSapDbOptions(dbs) {
+    this.companyDbListTarget.replaceChildren(
+      ...dbs.map((db) => {
+        const opt = document.createElement('option');
+        opt.value = db;
+        return opt;
+      }),
+    );
+
+    if (dbs.length === 1) this.companyDbTarget.value = dbs[0];
   }
 
   // ── Handlers de eventos ───────────────────────────────────────────────────
 
-  /** Habilita el botón de guardar solo cuando todos los campos requeridos están completos. */
+  /**
+   * Habilita el botón de guardar solo cuando todos los campos requeridos están
+   * completos, y sincroniza el botón de la prueba. Lo llama el `input->`/`change->`
+   * del contenedor del formulario, así que corre con cualquier tecla.
+   */
   refreshSubmitState() {
     this.submitBtnTarget.disabled = !this.#isFormValid();
+    this.#syncTestLicenseBtn();
   }
 
-  /** ¿Están completos los campos obligatorios? El motor (SlType) es opcional. */
+  /**
+   * ¿Están completos los campos obligatorios? Las credenciales de licencia son
+   * opcionales: sin ellas la conexión sigue sirviendo para las pantallas (que
+   * usan las credenciales personales de quien está en sesión) y lo único que no
+   * corre es la sincronización de fondo.
+   */
   #isFormValid() {
     return this.nameTarget.value.trim() !== '' && this.#isSlUrlValid();
   }
@@ -189,14 +219,155 @@ export default class extends Controller {
     return true;
   }
 
-  // Solo las tres columnas que existen en la tabla. El Id ya no viaja en el
-  // cuerpo: para actualizar va en el path (CLAUDE.md §28).
+  // Solo las columnas que existen en la tabla. El Id ya no viaja en el cuerpo:
+  // para actualizar va en el path (CLAUDE.md §28).
+  //
+  // `SapLicensePassword` se manda siempre, incluso en blanco: el servidor lee el
+  // blanco como "conservar la guardada", salvo que además se haya vaciado el
+  // usuario, que es la forma explícita de quitar las credenciales.
   #buildPayload() {
     return {
-      Name:   this.nameTarget.value.trim(),
-      SlUrl:  this.slUrlTarget.value.trim(),
-      SlType: this.slTypeTarget.value.trim(),
+      Name:               this.nameTarget.value.trim(),
+      SlUrl:              this.slUrlTarget.value.trim(),
+      SapLicense:         this.sapLicenseTarget.value.trim(),
+      SapLicensePassword: this.sapLicensePasswordTarget.value,
     };
+  }
+
+  // ── Credenciales de licencia — prueba contra el Service Layer ──────────────
+
+  /** Toggle de visibilidad de la contraseña de licencia (CLAUDE.md §4). */
+  toggleLicensePassword() {
+    const input = this.sapLicensePasswordTarget;
+    const shown = input.type === 'text';
+    input.type = shown ? 'password' : 'text';
+    this.eyeIconTarget.textContent = shown ? 'visibility_off' : 'visibility';
+  }
+
+  /**
+   * Comprueba las credenciales de licencia contra el Service Layer.
+   *
+   * Prueba lo que está EN EL FORMULARIO, no lo guardado. La única excepción es la
+   * contraseña, que el servidor no devuelve — en blanco usa la guardada.
+   */
+  async testLicense() {
+    if (this.#isTesting) return;
+
+    const problem = this.#licenseTestBlocker();
+    if (problem) {
+      showToast(problem, 'warning');
+      return;
+    }
+
+    const fingerprint = this.#licenseFingerprint();
+
+    this.#isTesting           = true;
+    this.#verifiedFingerprint = null;
+    this.#syncTestLicenseBtn();
+
+    try {
+      // Responde 200 con Data true/false; el motivo del rechazo viene en Message.
+      const json = await this.#apiFetch('/api/sap_license_validations', {
+        method: 'POST',
+        body: JSON.stringify({
+          ConnectionId:       this.#isEditMode ? this.connectionIdValue : null,
+          SlUrl:              this.slUrlTarget.value.trim(),
+          SapLicense:         this.sapLicenseTarget.value.trim(),
+          SapLicensePassword: this.sapLicensePasswordTarget.value,
+          CompanyDb:          this.companyDbTarget.value.trim(),
+        }),
+      });
+
+      if (json?.Data === true) {
+        this.#verifiedFingerprint = fingerprint;
+      } else {
+        showAlert({
+          type:    ALERT_TYPES.ERROR,
+          title:   'Credenciales de licencia inválidas',
+          message: json?.Message || 'No se pudo conectar al Service Layer de SAP.',
+        });
+      }
+    } catch (err) {
+      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al comprobar las credenciales', message: err.message });
+    } finally {
+      this.#isTesting = false;
+      this.#syncTestLicenseBtn();
+    }
+  }
+
+  /**
+   * Motivo por el que todavía no se puede probar, o `null` si ya se puede. Es lo
+   * mismo que alimenta el tooltip del botón deshabilitado (CLAUDE.md §2).
+   */
+  #licenseTestBlocker() {
+    if (!this.#isSlUrlValid())                return 'Ingrese la URL del Service Layer para probar las credenciales';
+    if (!this.sapLicenseTarget.value.trim())  return 'Ingrese el usuario de licencia para probar las credenciales';
+    if (!this.sapLicensePasswordTarget.value && !this.#hasStoredPassword) {
+      return 'Ingrese la contraseña de licencia para probar las credenciales';
+    }
+    if (!this.companyDbTarget.value.trim())   return 'Indique la base de datos de SAP para probar las credenciales';
+
+    return null;
+  }
+
+  /**
+   * Valores de los que depende el resultado de la prueba. Se serializa con
+   * `JSON.stringify` y no con un `join`: cualquier separador puede aparecer
+   * dentro de una contraseña, y dos combinaciones distintas darían la misma
+   * huella — el botón se quedaría en "verificadas" con otros valores.
+   */
+  #licenseFingerprint() {
+    return JSON.stringify([
+      this.slUrlTarget.value.trim(),
+      this.sapLicenseTarget.value.trim(),
+      this.sapLicensePasswordTarget.value,
+      this.companyDbTarget.value.trim(),
+    ]);
+  }
+
+  /** Tres estados: probando / verificadas / por probar. */
+  #syncTestLicenseBtn() {
+    const btn   = this.btnTestLicenseTarget;
+    const icon  = this.testLicenseIconTarget;
+    const label = this.testLicenseLabelTarget;
+
+    const blocker  = this.#licenseTestBlocker();
+    const verified = this.#verifiedFingerprint !== null &&
+                     this.#verifiedFingerprint === this.#licenseFingerprint();
+
+    btn.disabled = this.#isTesting || blocker !== null;
+
+    if (this.#isTesting) {
+      icon.textContent  = 'hourglass_empty';
+      label.textContent = 'Comprobando...';
+      btn.classList.remove('btn-verified');
+      this.#setTip(btn, 'Comprobando las credenciales contra el Service Layer, espere por favor');
+      return;
+    }
+
+    if (verified) {
+      icon.textContent  = 'check_circle';
+      label.textContent = 'Credenciales verificadas';
+      btn.classList.add('btn-verified');
+      this.#setTip(btn, 'Las credenciales de licencia ya se comprobaron contra el Service Layer');
+      return;
+    }
+
+    icon.textContent  = 'wifi_tethering';
+    label.textContent = 'Comprobar credenciales de SAP';
+    btn.classList.remove('btn-verified');
+    this.#setTip(btn, blocker || 'Comprobar las credenciales de licencia contra el Service Layer');
+  }
+
+  /**
+   * `data-tooltip` (convención §2) y `title` (fallback nativo) sincronizados. Esta
+   * pantalla no tiene tabla Tabulator, así que el `title` es lo que el usuario
+   * llega a ver (§33): un botón deshabilitado tiene que decir qué falta.
+   */
+  #setTip(el, text) {
+    if (!el) return;
+    el.dataset.tooltip = text;
+    el.setAttribute('title', text);
   }
 
   // ── Helpers generales ─────────────────────────────────────────────────────

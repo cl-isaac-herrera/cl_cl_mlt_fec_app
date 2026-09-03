@@ -1179,7 +1179,7 @@ correspondientes.
   acciones `refreshConnSubmitState`, `*ConnectionPanel`.
 - `connection_form_controller.js` → targets sin prefijo (`name`, `slUrl`, `slType`).
 
-### El formulario tiene EXACTAMENTE tres campos — los de la tabla
+### El formulario tiene EXACTAMENTE cuatro campos — los de la tabla
 
 La tabla `connections` es la que manda. Cuando los endpoints se migraron a Rails
 (`GET|POST|PATCH /api/connections`), el formulario se recortó a las columnas que existen:
@@ -1188,13 +1188,51 @@ La tabla `connections` es la que manda. Cuando los endpoints se migraron a Rails
 |---|---|---|
 | Nombre | `name` | Sí — único entre las conexiones activas |
 | URL del Service Layer | `sl_url` | Sí — debe empezar con `http://` o `https://` |
-| Motor de Base de Datos | `sl_type` | No — `SQL` o `HANA` |
+| Usuario de licencia | `sap_license` | No |
+| Contraseña de licencia | `sap_license_password` | No — cifrada y de **solo escritura** |
+
+Hay además un campo **"Base de datos de SAP para la prueba"** que **no se guarda**: existe solo
+para el botón *Comprobar credenciales de SAP*, porque el `/Login` del Service Layer exige un
+`CompanyDB`. En el panel del listado se sugiere con las bases de las compañías que ya usan la
+conexión (`SapDbs` del `show`); en el panel del formulario de compañías se propone la `sap_db`
+de esa compañía.
 
 **Se eliminaron definitivamente** por no tener columna: Servidor de Licencias, URL Crystal API,
 Tipo ODBC, Tipo de Servidor (`SQLSERVERT`/`HANASERVER`), Usuario y Contraseña de BD, Idiomas
 Soportados (BoSuppLangs), DST y el check UseTrusted. Eran parámetros de **DI-API/ODBC** y este
 producto llega a SAP únicamente por Service Layer (§29), así que **no tienen consumidor vivo**:
 no son deuda pendiente ni hay que preservarlos al importar desde el .NET.
+
+**Motor de Base de Datos (`sl_type`) salió del formulario.** Nadie lo lee: el dialecto de las
+consultas a la base externa se resuelve con los ajustes de `settings` (§37), no con esta
+columna. `connection_params` ya no lo acepta —un `SlType` que llegue en el cuerpo se ignora— y
+la columna queda pendiente de baja (`TODOS.md` → Conexiones).
+
+### Las credenciales de licencia y su prueba
+
+`sap_license` / `sap_license_password` son las credenciales del **servidor**, las que usa
+`Sap::CompanyClient` para los procesos que corren sin nadie en sesión (§29 y la migración
+`20260825140000_add_sap_license_to_connections.rb`). Tres reglas que valen en las tres copias:
+
+- **La contraseña nunca sale del servidor.** `serialize` devuelve `HasSapLicensePassword`
+  (booleano), igual que los ajustes con `is_visible: false` (§36). Por eso el campo **siempre
+  carga en blanco** y el blanco significa *conservar la guardada*. Para quitar las credenciales
+  se vacía el **usuario**, y eso borra también la contraseña — dejarla colgando sin usuario
+  guardaría un secreto que nadie puede usar (`sap_license?` exige las dos mitades).
+- **La prueba usa los valores del FORMULARIO**, no los guardados: `POST /api/sap_license_validations`
+  recibe `SlUrl`, `SapLicense`, `SapLicensePassword` y `CompanyDb`. `ConnectionId` es opcional y
+  solo rellena la contraseña que el servidor no devuelve. El endpoint **no** cuelga de
+  `/api/connections/:id` porque el botón también existe al crear, cuando todavía no hay id.
+- **El botón tiene tres estados** (por probar / probando / verificadas), y el "verificadas" se
+  invalida comparando una **huella** de los cuatro valores (`#licenseFingerprint`), no
+  escuchando cada campo: así un campo nuevo no se olvida de resetear el estado. La huella va con
+  `JSON.stringify` y no con un `join` — cualquier separador puede aparecer dentro de una
+  contraseña.
+
+La lógica del sondeo vive **una sola vez** en `Sap::CredentialValidator`: la llave desechable del
+pool es lo que evita el falso positivo documentado ahí, y una segunda copia para la licencia lo
+reviviría en silencio. `.for_company` es la fábrica del caso de las credenciales personales;
+`.new` recibe el destino (`base_url` + `company_db`) ya resuelto.
 
 > **Regla:** la tabla `connections` es la que manda. Un campo que no tenga columna no va en el
 > formulario. Si en el futuro hiciera falta uno, primero la migración que agrega la columna y
@@ -1576,6 +1614,7 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 | `GET /api/User/GetUserInfo` | `GET /api/profile` |
 | `PATCH /api/User/profile-info` | `PATCH /api/profile` |
 | `POST /api/Connections/validate-user-credentials` | `POST /api/sap_credential_validations` |
+| (nuevo — no existía) | `POST /api/sap_license_validations` — botón "Comprobar credenciales de SAP" del formulario de conexiones (§22) |
 | `GET /api/Connections?server=&apiUrl=` (paginado por headers) | `GET /api/connections?name=&sl_url=&page=&per_page=` |
 | `GET /api/Connections/:id` | `GET /api/connections/:id` |
 | `POST /api/Connections` | `POST /api/connections` |

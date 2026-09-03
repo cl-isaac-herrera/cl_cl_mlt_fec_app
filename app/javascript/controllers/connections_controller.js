@@ -12,11 +12,16 @@ import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'contr
  *   - GET   /api/connections/:id                             (cargar para editar)
  *   - POST  /api/connections                                 (crear)
  *   - PATCH /api/connections/:id                             (actualizar)
+ *   - POST  /api/sap_license_validations                     (comprobar credenciales)
  *
- * El formulario solo maneja las tres columnas que existen en la tabla
- * `connections` (Name, SlUrl, SlType). Los parámetros de DI-API/ODBC que pedía
- * el .NET (ODBCType, ServerType, DBUser, DBPass, …) se eliminaron: este producto
- * llega a SAP únicamente por Service Layer (CLAUDE.md §29).
+ * El formulario maneja las columnas que existen en la tabla `connections`
+ * (Name, SlUrl, SapLicense, SapLicensePassword). Los parámetros de DI-API/ODBC
+ * que pedía el .NET (ODBCType, ServerType, DBUser, DBPass, …) se eliminaron:
+ * este producto llega a SAP únicamente por Service Layer (CLAUDE.md §29).
+ *
+ * La contraseña de licencia es de SOLO ESCRITURA: el servidor nunca la devuelve,
+ * así que el campo siempre carga en blanco y en blanco significa "conservar la
+ * guardada". `HasSapLicensePassword` es lo único que dice si ya hay una.
  *
  * Crear/editar ya NO navega a otra vista: abre un panel lateral derecho
  * (patrón de CLAUDE.md §8). Al guardar con éxito se cierra el panel y se
@@ -32,7 +37,9 @@ export default class extends TabulatorController {
     'panel', 'panelBackdrop', 'panelTitle',
     'fName', 'fNameError',
     'fSlUrl', 'fSlUrlError',
-    'fSlType',
+    'fSapLicense', 'fSapLicensePassword', 'fSapLicensePasswordHint', 'fEyeIcon',
+    'fCompanyDb', 'fCompanyDbList',
+    'btnTestLicense', 'testLicenseIcon', 'testLicenseLabel',
     'submitBtn', 'submitIcon', 'submitLabel',
   ];
 
@@ -42,6 +49,17 @@ export default class extends TabulatorController {
   #totalRecords = 0;        // total real del servidor (evita sobreestimación de Tabulator)
   #connectionId = 0;        // 0 = crear; >0 = editar
   #editMode = false;
+
+  // ── Estado de la prueba de credenciales de licencia ────────────────────────
+  #hasStoredPassword = false;   // el servidor no devuelve la contraseña, solo si existe
+  #isTesting = false;
+  /**
+   * Huella de los valores con los que la prueba salió bien. Se compara contra la
+   * huella actual en vez de escuchar cada campo: así cambiar la URL, el usuario,
+   * la contraseña o la base invalida el "verificadas" sin tener que recordar
+   * cablear el reset en cada input nuevo.
+   */
+  #verifiedFingerprint = null;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -56,6 +74,11 @@ export default class extends TabulatorController {
     } else if (this.hasBtnCreateWrapTarget) {
       this.#attachTooltip(this.btnCreateWrapTarget);
     }
+
+    // El botón de la prueba vive en el panel, fuera del contenedor de la tabla:
+    // el setupTooltip() del base no lo alcanza y sin esto su data-tooltip —que es
+    // donde dice qué falta para habilitarlo— no se vería (CLAUDE.md §33).
+    if (this.hasBtnTestLicenseTarget) this.#attachTooltip(this.btnTestLicenseTarget);
 
     super.connect();   // construye la tabla y dispara la carga remota de la página 1
   }
@@ -98,8 +121,11 @@ export default class extends TabulatorController {
     const columns = [
       { title: 'ID', field: 'Id', width: 80 },
       { title: 'Nombre', field: 'Name', widthGrow: 2 },
-      { title: 'Motor de base de datos', field: 'SlType', widthGrow: 1 },
       { title: 'URL del Service Layer', field: 'SlUrl', widthGrow: 3, tooltip: true },
+      {
+        title: 'Licencia SAP', field: 'SapLicense', widthGrow: 2,
+        formatter: (cell) => this.#licenseCell(cell.getRow().getData()),
+      },
     ];
 
     // Columna Acciones siempre presente; el botón editar se deshabilita con
@@ -218,14 +244,25 @@ export default class extends TabulatorController {
     document.body.style.overflow = '';
   }
 
-  /** Habilita el botón de guardar solo cuando todos los campos requeridos están completos. */
+  /**
+   * Habilita el botón de guardar solo cuando todos los campos requeridos están
+   * completos, y sincroniza el botón de la prueba.
+   *
+   * Lo llama el `input->`/`change->` del contenedor del panel, así que corre con
+   * cualquier tecla: es también donde se detecta que los valores dejaron de ser
+   * los que se probaron.
+   */
   refreshSubmitState() {
     this.submitBtnTarget.disabled = !this.#isFormValid();
+    this.#syncTestLicenseBtn();
   }
 
   /** ¿Están completos todos los campos obligatorios del panel? */
   #isFormValid() {
-    // El motor (SlType) es opcional: la tabla lo acepta nulo.
+    // Las credenciales de licencia son opcionales: la tabla las acepta nulas y
+    // una conexión sin ellas sigue sirviendo para las pantallas, que usan las
+    // credenciales personales de quien está en sesión. Sin ellas lo único que no
+    // corre es la sincronización de fondo (Sap::CompanyClient).
     return this.fNameTarget.value.trim() !== '' && this.#isSlUrlValid();
   }
 
@@ -277,34 +314,52 @@ export default class extends TabulatorController {
   }
 
   #resetPanel() {
-    this.fNameTarget.value  = '';
-    this.fSlUrlTarget.value = '';
-    this.fSlTypeTarget.value = '';
+    this.fNameTarget.value               = '';
+    this.fSlUrlTarget.value              = '';
+    this.fSapLicenseTarget.value         = '';
+    this.fSapLicensePasswordTarget.value = '';
+    this.fCompanyDbTarget.value          = '';
+    this.fCompanyDbListTarget.replaceChildren();
+
+    this.#hasStoredPassword   = false;
+    this.#verifiedFingerprint = null;
+    this.#isTesting           = false;
+    this.#hideLicensePassword();
+    this.fSapLicensePasswordHintTarget.classList.add('hidden');
+
     this.refreshSubmitState();
 
     [this.fNameErrorTarget, this.fSlUrlErrorTarget].forEach(e => e.classList.add('hidden'));
   }
 
   #fillPanel(conn) {
-    this.fNameTarget.value  = conn.Name  ?? '';
-    this.fSlUrlTarget.value = conn.SlUrl ?? '';
-    this.#applySelectValue(this.fSlTypeTarget, conn.SlType ?? '');
+    this.fNameTarget.value       = conn.Name       ?? '';
+    this.fSlUrlTarget.value      = conn.SlUrl      ?? '';
+    this.fSapLicenseTarget.value = conn.SapLicense ?? '';
+
+    // La contraseña no viene nunca — solo si existe. El campo queda en blanco y
+    // el hint explica que dejarlo así la conserva.
+    this.#hasStoredPassword = conn.HasSapLicensePassword === true;
+    this.fSapLicensePasswordHintTarget.classList.toggle('hidden', !this.#hasStoredPassword);
+
+    // Sugerencias para la base de la prueba: las bases de SAP de las compañías
+    // que ya usan esta conexión. Con una sola, se preselecciona — es la única
+    // respuesta posible y hacerla escribir no aporta nada.
+    this.#fillSapDbOptions(conn.SapDbs ?? []);
+
     this.refreshSubmitState();
   }
 
-  /**
-   * Asigna un valor a un <select>; si el valor no corresponde a ninguna opción
-   * (p. ej. una conexión importada con un motor fuera del catálogo actual),
-   * agrega una opción temporal para no perder el dato al editar.
-   */
-  #applySelectValue(select, value) {
-    if (value && ![...select.options].some(o => o.value === value)) {
-      const opt = document.createElement('option');
-      opt.value = value;
-      opt.textContent = value;
-      select.appendChild(opt);
-    }
-    select.value = value;
+  #fillSapDbOptions(dbs) {
+    this.fCompanyDbListTarget.replaceChildren(
+      ...dbs.map((db) => {
+        const opt = document.createElement('option');
+        opt.value = db;
+        return opt;
+      }),
+    );
+
+    if (dbs.length === 1) this.fCompanyDbTarget.value = dbs[0];
   }
 
   #validatePanel() {
@@ -321,17 +376,205 @@ export default class extends TabulatorController {
     return true;
   }
 
-  // Solo las tres columnas que existen en la tabla. El Id ya no viaja en el
-  // cuerpo: para actualizar va en el path (CLAUDE.md §28).
+  // Solo las columnas que existen en la tabla. El Id ya no viaja en el cuerpo:
+  // para actualizar va en el path (CLAUDE.md §28).
+  //
+  // `SapLicensePassword` se manda siempre, incluso en blanco: el servidor lee el
+  // blanco como "conservar la guardada", salvo que además se haya vaciado el
+  // usuario, que es la forma explícita de quitar las credenciales.
   #buildPayload() {
     return {
-      Name:   this.fNameTarget.value.trim(),
-      SlUrl:  this.fSlUrlTarget.value.trim(),
-      SlType: this.fSlTypeTarget.value.trim(),
+      Name:               this.fNameTarget.value.trim(),
+      SlUrl:              this.fSlUrlTarget.value.trim(),
+      SapLicense:         this.fSapLicenseTarget.value.trim(),
+      SapLicensePassword: this.fSapLicensePasswordTarget.value,
     };
   }
 
+  // ── Credenciales de licencia — prueba contra el Service Layer ────────────────
+
+  /** Toggle de visibilidad de la contraseña de licencia (CLAUDE.md §4). */
+  toggleLicensePassword() {
+    const input = this.fSapLicensePasswordTarget;
+    const shown = input.type === 'text';
+    input.type = shown ? 'password' : 'text';
+    this.fEyeIconTarget.textContent = shown ? 'visibility_off' : 'visibility';
+  }
+
+  #hideLicensePassword() {
+    this.fSapLicensePasswordTarget.type = 'password';
+    this.fEyeIconTarget.textContent     = 'visibility_off';
+  }
+
+  /**
+   * Comprueba las credenciales de licencia contra el Service Layer.
+   *
+   * Prueba lo que está EN EL FORMULARIO, no lo guardado: si alguien corrige la
+   * URL y prueba, tiene que probarse la URL nueva. La única excepción es la
+   * contraseña, que el servidor no devuelve — en blanco usa la guardada.
+   */
+  async testLicense() {
+    if (this.#isTesting) return;
+
+    const problem = this.#licenseTestBlocker();
+    if (problem) {
+      showToast(problem, 'warning');
+      return;
+    }
+
+    const fingerprint = this.#licenseFingerprint();
+
+    this.#isTesting           = true;
+    this.#verifiedFingerprint = null;
+    this.#syncTestLicenseBtn();
+
+    try {
+      // Responde 200 con Data true/false; el motivo del rechazo viene en Message
+      // (mismo contrato que /api/sap_credential_validations).
+      const { json } = await this.#apiFetch('/api/sap_license_validations', {
+        method: 'POST',
+        body: JSON.stringify({
+          ConnectionId:       this.#editMode ? this.#connectionId : null,
+          SlUrl:              this.fSlUrlTarget.value.trim(),
+          SapLicense:         this.fSapLicenseTarget.value.trim(),
+          SapLicensePassword: this.fSapLicensePasswordTarget.value,
+          CompanyDb:          this.fCompanyDbTarget.value.trim(),
+        }),
+      });
+
+      if (json?.Data === true) {
+        this.#verifiedFingerprint = fingerprint;
+      } else {
+        showAlert({
+          type:    ALERT_TYPES.ERROR,
+          title:   'Credenciales de licencia inválidas',
+          message: json?.Message || 'No se pudo conectar al Service Layer de SAP.',
+        });
+      }
+    } catch (err) {
+      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al comprobar las credenciales', message: err.message });
+    } finally {
+      this.#isTesting = false;
+      this.#syncTestLicenseBtn();
+    }
+  }
+
+  /**
+   * Motivo por el que todavía no se puede probar, o `null` si ya se puede.
+   * Es lo mismo que alimenta el tooltip del botón deshabilitado (CLAUDE.md §2):
+   * cada mensaje responde *¿cuándo SÍ podré usarlo?*.
+   */
+  #licenseTestBlocker() {
+    if (!this.#isSlUrlValid())                     return 'Ingrese la URL del Service Layer para probar las credenciales';
+    if (!this.fSapLicenseTarget.value.trim())      return 'Ingrese el usuario de licencia para probar las credenciales';
+    if (!this.fSapLicensePasswordTarget.value && !this.#hasStoredPassword) {
+      return 'Ingrese la contraseña de licencia para probar las credenciales';
+    }
+    if (!this.fCompanyDbTarget.value.trim())       return 'Indique la base de datos de SAP para probar las credenciales';
+
+    return null;
+  }
+
+  /**
+   * Valores de los que depende el resultado de la prueba. Se serializa con
+   * `JSON.stringify` y no con un `join`: cualquier separador que se elija puede
+   * aparecer dentro de una contraseña, y dos combinaciones distintas darían la
+   * misma huella — el botón se quedaría en "verificadas" con otros valores.
+   */
+  #licenseFingerprint() {
+    return JSON.stringify([
+      this.fSlUrlTarget.value.trim(),
+      this.fSapLicenseTarget.value.trim(),
+      this.fSapLicensePasswordTarget.value,
+      this.fCompanyDbTarget.value.trim(),
+    ]);
+  }
+
+  /** Tres estados: probando / verificadas / por probar. Igual que el perfil. */
+  #syncTestLicenseBtn() {
+    const btn   = this.btnTestLicenseTarget;
+    const icon  = this.testLicenseIconTarget;
+    const label = this.testLicenseLabelTarget;
+
+    const blocker  = this.#licenseTestBlocker();
+    const verified = this.#verifiedFingerprint !== null &&
+                     this.#verifiedFingerprint === this.#licenseFingerprint();
+
+    btn.disabled = this.#isTesting || blocker !== null;
+
+    if (this.#isTesting) {
+      icon.textContent  = 'hourglass_empty';
+      label.textContent = 'Comprobando...';
+      btn.classList.remove('btn-verified');
+      this.#setTip(btn, 'Comprobando las credenciales contra el Service Layer, espere por favor');
+      return;
+    }
+
+    if (verified) {
+      icon.textContent  = 'check_circle';
+      label.textContent = 'Credenciales verificadas';
+      btn.classList.add('btn-verified');
+      this.#setTip(btn, 'Las credenciales de licencia ya se comprobaron contra el Service Layer');
+      return;
+    }
+
+    icon.textContent  = 'wifi_tethering';
+    label.textContent = 'Comprobar credenciales de SAP';
+    btn.classList.remove('btn-verified');
+    this.#setTip(btn, blocker || 'Comprobar las credenciales de licencia contra el Service Layer');
+  }
+
+  /**
+   * Mantiene `data-tooltip` (convención §2/§25) y `title` (fallback nativo)
+   * sincronizados. El botón deshabilitado tiene que decir qué falta para poder
+   * usarlo, no un genérico.
+   */
+  #setTip(el, text) {
+    if (!el) return;
+    el.dataset.tooltip = text;
+    el.setAttribute('title', text);
+  }
+
   // ── Render helpers ───────────────────────────────────────────────────────────
+
+  /**
+   * Celda "Licencia SAP". Muestra el usuario de licencia, y avisa cuando la
+   * configuración quedó a medias.
+   *
+   * Un usuario sin contraseña no sirve para nada: `Connection#sap_license?` exige
+   * las dos mitades y la sincronización de fondo se detiene con
+   * `MissingConfiguration`. Sin el aviso, la fila se vería igual de configurada
+   * que una completa — el usuario está ahí, la contraseña no se muestra nunca.
+   */
+  #licenseCell(conn) {
+    const user = (conn.SapLicense ?? '').trim();
+
+    if (!user) {
+      return `<span class="text-gray-400 italic">Sin configurar</span>`;
+    }
+
+    if (!conn.HasSapLicensePassword) {
+      return `
+        <span class="inline-flex items-center gap-1.5"
+              data-tooltip="La conexión tiene usuario de licencia pero no contraseña: la sincronización de documentos no puede autenticarse. Edite la conexión para completarla.">
+          <span style="background-color:#fffbeb; color:#b45309;"
+                class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide">
+            <span class="material-icons" style="font-size:14px; line-height:1">warning</span>
+            Falta la contraseña
+          </span>
+          <span class="text-gray-600">${this.#escape(user)}</span>
+        </span>`;
+    }
+
+    return `<span class="text-gray-700">${this.#escape(user)}</span>`;
+  }
+
+  /** El usuario de licencia lo escribe una persona: va escapado antes del innerHTML. */
+  #escape(value) {
+    const div = document.createElement('div');
+    div.textContent = value;
+    return div.innerHTML;
+  }
 
   // Botón editar: habilitado (azul) o deshabilitado (gris + tooltip envuelto en
   // <span>, porque un <button disabled> no emite eventos de mouse). Ver §26.

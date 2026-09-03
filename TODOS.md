@@ -278,8 +278,22 @@ pendiente:
 
 La pantalla ya no toca el .NET: `GET|POST /api/connections`, `GET|PATCH /api/connections/:id` y
 `GET /api/connections/assignable` son nativos y leen/escriben la tabla propia `connections`.
-El formulario se recortó a las tres columnas que existen (`name`, `sl_url`, `sl_type`) — ver
-`CLAUDE.md` §22. Lo que quedó pendiente:
+El formulario maneja las columnas que existen (`name`, `sl_url`, `sap_license`,
+`sap_license_password`) — ver `CLAUDE.md` §22. Lo que quedó pendiente:
+
+- [ ] **La columna `connections.sl_type` quedó sin consumidor — falta la migración que la
+      elimina.** El campo "Motor de Base de Datos" salió del formulario (2026-09-02) y
+      `Api::ConnectionsController#connection_params` ya no lo acepta: un `SlType` que llegue en
+      el cuerpo se ignora, así que la columna no se vuelve a escribir. Nadie la lee tampoco —el
+      dialecto de las consultas a la base externa se resuelve con los ajustes de `settings`
+      (`CLAUDE.md` §37), no con esta columna—, y `serialize` ya no la devuelve.
+      Lo que sigue vivo es la validación `inclusion: { in: SL_TYPES }` del modelo, solo para que
+      un valor cargado por una importación no pase sin control.
+      **Pendiente:** una migración que quite la columna, y con ella `Connection::SL_TYPES`, su
+      validación, la clave `sl_type` de `config/locales/es.yml` y el mapeo `DBEngine → sl_type`
+      de la tarea de importación de más abajo. No se hizo en el mismo cambio porque borrar una
+      columna es irreversible y las filas importadas del .NET todavía traen el valor: primero
+      hay que confirmar que nadie lo quiere de vuelta como dato de referencia.
 
 - [ ] **La tabla `connections` está vacía.** Igual que `companies` y `users_by_companies`: hasta
       que se importen los datos, el listado sale sin filas y el selector "Conexión de SAP" del
@@ -300,13 +314,32 @@ El formulario se recortó a las tres columnas que existen (`name`, `sl_url`, `sl
       Con eso también queda cerrado el `DBPass` cifrado con el AES del .NET: no se importa ni
       se recrea la columna.
 
-- [ ] **No hay forma de verificar que una conexión responde.** Al guardarla solo se valida el
-      formato de la URL; nadie contacta el `sl_url`. La pantalla de perfil sí prueba
-      credenciales (`POST /api/sap_credential_validations`), pero contra una compañía, no
-      contra una conexión suelta.
-      **Pendiente:** evaluar un botón "Probar conexión" que haga un GET de sondeo al `sl_url`
-      reutilizando el `Client` del submódulo. No es bloqueante: un `sl_url` malo se detecta al
-      primer uso real.
+- [x] **Verificar que una conexión responde — resuelto para las credenciales de licencia.**
+      El formulario tiene el botón *Comprobar credenciales de SAP*
+      (`POST /api/sap_license_validations`, 2026-09-02), que hace el `/Login` real contra el
+      `sl_url` del formulario con el usuario y la contraseña de licencia. Reutiliza
+      `Sap::CredentialValidator` —la misma llave desechable del pool, para que una sesión vieja
+      no reporte un falso positivo— vía su constructor con destino explícito.
+
+- [ ] **La prueba exige escribir a mano la base de datos de SAP.** El `/Login` del Service Layer
+      pide un `CompanyDB` y la conexión no tiene ninguno propio (la base es de la compañía), así
+      que el formulario agrega un campo que **no se guarda**. Se sugiere con las bases de las
+      compañías que ya usan la conexión (`SapDbs` del `show`), pero al **crear** una conexión no
+      hay ninguna todavía y hay que teclearla.
+      **Pendiente:** evaluar si el Service Layer expone las bases del servidor sin sesión
+      (`/b1s/v1/Login` no; habría que ver `CompanyService_GetCompanyList` o equivalente) para
+      poblar el campo con un `<select>` en vez de un texto libre. No es bloqueante: quien
+      configura la conexión conoce la base.
+
+- [ ] **`sap_license` / `sap_license_password` no tienen origen en el .NET.** El instalador
+      legacy no guardaba credenciales de licencia por servidor —los jobs del .NET usaban las de
+      un usuario concreto—, así que la importación no las puede traer y hay que **configurarlas
+      a mano** en cada conexión después de importar. Mientras falten, la sincronización de
+      emitidos se detiene con `Sap::CompanyClient::MissingConfiguration` para esa compañía.
+      La tabla del listado marca esas filas: "Sin configurar", o "Falta la contraseña" cuando
+      solo está el usuario.
+      **Pendiente:** decidir si la tarea de importación deja las conexiones marcadas de alguna
+      forma (o emite un reporte) para que nadie asuma que quedaron listas para emitir.
 
 - [ ] **`connections/new` y `connections/:id/edit` siguen ruteadas pero nadie las abre.** El
       panel lateral del listado las reemplazó; se mantienen en sync (`CLAUDE.md` §22 #3) por si

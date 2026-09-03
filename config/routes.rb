@@ -119,6 +119,12 @@ Rails.application.routes.draw do
     # Reemplaza POST /api/Connections/validate-user-credentials.
     resources :sap_credential_validations, only: [:create]
 
+    # Prueba de las credenciales de LICENCIA de una conexión (las que usa el
+    # trabajo de fondo), desde el formulario de conexiones. No cuelga de
+    # `/api/connections/:id` porque el botón también existe al crear, cuando
+    # todavía no hay id: lo que se prueba son los valores del formulario.
+    resources :sap_license_validations, only: [:create]
+
     # Lectura del vencimiento de un certificado `.p12` recién elegido, antes de
     # guardarlo. Reemplaza POST /api/Companies/CheckCertExpireDate?CertPin=N —
     # el PIN pasa de la query string al cuerpo. No cuelga de

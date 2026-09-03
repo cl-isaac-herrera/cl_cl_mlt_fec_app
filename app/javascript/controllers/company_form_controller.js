@@ -115,7 +115,9 @@ export default class extends Controller {
     'connPanel', 'connPanelBackdrop',
     'connName', 'connNameError',
     'connSlUrl', 'connSlUrlError',
-    'connSlType',
+    'connSapLicense', 'connSapLicensePassword', 'connEyeIcon',
+    'connCompanyDb',
+    'connBtnTestLicense', 'connTestLicenseIcon', 'connTestLicenseLabel',
     'connSaveBtn',
   ];
 
@@ -146,6 +148,12 @@ export default class extends Controller {
   #atvSnapshot            = null;
   #certPinTouched         = false;
   #tokenPassTouched       = false;
+
+  // Prueba de credenciales de licencia del panel "Nueva Conexión SAP". Este panel
+  // solo CREA, así que nunca hay una contraseña guardada de la que echar mano.
+  #connIsTesting          = false;
+  /** Huella de los valores con los que la prueba salió bien (ver #connLicenseFingerprint). */
+  #connVerifiedFingerprint = null;
 
   #ideRules = {
     '01': { min: 9,  max: 9  },
@@ -241,6 +249,9 @@ export default class extends Controller {
       this.hasBtnDownloadLogoWrapTarget       ? this.btnDownloadLogoWrapTarget       : null,
       this.hasBtnDownloadPrintFormatWrapTarget ? this.btnDownloadPrintFormatWrapTarget : null,
       this.hasBtnResetFormatWrapTarget        ? this.btnResetFormatWrapTarget        : null,
+      // Botón de la prueba de credenciales del panel de conexión: su tooltip dice
+      // qué campo falta para poder probar, y cambia con cada tecla.
+      this.hasConnBtnTestLicenseTarget        ? this.connBtnTestLicenseTarget        : null,
     ].filter(Boolean).forEach(el => this.#attachTooltip(el));
 
     // Los dos botones de "adjuntar" están siempre habilitados, así que su
@@ -2087,12 +2098,20 @@ export default class extends Controller {
     document.body.style.overflow = '';
   }
 
-  /** Habilita el botón de crear conexión solo cuando todos los requeridos están completos. */
+  /**
+   * Habilita el botón de crear conexión solo cuando todos los requeridos están
+   * completos, y sincroniza el botón de la prueba de credenciales.
+   */
   refreshConnSubmitState() {
     if (this.hasConnSaveBtnTarget) this.connSaveBtnTarget.disabled = !this.#isConnFormValid();
+    this.#syncConnTestLicenseBtn();
   }
 
-  /** ¿Están completos los campos obligatorios? El motor (SlType) es opcional. */
+  /**
+   * ¿Están completos los campos obligatorios? Las credenciales de licencia son
+   * opcionales: sin ellas la conexión sigue sirviendo para las pantallas, y lo
+   * único que no corre es la sincronización de fondo (Sap::CompanyClient).
+   */
   #isConnFormValid() {
     return this.connNameTarget.value.trim() !== '' && this.#isConnSlUrlValid();
   }
@@ -2115,13 +2134,14 @@ export default class extends Controller {
     this.connSaveBtnTarget.disabled = true;
 
     try {
-      // Solo las tres columnas que existen en la tabla `connections`.
+      // Solo las columnas que existen en la tabla `connections`.
       const json = await this.#apiFetch('/api/connections', {
         method: 'POST',
         body: JSON.stringify({
-          Name:   this.connNameTarget.value.trim(),
-          SlUrl:  this.connSlUrlTarget.value.trim(),
-          SlType: this.connSlTypeTarget.value.trim(),
+          Name:               this.connNameTarget.value.trim(),
+          SlUrl:              this.connSlUrlTarget.value.trim(),
+          SapLicense:         this.connSapLicenseTarget.value.trim(),
+          SapLicensePassword: this.connSapLicensePasswordTarget.value,
         }),
       });
 
@@ -2152,8 +2172,19 @@ export default class extends Controller {
   }
 
   #resetConnectionPanel() {
-    [this.connNameTarget, this.connSlUrlTarget, this.connSlTypeTarget]
+    [this.connNameTarget, this.connSlUrlTarget,
+     this.connSapLicenseTarget, this.connSapLicensePasswordTarget]
       .forEach(el => { el.value = ''; });
+
+    // La base de la prueba se propone con la de esta compañía: es la que el
+    // formulario tiene a mano y, si la conexión se está creando para ella, es
+    // exactamente la correcta. Queda editable.
+    this.connCompanyDbTarget.value = this.dbSapTarget.value.trim();
+
+    this.#connIsTesting           = false;
+    this.#connVerifiedFingerprint = null;
+    this.connSapLicensePasswordTarget.type = 'password';
+    this.connEyeIconTarget.textContent     = 'visibility_off';
 
     this.refreshConnSubmitState();
 
@@ -2169,5 +2200,137 @@ export default class extends Controller {
     this.connSlUrlErrorTarget.classList.toggle('hidden', !urlInvalid);
 
     return !nameEmpty && !urlInvalid;
+  }
+
+  // ── Panel de conexión — prueba de credenciales de licencia ────────────────
+
+  /** Toggle de visibilidad de la contraseña de licencia (CLAUDE.md §4). */
+  toggleConnLicensePassword() {
+    const input = this.connSapLicensePasswordTarget;
+    const shown = input.type === 'text';
+    input.type = shown ? 'password' : 'text';
+    this.connEyeIconTarget.textContent = shown ? 'visibility_off' : 'visibility';
+  }
+
+  /**
+   * Comprueba las credenciales de licencia contra el Service Layer antes de crear
+   * la conexión. No manda `ConnectionId`: acá la conexión todavía no existe, así
+   * que todo lo que se prueba sale del formulario.
+   */
+  async testConnLicense() {
+    if (this.#connIsTesting) return;
+
+    const problem = this.#connLicenseTestBlocker();
+    if (problem) {
+      showToast(problem, 'warning');
+      return;
+    }
+
+    const fingerprint = this.#connLicenseFingerprint();
+
+    this.#connIsTesting           = true;
+    this.#connVerifiedFingerprint = null;
+    this.#syncConnTestLicenseBtn();
+
+    try {
+      // Responde 200 con Data true/false; el motivo del rechazo viene en Message.
+      const json = await this.#apiFetch('/api/sap_license_validations', {
+        method: 'POST',
+        body: JSON.stringify({
+          SlUrl:              this.connSlUrlTarget.value.trim(),
+          SapLicense:         this.connSapLicenseTarget.value.trim(),
+          SapLicensePassword: this.connSapLicensePasswordTarget.value,
+          CompanyDb:          this.connCompanyDbTarget.value.trim(),
+        }),
+      });
+
+      if (json?.Data === true) {
+        this.#connVerifiedFingerprint = fingerprint;
+      } else {
+        showAlert({
+          type:    ALERT_TYPES.ERROR,
+          title:   'Credenciales de licencia inválidas',
+          message: json?.Message || 'No se pudo conectar al Service Layer de SAP.',
+        });
+      }
+    } catch (err) {
+      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al comprobar las credenciales', message: err.message });
+    } finally {
+      this.#connIsTesting = false;
+      this.#syncConnTestLicenseBtn();
+    }
+  }
+
+  /**
+   * Motivo por el que todavía no se puede probar, o `null` si ya se puede. Es lo
+   * mismo que alimenta el tooltip del botón deshabilitado (CLAUDE.md §2).
+   */
+  #connLicenseTestBlocker() {
+    if (!this.#isConnSlUrlValid())                    return 'Ingrese la URL del Service Layer para probar las credenciales';
+    if (!this.connSapLicenseTarget.value.trim())      return 'Ingrese el usuario de licencia para probar las credenciales';
+    if (!this.connSapLicensePasswordTarget.value)     return 'Ingrese la contraseña de licencia para probar las credenciales';
+    if (!this.connCompanyDbTarget.value.trim())       return 'Indique la base de datos de SAP para probar las credenciales';
+
+    return null;
+  }
+
+  /**
+   * Valores de los que depende el resultado de la prueba. `JSON.stringify` y no
+   * un `join`: cualquier separador puede aparecer dentro de una contraseña y dos
+   * combinaciones distintas darían la misma huella.
+   */
+  #connLicenseFingerprint() {
+    return JSON.stringify([
+      this.connSlUrlTarget.value.trim(),
+      this.connSapLicenseTarget.value.trim(),
+      this.connSapLicensePasswordTarget.value,
+      this.connCompanyDbTarget.value.trim(),
+    ]);
+  }
+
+  /** Tres estados: probando / verificadas / por probar. */
+  #syncConnTestLicenseBtn() {
+    if (!this.hasConnBtnTestLicenseTarget) return;
+
+    const btn   = this.connBtnTestLicenseTarget;
+    const icon  = this.connTestLicenseIconTarget;
+    const label = this.connTestLicenseLabelTarget;
+
+    const blocker  = this.#connLicenseTestBlocker();
+    const verified = this.#connVerifiedFingerprint !== null &&
+                     this.#connVerifiedFingerprint === this.#connLicenseFingerprint();
+
+    btn.disabled = this.#connIsTesting || blocker !== null;
+
+    if (this.#connIsTesting) {
+      icon.textContent  = 'hourglass_empty';
+      label.textContent = 'Comprobando...';
+      btn.classList.remove('btn-verified');
+      this.#setConnTip(btn, 'Comprobando las credenciales contra el Service Layer, espere por favor');
+      return;
+    }
+
+    if (verified) {
+      icon.textContent  = 'check_circle';
+      label.textContent = 'Credenciales verificadas';
+      btn.classList.add('btn-verified');
+      this.#setConnTip(btn, 'Las credenciales de licencia ya se comprobaron contra el Service Layer');
+      return;
+    }
+
+    icon.textContent  = 'wifi_tethering';
+    label.textContent = 'Comprobar credenciales de SAP';
+    btn.classList.remove('btn-verified');
+    this.#setConnTip(btn, blocker || 'Comprobar las credenciales de licencia contra el Service Layer');
+  }
+
+  /**
+   * `data-tooltip` (que pinta el #attachTooltip de esta pantalla, §33) y `title`
+   * sincronizados: el botón deshabilitado tiene que decir qué falta (§2).
+   */
+  #setConnTip(el, text) {
+    if (!el) return;
+    el.dataset.tooltip = text;
+    el.setAttribute('title', text);
   }
 }

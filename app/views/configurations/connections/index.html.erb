@@ -120,20 +120,81 @@
           <span data-connections-target="fSlUrlError" class="hidden text-xs text-red-500">La URL debe empezar con http:// o https://.</span>
         </div>
 
-        <%# Motor de Base de Datos %>
+        <%# ------------------------------------------------------------ %>
+        <%# Credenciales de licencia de SAP %>
+        <%# Las usa la sincronización de emitidos, que corre sin nadie en sesión. %>
+        <%# ------------------------------------------------------------ %>
+        <div class="sm:col-span-2 pt-2 mt-1 border-t border-gray-100">
+          <h4 class="text-sm font-semibold text-gray-700">Credenciales de licencia de SAP</h4>
+          <p class="mt-1 text-xs text-gray-500">
+            Con estas credenciales se autentican los procesos que hablan con SAP sin una
+            persona detrás, como la sincronización de documentos emitidos. Son del servidor,
+            no de un usuario de la aplicación.
+          </p>
+        </div>
+
+        <%# Usuario de licencia %>
         <div class="sm:col-span-2 flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-600">Motor de Base de Datos</label>
-          <select data-connections-target="fSlType"
-                  data-testid="panel-input-sl-type"
-                  class="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="">Seleccione...</option>
-            <option value="SQL"  title="SAP corriendo sobre SQL Server">SQL (SQL Server)</option>
-            <option value="HANA" title="SAP corriendo sobre SAP HANA">HANA (SAP HANA)</option>
-          </select>
-          <span class="text-xs text-gray-500">
-            Motor sobre el que corre SAP. Solo afecta la sintaxis de las consultas, no cómo se
-            conecta el Service Layer.
+          <label class="text-xs font-medium text-gray-600">Usuario de licencia</label>
+          <input type="text"
+                 data-connections-target="fSapLicense"
+                 data-testid="panel-input-sap-license"
+                 autocomplete="off"
+                 placeholder="manager"
+                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <%# Contraseña de licencia — toggle de visibilidad (CLAUDE.md §4) %>
+        <div class="sm:col-span-2 flex flex-col gap-1">
+          <label class="text-xs font-medium text-gray-600">Contraseña de licencia</label>
+          <div class="relative">
+            <input type="password"
+                   data-connections-target="fSapLicensePassword"
+                   data-testid="panel-input-sap-license-password"
+                   autocomplete="new-password"
+                   placeholder="Contraseña de licencia"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button type="button"
+                    data-action="click->connections#toggleLicensePassword"
+                    data-testid="panel-btn-toggle-password"
+                    aria-label="Mostrar/ocultar contraseña"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-gray-700">
+              <span data-connections-target="fEyeIcon" class="material-icons text-base">visibility_off</span>
+            </button>
+          </div>
+          <span data-connections-target="fSapLicensePasswordHint" class="hidden text-xs text-gray-500">
+            Ya hay una contraseña guardada. Déjelo en blanco para conservarla.
           </span>
+        </div>
+
+        <%# Base de datos de SAP — solo para la prueba, no se guarda %>
+        <div class="sm:col-span-2 flex flex-col gap-1">
+          <label class="text-xs font-medium text-gray-600">Base de datos de SAP para la prueba</label>
+          <input type="text"
+                 data-connections-target="fCompanyDb"
+                 data-testid="panel-input-company-db"
+                 list="connection-sap-dbs"
+                 autocomplete="off"
+                 placeholder="SBO_EMPRESA"
+                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <datalist id="connection-sap-dbs" data-connections-target="fCompanyDbList"></datalist>
+          <span class="text-xs text-gray-500">
+            No se guarda en la conexión: el Service Layer exige una base para iniciar sesión.
+            La licencia es del servidor, así que cualquiera de sus bases sirve para comprobarla.
+          </span>
+        </div>
+
+        <%# Botón: comprobar credenciales de SAP %>
+        <div class="sm:col-span-2">
+          <button type="button"
+                  data-connections-target="btnTestLicense"
+                  data-testid="panel-btn-test-license"
+                  data-action="click->connections#testLicense"
+                  disabled
+                  class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-400 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed">
+            <span data-connections-target="testLicenseIcon" class="material-icons text-base">wifi_tethering</span>
+            <span data-connections-target="testLicenseLabel">Comprobar credenciales de SAP</span>
+          </button>
         </div>
 
       </div>

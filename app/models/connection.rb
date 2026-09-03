@@ -16,8 +16,13 @@ class Connection < ApplicationRecord
   include Auditable
   include Clavisco::DataAccess::SoftDeletable
 
-  # Motores sobre los que puede correr SAP. Condiciona la sintaxis de las
-  # consultas y de las funciones de fecha, no cómo se habla con el Service Layer.
+  # Motores sobre los que puede correr SAP.
+  #
+  # ⚠️ `sl_type` salió del formulario y ya no lo escribe ningún endpoint: nada del
+  # producto lo lee —el dialecto de las consultas a la base externa se resuelve
+  # con los ajustes de `settings` (`CLAUDE.md` §37), no con esta columna—. La
+  # validación queda solo para que un valor cargado por una importación no pase
+  # sin control; la baja de la columna está anotada en `TODOS.md` → Conexiones.
   SL_TYPES = %w[SQL HANA].freeze
 
   # Credenciales de licencia del servidor, para los procesos que hablan con SAP

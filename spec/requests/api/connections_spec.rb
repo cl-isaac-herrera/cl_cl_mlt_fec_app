@@ -20,8 +20,8 @@ RSpec.describe 'Api::Connections', type: :request do
   def body      = JSON.parse(response.body)
   def body_data = body['Data']
 
-  def create_connection(name:, sl_url: 'https://sap.test:50000/b1s/v1', sl_type: 'SQL')
-    Connection.create!(name: name, sl_url: sl_url, sl_type: sl_type)
+  def create_connection(name:, sl_url: 'https://sap.test:50000/b1s/v1', **attrs)
+    Connection.create!(name: name, sl_url: sl_url, **attrs)
   end
 
   describe 'GET /api/connections' do
@@ -72,7 +72,8 @@ RSpec.describe 'Api::Connections', type: :request do
     end
 
     it 'expone el contrato ApiResponse con los campos que existen en la tabla' do
-      conn = create_connection(name: 'SAP Producción', sl_type: 'HANA')
+      conn = create_connection(name: 'SAP Producción', sap_license: 'manager',
+                               sap_license_password: 'secreto')
 
       sign_in_with('Configurations_Connections_Access')
       get '/api/connections'
@@ -80,7 +81,33 @@ RSpec.describe 'Api::Connections', type: :request do
       expect(body.keys).to include('Data', 'Code', 'Message')
       expect(body_data['Items'].first).to eq(
         'Id' => conn.id, 'Name' => 'SAP Producción',
-        'SlUrl' => 'https://sap.test:50000/b1s/v1', 'SlType' => 'HANA'
+        'SlUrl' => 'https://sap.test:50000/b1s/v1',
+        'SapLicense' => 'manager', 'HasSapLicensePassword' => true
+      )
+    end
+
+    # La contraseña de licencia es de SOLO ESCRITURA: si se filtrara acá, el
+    # cifrado de la columna no serviría de nada (misma regla que los ajustes con
+    # `is_visible: false`, CLAUDE.md §36).
+    it 'nunca devuelve la contraseña de licencia, solo si hay una guardada' do
+      create_connection(name: 'SAP Producción', sap_license: 'manager',
+                        sap_license_password: 's3cr3t0')
+
+      sign_in_with('Configurations_Connections_Access')
+      get '/api/connections'
+
+      expect(response.body).not_to include('s3cr3t0')
+      expect(body_data['Items'].first['HasSapLicensePassword']).to be(true)
+    end
+
+    it 'marca la conexión sin contraseña de licencia' do
+      create_connection(name: 'A medias', sap_license: 'manager')
+
+      sign_in_with('Configurations_Connections_Access')
+      get '/api/connections'
+
+      expect(body_data['Items'].first).to include(
+        'SapLicense' => 'manager', 'HasSapLicensePassword' => false
       )
     end
 
@@ -118,6 +145,21 @@ RSpec.describe 'Api::Connections', type: :request do
       expect(body_data).to include('Id' => conn.id, 'Name' => 'SAP Producción')
     end
 
+    # Solo el `show` las trae: son las sugerencias del campo con el que se prueban
+    # las credenciales de licencia, y en `index` serían una consulta por fila.
+    it 'trae las bases de SAP de las compañías que usan la conexión' do
+      conn = create_connection(name: 'SAP Producción')
+      Company.create!(name: 'ACME', sap_db: 'SBO_ACME',  connection_id: conn.id)
+      Company.create!(name: 'Otra', sap_db: 'SBO_OTRA',  connection_id: conn.id)
+      Company.create!(name: 'Sin base', connection_id: conn.id)
+      Company.create!(name: 'Ajena', sap_db: 'SBO_AJENA')
+
+      sign_in_with('Configurations_Connections_Access')
+      get "/api/connections/#{conn.id}"
+
+      expect(body_data['SapDbs']).to eq(%w[SBO_ACME SBO_OTRA])
+    end
+
     it 'responde 404 si no existe' do
       sign_in_with('Configurations_Connections_Access')
       get '/api/connections/999999'
@@ -138,17 +180,33 @@ RSpec.describe 'Api::Connections', type: :request do
   end
 
   describe 'POST /api/connections' do
-    it 'crea la conexión con los tres campos de la tabla' do
+    it 'crea la conexión con los campos del formulario' do
       sign_in_with('Configurations_Connections_Create')
 
       post '/api/connections',
-           params: { Name: 'SAP Nueva', SlUrl: 'https://nueva.test:50000/b1s/v1', SlType: 'HANA' },
+           params: { Name: 'SAP Nueva', SlUrl: 'https://nueva.test:50000/b1s/v1',
+                     SapLicense: 'manager', SapLicensePassword: 'secreto' },
            as: :json
 
       expect(response).to have_http_status(:created)
       expect(Connection.find_by(name: 'SAP Nueva')).to have_attributes(
-        sl_url: 'https://nueva.test:50000/b1s/v1', sl_type: 'HANA'
+        sl_url: 'https://nueva.test:50000/b1s/v1',
+        sap_license: 'manager', sap_license_password: 'secreto'
       )
+    end
+
+    # El motor salió del formulario y ningún endpoint lo escribe. Que llegue en el
+    # cuerpo no puede colarlo: si no, una copia vieja del formulario seguiría
+    # escribiendo una columna que ya nadie lee.
+    it 'ignora SlType si viene en el cuerpo' do
+      sign_in_with('Configurations_Connections_Create')
+
+      post '/api/connections',
+           params: { Name: 'SAP X', SlUrl: 'https://x.test:50000/b1s/v1', SlType: 'ORACLE' },
+           as: :json
+
+      expect(response).to have_http_status(:created)
+      expect(Connection.find_by(name: 'SAP X').sl_type).to be_nil
     end
 
     # Los mensajes se comparan literales a propósito: `default_locale = :es` sin
@@ -162,17 +220,6 @@ RSpec.describe 'Api::Connections', type: :request do
       expect(response).to have_http_status(:unprocessable_content)
       expect(body['Message']).to eq('La URL del Service Layer debe empezar con http:// o https://')
       expect(Connection.find_by(name: 'SAP Mala')).to be_nil
-    end
-
-    it 'rechaza un motor fuera del catálogo' do
-      sign_in_with('Configurations_Connections_Create')
-
-      post '/api/connections',
-           params: { Name: 'SAP X', SlUrl: 'https://x.test:50000/b1s/v1', SlType: 'ORACLE' },
-           as: :json
-
-      expect(response).to have_http_status(:unprocessable_content)
-      expect(body['Message']).to eq('El motor de base de datos no es un motor válido')
     end
 
     it 'rechaza un nombre repetido' do
@@ -245,14 +292,57 @@ RSpec.describe 'Api::Connections', type: :request do
     end
 
     it 'deja intacto lo que el PATCH no menciona' do
-      conn = create_connection(name: 'SAP Producción', sl_type: 'HANA')
+      conn = create_connection(name: 'SAP Producción', sap_license: 'manager',
+                               sap_license_password: 'secreto')
       sign_in_with('Configurations_Connections_Update')
 
       patch "/api/connections/#{conn.id}", params: { Name: 'SAP Prod' }, as: :json
 
       expect(conn.reload).to have_attributes(
-        name: 'SAP Prod', sl_url: 'https://sap.test:50000/b1s/v1', sl_type: 'HANA'
+        name: 'SAP Prod', sl_url: 'https://sap.test:50000/b1s/v1',
+        sap_license: 'manager', sap_license_password: 'secreto'
       )
+    end
+
+    # El servidor no devuelve la contraseña, así que el formulario SIEMPRE la
+    # manda en blanco. Tomar ese blanco al pie de la letra dejaba a la conexión
+    # sin credenciales —y a la sincronización sin poder autenticarse— cada vez
+    # que alguien corregía el nombre.
+    it 'conserva la contraseña guardada cuando llega en blanco' do
+      conn = create_connection(name: 'SAP Producción', sap_license: 'manager',
+                               sap_license_password: 'secreto')
+      sign_in_with('Configurations_Connections_Update')
+
+      patch "/api/connections/#{conn.id}",
+            params: { Name: 'SAP Prod', SapLicense: 'manager', SapLicensePassword: '' }, as: :json
+
+      expect(conn.reload.sap_license_password).to eq('secreto')
+    end
+
+    it 'reemplaza la contraseña cuando llega una nueva' do
+      conn = create_connection(name: 'SAP Producción', sap_license: 'manager',
+                               sap_license_password: 'vieja')
+      sign_in_with('Configurations_Connections_Update')
+
+      patch "/api/connections/#{conn.id}",
+            params: { SapLicense: 'manager', SapLicensePassword: 'nueva' }, as: :json
+
+      expect(conn.reload.sap_license_password).to eq('nueva')
+    end
+
+    # Vaciar el usuario es la forma explícita de quitar las credenciales: dejar la
+    # contraseña colgando sin usuario la volvería inservible (`sap_license?` exige
+    # las dos) y dejaría un secreto guardado que nadie puede usar ni ver.
+    it 'borra la contraseña al vaciar el usuario de licencia' do
+      conn = create_connection(name: 'SAP Producción', sap_license: 'manager',
+                               sap_license_password: 'secreto')
+      sign_in_with('Configurations_Connections_Update')
+
+      patch "/api/connections/#{conn.id}",
+            params: { SapLicense: '', SapLicensePassword: '' }, as: :json
+
+      expect(conn.reload).to have_attributes(sap_license: nil, sap_license_password: nil)
+      expect(conn).not_to be_sap_license
     end
 
     it 'responde 404 si no existe' do

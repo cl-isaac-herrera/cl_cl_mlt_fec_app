@@ -57,8 +57,13 @@ module Api
     end
 
     # GET /api/connections/:id
+    #
+    # Solo acá viaja `SapDbs`: son las bases de SAP de las compañías que ya usan
+    # esta conexión, y alimentan las sugerencias del campo "Base de datos de SAP"
+    # con el que se prueban las credenciales de licencia. En `index` sería una
+    # consulta por fila (N+1) para un dato que la tabla no muestra.
     def show
-      render json: ApiResponse.success(serialize(@connection)).to_h
+      render json: ApiResponse.success(serialize(@connection).merge(SapDbs: sap_dbs(@connection))).to_h
     end
 
     # POST /api/connections
@@ -99,18 +104,38 @@ module Api
       render json: ApiResponse.not_found('La conexión no existe.').to_h, status: :not_found
     end
 
-    # Solo los tres campos que existen en la tabla. Los parámetros de DI-API/ODBC
-    # del .NET (ODBCType, ServerType, DBUser, DBPass, …) no se aceptan: este
-    # producto llega a SAP únicamente por Service Layer (`CLAUDE.md` §29).
+    # Los campos que el formulario administra. Los parámetros de DI-API/ODBC del
+    # .NET (ODBCType, ServerType, DBUser, DBPass, …) no se aceptan: este producto
+    # llega a SAP únicamente por Service Layer (`CLAUDE.md` §29).
+    #
+    # `SlType` tampoco: el motor salió del formulario y ya no lo escribe nadie
+    # (ver `TODOS.md` → Conexiones para la baja de la columna).
     #
     # Se copia únicamente lo que vino en la petición, para que un PATCH parcial
     # no borre lo que no mencionó.
     def connection_params
       attrs = {}
-      attrs[:name]    = params[:Name].to_s.strip  if params.key?(:Name)
-      attrs[:sl_url]  = params[:SlUrl].to_s.strip if params.key?(:SlUrl)
-      attrs[:sl_type] = params[:SlType].presence  if params.key?(:SlType)
-      attrs
+      attrs[:name]        = params[:Name].to_s.strip     if params.key?(:Name)
+      attrs[:sl_url]      = params[:SlUrl].to_s.strip    if params.key?(:SlUrl)
+      attrs[:sap_license] = params[:SapLicense].presence if params.key?(:SapLicense)
+      attrs.merge(license_password_param)
+    end
+
+    # Contraseña en blanco = "sin cambio", no "borrarla". El servidor nunca la
+    # devuelve (ver `serialize`), así que el formulario siempre carga el campo
+    # vacío: tomarlo al pie de la letra dejaría a la conexión sin credenciales
+    # cada vez que alguien corrige el nombre.
+    #
+    # Para quitarlas se manda `SapLicense` vacío, que sí es explícito: sin
+    # usuario, `Connection#sap_license?` ya es falso y el job no intenta entrar —
+    # y dejar la contraseña colgando sería guardar un secreto que nadie puede usar.
+    #
+    # @return [Hash] vacío cuando no hay nada que cambiar.
+    def license_password_param
+      return { sap_license_password: params[:SapLicensePassword] } if params[:SapLicensePassword].present?
+      return { sap_license_password: nil } if params.key?(:SapLicense) && params[:SapLicense].blank?
+
+      {}
     end
 
     def render_invalid(connection)
@@ -130,14 +155,29 @@ module Api
     end
 
     # Claves en PascalCase, igual que el resto de respuestas que consume el
-    # frontend. `SlUrl`/`SlType` reemplazan a `APIUrl`/`DBEngine` del .NET.
+    # frontend. `SlUrl` reemplaza a `APIUrl` del .NET.
+    #
+    # ⚠️ `sap_license_password` NO sale nunca, ni cifrada ni en claro: es un campo
+    # de solo escritura, igual que los ajustes con `is_visible: false` (`CLAUDE.md`
+    # §36). Lo que la pantalla necesita saber es si ya hay una guardada —para
+    # decir "déjelo en blanco para conservarla" y para marcar la conexión a la que
+    # le falta— y eso lo responde un booleano.
     def serialize(connection)
       {
-        Id:     connection.id,
-        Name:   connection.name,
-        SlUrl:  connection.sl_url,
-        SlType: connection.sl_type
+        Id:                    connection.id,
+        Name:                  connection.name,
+        SlUrl:                 connection.sl_url,
+        SapLicense:            connection.sap_license,
+        HasSapLicensePassword: connection.sap_license_password.present?
       }
+    end
+
+    # Bases de SAP de las compañías que ya usan esta conexión. Son sugerencias
+    # para el campo de la prueba, no configuración de la conexión: el `/Login` del
+    # Service Layer exige un CompanyDB y la licencia es del servidor, así que
+    # cualquiera de sus bases sirve para comprobarla.
+    def sap_dbs(connection)
+      connection.companies.where.not(sap_db: [nil, '']).distinct.pluck(:sap_db).sort
     end
   end
 end
