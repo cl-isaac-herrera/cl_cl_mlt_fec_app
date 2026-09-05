@@ -220,6 +220,29 @@ pendiente:
       **Pendiente submódulo:** un `params:` que serialice sin form-encoding (o un
       `query:` que acepte el string crudo), para que el llamador no tenga que armar el path.
 
+- [ ] **El Client no manda `Prefer: odata.maxpagesize` ni sigue `odata.nextLink`.** Sin ese
+      header, el Service Layer corta cualquier colección en **20 filas por respuesta**, sin
+      importar el `$top` que se pida — `$top`/`$skip` acotan el total a paginar, no el tamaño
+      de cada página individual. `Client#get(resource, params:)` y `Node#build_request` no
+      aceptan headers custom, así que hoy no hay forma de pedir más de 20 filas de un tirón, y
+      `Client#handle_response` tampoco arma la página siguiente cuando SAP devuelve
+      `odata.nextLink` en el body.
+      **Ya afecta en producción:** `Sap::DocumentDetails#fetch_many` (líneas, otros cargos,
+      medios de pago, referencia y "otros" del documento a emitir) usa `page_size: 999` del
+      catálogo asumiendo que el `$top` alcanza — un documento con más de 20 líneas se emite HOY
+      con solo 20 y los totales no cuadran contra Hacienda. Mismo riesgo para cualquier consulta
+      del catálogo con `page_size > 20` (`GetSuppliers`, `GetItems`, `GetAccounts`, …) el día
+      que tenga consumidor, y para `getDocuments01`..`10` (listado paginado de documentos,
+      `db/seeds.rb` sección 5) — por eso esas siete se sembraron con `page_size: 0`: es
+      catálogo honesto, no falso "sí pagina".
+      **Pendiente submódulo (`cl-sap-servicelayer-ruby`):** que `Client#get` acepte un header
+      `Prefer: odata.maxpagesize=<N>` (o lo mande siempre, con el `$top` pedido como valor), y
+      que `handle_response`/`execute_request` sigan `odata.nextLink` hasta completar la página
+      pedida. Mientras tanto, cualquier consulta nueva que necesite paginar tiene que asumir que
+      una sola llamada NUNCA trae más de 20 filas, sin importar el `$top` que se le pida — la
+      pantalla de documentos que consuma `getDocuments01`..`10` debe pedir de a 20 filas o menos
+      por request.
+
 - [ ] **La validación fuerza el login con un GET de sondeo.** El Client no expone un `login`
       suelto: se autentica solo en el primer request. Funciona y está documentado en la clase,
       pero es un rodeo — la prueba real es el `/Login`, no el recurso. El recurso ya sale del
@@ -922,6 +945,68 @@ Primera etapa del flujo de `docs/sync-documents-flow.md`: se lee la cola de docu
 pendientes, se traen los detalles de SAP y se arma el objeto unificado. **No se envía
 nada a Hacienda ni se actualiza ningún estado** — es el corte del punto 12 del
 documento.
+
+### Estado general (2026-09-05)
+
+Los cinco pasos de `docs/sync-documents-flow.md` (sección "Flujo"), con lo que hay hoy:
+
+| Paso | Qué hace | Estado |
+|---|---|---|
+| 1. Post Transact inserta en la cola | Lo hace el add-on de SAP, fuera de este repo | — (no aplica) |
+| 2. Consultar la cola en "pending" | `Documents::PendingQueue.pending` | ✅ funciona, probado contra la base real |
+| 3. Consultar detalle en SAP | `Sap::DocumentDetails` + `Documents::UnifiedBuilder` | ✅ funciona, probado contra la base real |
+| 4. Enviar a Hacienda | Validar → generar XML → firmar → `POST` | 🟡 dos piezas sueltas (validador, firma); **sin generador de XML, sin cliente HTTP, sin nada que las conecte** |
+| 5. Actualizar estado en Queue y en SAP | `Documents::PendingQueue.mark_error` (solo para `Error`) + `sl_resources updateDocument*` | 🟡 el lado de la cola existe; el lado de SAP tiene el recurso pero nadie lo llama |
+
+**Lo que falta para que el paso 4 exista** — en orden, cada uno depende del anterior:
+
+1. **Generador de XML.** No hay ninguna clase que tome el objeto unificado
+   (`Documents::UnifiedBuilder#call`) y lo serialice al XML que pide el XSD 4.4. Es el
+   hueco más grande de los cuatro: sin esto, `Hacienda::InvoiceValidator` y
+   `Hacienda::XmlSigner` no tienen qué recibir ni qué firmar respectivamente.
+2. **Cliente HTTP de Hacienda** (token, envío, consulta de estado). Los tres endpoints ya
+   tienen su lugar en `settings` (`HACIENDA_FE_URI_TOKEN`/`_SEND`/`_CHECK`, grupo
+   `HACIENDA_FE` — ver "Ambiente de Hacienda" en ## Compañías, más arriba), pero nadie
+   los lee: no existe una clase que pida el token ni que haga el `POST` del comprobante.
+3. **El paso que orquesta 1-2** dentro de `SyncIssuedDocumentsJob#build` (o un service
+   aparte que el job llame): armar objeto → validar → generar XML → firmar → enviar →
+   interpretar la respuesta (`Accepted`/`Rejected`/sin respuesta → `Sent`).
+4. **El `PATCH` a SAP** con el resultado, usando los `sl_resources updateDocument*` que
+   ya existen — bloqueado además por los cuatro schemas de UDF que faltan (ver el ítem
+   de abajo).
+
+### Estado por tipo de documento
+
+| Tipo | Cola / detalle SAP (pasos 2-3) | Objeto unificado | Validador | Firma | `sl_resource` de actualización |
+|---|---|---|---|---|---|
+| **FE** (`01`) | ✅ | ✅ | ✅ (`Hacienda::InvoiceValidator`, 87 specs) | ✅ (agnóstica al tipo) | ✅ `updateDocument01` |
+| **TE** (`04`) | ✅ (genérico, no distingue tipo) | 🟡 probablemente sí — ver nota abajo | ❌ | ✅ (agnóstica al tipo) | ✅ `updateDocument04` |
+| **ND** (`02`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument02` |
+| **NC** (`03`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument03` |
+| **FEC** (`08`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument08` |
+| **FEE** (`09`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument09` |
+| **REP** (`10`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument10` |
+
+**Por qué TE queda en 🟡 y no en ✅:** el XSD real de Hacienda define un ÚNICO esquema
+para FE y TE (`DocumentoFETE` en `FacturaElectronica_V4.4.xsd` — el nombre mismo es
+"Factura Electrónica / Tiquete Electrónico"), y el legacy .NET las procesa con el mismo
+código. `Documents::UnifiedBuilder` no debería necesitar cambios de forma para TE.
+Pero `Hacienda::InvoiceValidator` **sí tiene al menos una regla escrita asumiendo FE**:
+`HeaderValidator#validate_receptor` exige identificación del receptor
+incondicionalmente, y el reporte de la migración del legacy dice explícitamente que esa
+regla **no aplica** a TE (ni a ND ni a NC) — un tiquete a un cliente sin cédula es el
+caso normal. Antes de dar TE por cubierto hay que:
+- Revisar las ~72 reglas migradas una por una contra las exclusiones de TE del legacy
+  (no solo esta), no asumir que "aplica igual porque comparten XSD".
+- Correr `Hacienda::InvoiceValidator` contra un Tiquete real de la cola y ver qué revienta.
+
+**ND, NC, FEC, FEE, REP quedan en ❓** porque nadie llegó a construir un objeto unificado
+real para ninguno de ellos —ni con datos de prueba, mucho menos reales— y el legacy sí
+tiene reglas y exclusiones propias por tipo para varios de ellos (partida arancelaria
+solo en FEE, `DetalleServicio` obligatorio en FEC, `InformacionReferencia` obligatoria en
+NC/ND/REP, líneas de detalle simplificadas en REP, etc. — ver el bloque de "Diferencias
+clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo patrón de
+`Hacienda::Validations::*` con las reglas específicas de cada uno, no un cambio genérico.
 
 - [x] **Firma XAdES-EPES — portada (2026-09-05).** `Hacienda::XmlSigner`
       (`app/services/hacienda/xml_signer.rb`) es el port casi literal del prototipo

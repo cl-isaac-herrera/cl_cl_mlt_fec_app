@@ -584,6 +584,64 @@ SL_RESOURCES_STATUS_UPDATES = [
    'IncomingPayments(#DocumentEntry#)', nil, 0]
 ].freeze
 
+# ── Consulta paginada de documentos, para el listado de documentos emitidos ──
+# Una fila por tipo de comprobante que SÍ es un documento (los mensajes de
+# receptor — `05`/`06`/`07` — no son comprobantes con `DocEntry` propio en SAP,
+# así que quedan fuera, mismo criterio que `SL_RESOURCES_STATUS_UPDATES`).
+#
+# El `code` lleva el CÓDIGO NUMÉRICO de Hacienda (`getDocuments01`, no
+# `getDocumentsFE`) — mismo criterio que `updateDocument01`..`10` de arriba.
+#
+# `resource` es la entidad ESTÁNDAR de SAP completa, sin `(#DocumentEntry#)`:
+# es un listado, no un documento puntual. Mismo mapeo tipo→objeto que
+# `SL_RESOURCES_STATUS_UPDATES` (Invoices para FE/ND/TE/FEE, CreditNotes para
+# NC, PurchaseInvoices para FEC, IncomingPayments para REP) — no son vistas, no
+# llevan prefijo, y el mismo `code` sirve en SQL Server y en HANA.
+#
+# `query_params` solo lleva el `$select`: el `$top`/`$skip` de la paginación
+# real los agrega el llamador con `Sap::ResourceQuery#merge` en cada página —no
+# se hornean acá porque cambian en cada request, no son parte del catálogo.
+# Mismo criterio que `GetSapDocuments` (arriba, en `SL_RESOURCES`).
+#
+# ⚠️ `page_size: 0` a propósito, y NO un valor alto tipo 999: el Service Layer
+# nunca devuelve más de 20 filas por respuesta si no se manda el header
+# `Prefer: odata.maxpagesize`, y el submódulo (`Clavisco::ServiceLayer::Client`)
+# todavía no lo soporta —tampoco sigue `odata.nextLink`— (`TODOS.md` → SAP,
+# sección "deuda del acceso a Service Layer"). Un `page_size` mayor acá sería
+# mentira: por más que el llamador pida `$top=999`, SAP corta en 20 igual.
+# Quien construya el listado tiene que paginar de a 20 filas o menos por
+# request hasta que el submódulo agregue el header.
+SL_RESOURCES_DOCUMENT_QUERIES = [
+  ['getDocuments01', 'Obtiene el listado paginado de facturas electrónicas desde SAP',
+   'Invoices',
+   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+  ['getDocuments02', 'Obtiene el listado paginado de notas de débito electrónicas desde SAP',
+   'Invoices',
+   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+  ['getDocuments03', 'Obtiene el listado paginado de notas de crédito electrónicas desde SAP',
+   'CreditNotes',
+   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+  ['getDocuments04', 'Obtiene el listado paginado de tiquetes electrónicos desde SAP',
+   'Invoices',
+   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+  ['getDocuments08', 'Obtiene el listado paginado de facturas electrónicas de compra desde SAP',
+   'PurchaseInvoices',
+   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+  ['getDocuments09', 'Obtiene el listado paginado de facturas electrónicas de exportación desde SAP',
+   'Invoices',
+   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+  ['getDocuments10', 'Obtiene el listado paginado de recibos electrónicos de pago desde SAP',
+   'IncomingPayments',
+   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0]
+].freeze
+
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
   # sin haber escrito ninguna fila.
@@ -591,7 +649,8 @@ ActiveRecord::Base.transaction do
 
   preserved = 0
 
-  all_sl_resources = SL_RESOURCES + SL_RESOURCES_OWN + SL_RESOURCES_STATUS_UPDATES
+  all_sl_resources = SL_RESOURCES + SL_RESOURCES_OWN + SL_RESOURCES_STATUS_UPDATES +
+                     SL_RESOURCES_DOCUMENT_QUERIES
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el
