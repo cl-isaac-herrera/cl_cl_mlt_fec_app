@@ -338,8 +338,8 @@ RSpec.describe 'PATCH /api/companies/:company_id/tax_authority', type: :request 
         EmailCC: 'otro@acme.cr',
         # Sección "Factura a proveedor"
         PurchInvSeriesNum: 99,
-        # Ni columnas que no expone ninguna sección
-        Uuid: 'reescrito', EnvironmentId: 4
+        # Ni una columna que no existe
+        Uuid: 'reescrito'
       )
 
       expect(response).to have_http_status(:ok)
@@ -350,8 +350,7 @@ RSpec.describe 'PATCH /api/companies/:company_id/tax_authority', type: :request 
         issuer_id_number:        '3101822733',
         is_active:               true,
         email_cc:                'copia@acme.cr',
-        purchase_invoice_series: 7,
-        environment_id:          nil
+        purchase_invoice_series: 7
       )
       expect(acme.uuid).not_to eq('reescrito')
     end

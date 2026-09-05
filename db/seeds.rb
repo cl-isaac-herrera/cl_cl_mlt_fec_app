@@ -525,6 +525,65 @@ SL_RESOURCES_OWN = [
    '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999]
 ].freeze
 
+# ── Actualizar en SAP el resultado del envío a Hacienda ──────────────────────
+# Una fila por tipo de documento (los siete que `DocType` conoce que NO son
+# mensaje de receptor — `DocType::RECEIVER_MESSAGES` queda fuera: esos no son
+# comprobantes que este flujo sincronice). Se PATCHea el objeto de SAP por
+# `DocEntry` en cuanto Hacienda responde algo —aceptado, rechazado, o ni
+# siquiera eso—, con el body:
+#
+#   U_CL_FEC_Status, U_CL_FEC_ErrorDetails, U_CL_FEC_Clave,
+#   U_CL_FEC_NumConsecutivo, U_CL_FEC_XmlSentUrl, U_CL_FEC_XmlResponseUrl
+#
+# Son entidades ESTÁNDAR de SAP, no vistas: `resource` no lleva el marcador
+# `_B1SLQuery`, así que `SlResourceSeed.qualify` no le agrega prefijo — el
+# mismo `code` sirve en SQL Server y en HANA. `#DocumentEntry#` es un marcador
+# de PATH (`Sap::ResourceQuery`, no de query), igual que en `ClosePurchaseOrders`
+# más arriba: se resuelve a `Invoices(25)` y no a un `$filter`.
+#
+# `page_size: 0` porque es una escritura, no una lectura paginada — mismo
+# criterio que `Drafts`/`PurchaseInvoices` en `SL_RESOURCES`.
+#
+# ── Qué objeto de SAP le corresponde a cada tipo de documento ────────────────
+# El objeto lo determina el tipo de comprobante, no una elección libre:
+#
+#   FE, ND, TE, FEE → Invoices          (factura de venta, tiquete, nota de
+#                                         débito y factura de exportación son,
+#                                         los cuatro, el mismo objeto AR Invoice
+#                                         de SAP — SAP B1 no tiene un objeto de
+#                                         "nota de débito" separado)
+#   NC              → CreditNotes       (AR Credit Memo)
+#   REP             → IncomingPayments  (el recibo de pago SÍ es un objeto propio)
+#   FEC             → PurchaseInvoices  (AP Invoice — factura de compra)
+#
+# ⚠️ Los seis `U_CL_FEC_*` de arriba son UDFs y TODAVÍA no tienen su schema en
+# `config/sap_schemas/` (`CLAUDE.md` §32): sin eso, una instalación nueva no los
+# va a tener y el PATCH va a fallar con "campo inválido" la primera vez que se
+# use. Anotado en `TODOS.md` → Emisión de documentos.
+#
+# El `code` lleva el CÓDIGO NUMÉRICO de Hacienda (`DocType::FE` = '01', no la
+# mnemotecnia) — es el mismo valor que trae `Documents::PendingQueue::Entry#doc_type`
+# y el que va a usar el llamador para elegir la fila, así que resolverla por el
+# código evita traducir de un lado a otro.
+SL_RESOURCES_STATUS_UPDATES = [
+  ['updateDocument01', 'Actualiza en SAP el resultado del envío a Hacienda de una factura electrónica',
+   'Invoices(#DocumentEntry#)', nil, 0],
+  ['updateDocument02', 'Actualiza en SAP el resultado del envío a Hacienda de una nota de débito',
+   'Invoices(#DocumentEntry#)', nil, 0],
+  ['updateDocument03', 'Actualiza en SAP el resultado del envío a Hacienda de una nota de crédito',
+   'CreditNotes(#DocumentEntry#)', nil, 0],
+  ['updateDocument04', 'Actualiza en SAP el resultado del envío a Hacienda de un tiquete electrónico',
+   'Invoices(#DocumentEntry#)', nil, 0],
+  ['updateDocument09',
+   'Actualiza en SAP el resultado del envío a Hacienda de una factura electrónica de exportación',
+   'Invoices(#DocumentEntry#)', nil, 0],
+  ['updateDocument08',
+   'Actualiza en SAP el resultado del envío a Hacienda de una factura electrónica de compra',
+   'PurchaseInvoices(#DocumentEntry#)', nil, 0],
+  ['updateDocument10', 'Actualiza en SAP el resultado del envío a Hacienda de un recibo electrónico de pago',
+   'IncomingPayments(#DocumentEntry#)', nil, 0]
+].freeze
+
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
   # sin haber escrito ninguna fila.
@@ -532,7 +591,8 @@ ActiveRecord::Base.transaction do
 
   preserved = 0
 
-  (SL_RESOURCES + SL_RESOURCES_OWN).each do |code, description, resource, query_params, page_size|
+  all_sl_resources = SL_RESOURCES + SL_RESOURCES_OWN + SL_RESOURCES_STATUS_UPDATES
+  all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el
     # `find_or_initialize_by` no la encontraría e intentaría insertar otra igual.
@@ -576,7 +636,9 @@ end
 #    contraseña de Crystal—: un `delete_all` los borraría y la instalación
 #    quedaría muda hasta que alguien los volviera a escribir a mano, sin ningún
 #    error que dijera qué pasó. El seed hace upsert por `code` y **nunca asigna
-#    `value`**.
+#    `value`** — con UNA excepción: `HACIENDA_XADES_SETTINGS`, más abajo, donde
+#    el valor es un dato del producto (la política de firma de Hacienda) y no
+#    algo que el operador configure; ese grupo SÍ se reafirma en cada corrida.
 #
 #    Ver `db/setting_code_map.yml` para la equivalencia con los `code` del .NET.
 # ---------------------------------------------------------------------------
@@ -623,20 +685,56 @@ LEGACY_SETTINGS = [
   ['CRYSTAL_PASSWORD',    'Contraseña del servidor de Crystal Reports', false]
 ].freeze
 
+# El ambiente de Hacienda contra el que emite la instalación. Era la tabla
+# `environments` (una fila por ambiente, `companies.environment_id` apuntaba a
+# ella); se movió a `settings` porque el despliegue es una instancia por
+# cliente (`CLAUDE.md` §31) y un ambiente entero es configuración de la
+# instalación, no una entidad con muchas filas. `is_prod` no se migró: se
+# perdió a propósito, ver `20260905120000_move_environment_config_to_settings.rb`.
+HACIENDA_FE_SETTINGS = [
+  ['HACIENDA_FE_URI_TOKEN',         'URL de Hacienda para obtener el token de autenticación', true],
+  ['HACIENDA_FE_URI_SEND',          'URL de Hacienda para enviar el documento electrónico',   true],
+  ['HACIENDA_FE_URI_CHECK',         'URL de Hacienda para consultar el estado del documento', true],
+  ['HACIENDA_FE_RESOLUTION_NUMBER', 'Número de resolución de facturación electrónica',        true],
+  ['HACIENDA_FE_RESOLUTION_DATE',   'Fecha de la resolución de facturación electrónica',      true]
+].freeze
+
+# Política de firma XAdES-EPES que exige Hacienda (DGT-R-48-2016) para todo
+# comprobante (`Hacienda::XmlSigner`). A diferencia de TODO el resto de esta
+# sección, acá el operador no configura nada: es la MISMA política para
+# cualquier instalación, publicada por el Ministerio de Hacienda. Se movió de
+# una constante del código a `settings` únicamente para poder corregirla desde
+# la UI sin esperar un deploy si Hacienda la cambia. El valor VIGENTE sigue
+# siendo el de este archivo — por eso estas dos filas llevan un cuarto elemento
+# (`fixed_value`) que el loop de abajo usa para SOBRESCRIBIR `value` en cada
+# corrida de `db:seeds`, algo que ninguna otra fila de `SETTING_GROUPS` hace.
+# Si Hacienda cambia la política: actualizar el valor ACÁ y correr
+# `db:seeds` de nuevo. Un cambio manual desde la UI es solo un parche de
+# emergencia — el próximo `db:seeds` lo revierte a lo que diga este archivo.
+HACIENDA_XADES_SETTINGS = [
+  # code                                description                                            is_visible  fixed_value
+  ['HACIENDA_XADES_POLICY_IDENTIFIER', 'URL del documento de política de firma XAdES (DGT-R-48-2016)', true,
+   'https://tribunet.hacienda.go.cr/docs/esquemas/2016/v4.1/Resolucion_Comprobantes_Electronicos_DGT-R-48-2016.pdf'],
+  ['HACIENDA_XADES_POLICY_HASH', 'SHA-1 (Base64) del documento de política de firma XAdES', true,
+   'Ohixl6upD6av8N7pEvDABhEL6hM=']
+].freeze
+
 # El grupo es el prefijo del `code` sin el campo, y se declara junto a las filas
 # en vez de derivarlo: `DOCS_DB_ODBC_QUERY_TIMEOUT` partido por el último `_`
 # daría el grupo equivocado (ver el encabezado de la migración).
 SETTING_GROUPS = {
   'DOCS_DB_ODBC' => DOCS_DB_SETTINGS,
-  'GENERAL'      => LEGACY_SETTINGS.select { |code, _, _| code.start_with?('GENERAL_') },
-  'CRYSTAL'      => LEGACY_SETTINGS.select { |code, _, _| code.start_with?('CRYSTAL_') }
+  'GENERAL' => LEGACY_SETTINGS.select { |code, _, _| code.start_with?('GENERAL_') },
+  'CRYSTAL' => LEGACY_SETTINGS.select { |code, _, _| code.start_with?('CRYSTAL_') },
+  'HACIENDA_FE' => HACIENDA_FE_SETTINGS,
+  'HACIENDA_XADES' => HACIENDA_XADES_SETTINGS
 }.freeze
 
 ActiveRecord::Base.transaction do
   created = 0
 
   SETTING_GROUPS.each do |group_code, rows|
-    rows.each do |code, description, is_visible|
+    rows.each do |code, description, is_visible, fixed_value|
       # `unscoped`: un ajuste dado de baja tiene que reactivarse, no duplicarse.
       # El índice único de `code` no excluye a las inactivas, así que sin esto el
       # `find_or_initialize_by` no la encontraría e intentaría insertar otra
@@ -649,9 +747,12 @@ ActiveRecord::Base.transaction do
       record.is_visible  = is_visible
       record.is_active   = true
 
-      # `value` NO se asigna. Ni acá ni en ninguna otra rama de este archivo:
-      # es lo único que escribe el operador, y el seed corre en instalaciones
-      # que ya lo tienen configurado.
+      # `value` NO se asigna, salvo `fixed_value`: es la excepción de
+      # `HACIENDA_XADES_SETTINGS` documentada arriba — un dato del PRODUCTO, no
+      # de la instalación, que el seed reafirma en cada corrida. En cualquier
+      # otra fila de este archivo `value` es lo único que escribe el operador.
+      record.value = fixed_value if fixed_value
+
       record.save!
     end
   end

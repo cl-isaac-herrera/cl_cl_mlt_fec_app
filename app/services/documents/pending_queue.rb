@@ -56,9 +56,13 @@ module Documents
     STATUS_PENDING    = 0 # registrado por SAP, listo para procesarse
     STATUS_ON_HOLD    = 1 # en espera: otro intento del mismo documento está en curso
     STATUS_PROCESSING = 2 # tomado por una corrida
-    STATUS_SENT       = 3 # enviado a Hacienda con éxito
+    # De TRÁNSITO, no final: se envió el comprobante y Hacienda todavía no
+    # contestó si lo aceptó o lo rechazó (equivale a "EnHacienda" del legacy).
+    STATUS_SENT       = 3
     STATUS_ERROR      = 4 # fallo de validación o error técnico
     STATUS_CANCELLED  = 5 # descartado porque un intento previo ya terminó bien
+    STATUS_ACCEPTED   = 6 # Hacienda aceptó el comprobante — final
+    STATUS_REJECTED   = 7 # Hacienda rechazó el comprobante — final
 
     # `Details` es `NVARCHAR(MAX)`, así que el tope no lo pide la columna: lo pide
     # el sentido común. Un backtrace entero o el cuerpo de una respuesta de SAP

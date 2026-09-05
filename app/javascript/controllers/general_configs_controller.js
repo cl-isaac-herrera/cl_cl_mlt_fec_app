@@ -61,9 +61,10 @@ export default class extends Controller {
 
   /** Grupos que la pantalla administra, con su nombre para los mensajes. */
   static GROUP_LABELS = {
-    GENERAL:      'la cédula del proveedor de sistemas',
-    CRYSTAL:      'las credenciales de Crystal',
-    DOCS_DB_ODBC: 'la conexión a la base de documentos',
+    GENERAL:        'la cédula del proveedor de sistemas',
+    CRYSTAL:        'las credenciales de Crystal',
+    DOCS_DB_ODBC:   'la conexión a la base de documentos',
+    HACIENDA_XADES: 'la política de firma XAdES',
   }
 
   // ----------------------------------------------------------------

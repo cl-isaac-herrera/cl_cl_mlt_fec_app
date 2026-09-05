@@ -31,6 +31,21 @@ RSpec.describe Documents::UnifiedBuilder do
       expect(build(doc_type: DocType::NC)['DocType']).to eq('03')
     end
 
+    # Es la cédula del proveedor de software ante Hacienda: un dato del
+    # producto y no del documento. La vista lo traía hardcodeado antes de que
+    # existiera este ajuste; ahora sale de Configuraciones → Generales.
+    it 'toma ProveedorSistemas del ajuste GENERAL_PROVIDER_ID y no de la vista' do
+      create(:setting, code: 'GENERAL_PROVIDER_ID', value: '3101822733')
+
+      payload = build(header: { 'ProveedorSistemas' => 'lo que traiga la vista' })
+
+      expect(payload['Document']['ProveedorSistemas']).to eq('3101822733')
+    end
+
+    it 'queda en nil mientras el ajuste no esté configurado' do
+      expect(build['Document']['ProveedorSistemas']).to be_nil
+    end
+
     # La del emisor sale de la compañía y la del receptor de la vista, pero tienen
     # que ser las MISMAS que van en el XML: si el cuerpo del POST y el comprobante
     # no coinciden, Hacienda rechaza el envío.

@@ -1,0 +1,66 @@
+{
+  "table_name": "ORCT",
+  "IsUDT": false,
+  "columns": [
+    {
+      "Name": "CL_FEC_FechaEmision",
+      "Description": "FEC · Fecha y hora ISO 8601 de emisión ante Hacienda",
+      "Type": "db_Alpha",
+      "SubType": "st_None",
+      "Size": 25,
+      "Mandatory": "tNO"
+    },
+    {
+      "Name": "CL_FEC_Status",
+      "Description": "FEC · Estado del comprobante en la cola de envío a Hacienda",
+      "Type": "db_Numeric",
+      "SubType": "st_None",
+      "Mandatory": "tNO",
+      "DefaultValue": "0",
+      "ValidValues": [
+        { "Value": "0", "Description": "Pending" },
+        { "Value": "3", "Description": "Sent" },
+        { "Value": "4", "Description": "Error" },
+        { "Value": "6", "Description": "Accepted" },
+        { "Value": "7", "Description": "Rejected" }
+      ]
+    },
+    {
+      "Name": "CL_FEC_ErrorDetails",
+      "Description": "FEC · Detalle del error de validación o envío a Hacienda",
+      "Type": "db_Memo",
+      "SubType": "st_None",
+      "Mandatory": "tNO"
+    },
+    {
+      "Name": "CL_FEC_Clave",
+      "Description": "FEC · Clave numérica del comprobante electrónico",
+      "Type": "db_Alpha",
+      "SubType": "st_None",
+      "Size": 50,
+      "Mandatory": "tNO"
+    },
+    {
+      "Name": "CL_FEC_NumConsecutivo",
+      "Description": "FEC · Número consecutivo del comprobante electrónico",
+      "Type": "db_Alpha",
+      "SubType": "st_None",
+      "Size": 20,
+      "Mandatory": "tNO"
+    },
+    {
+      "Name": "CL_FEC_XmlSentUrl",
+      "Description": "FEC · Ubicación del XML firmado enviado a Hacienda",
+      "Type": "db_Memo",
+      "SubType": "st_None",
+      "Mandatory": "tNO"
+    },
+    {
+      "Name": "CL_FEC_XmlResponseUrl",
+      "Description": "FEC · Ubicación del XML de respuesta de Hacienda",
+      "Type": "db_Memo",
+      "SubType": "st_None",
+      "Mandatory": "tNO"
+    }
+  ]
+}

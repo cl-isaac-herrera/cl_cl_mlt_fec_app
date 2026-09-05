@@ -41,6 +41,7 @@
 -- DROP PROCEDURE "CL_D_CL_MLT_FEC_CRT_DOCUMENTTOQUEUE";
 -- DROP TABLE "DocumentsQueue";
 -- DROP TABLE "StatusCodes";
+-- DROP TABLE "DocTypes";
 
 
 -- 1. Tabla Catálogo de Estados (PK Tinyint Manual)
@@ -52,6 +53,10 @@ CREATE COLUMN TABLE "StatusCodes" (
 );
 
 -- Inserción de Estados (HANA no soporta VALUES multi-fila: un INSERT por estado)
+--
+-- `Sent` (3) es de TRÁNSITO, no final: se envió el comprobante y todavía no
+-- hay respuesta de Hacienda (equivale a "EnHacienda" del sistema legacy).
+-- `Accepted`/`Rejected` sí son finales.
 INSERT INTO "StatusCodes" ("Code", "Name", "Description") VALUES
 (0, 'Pending', 'Documento registrado por SAP, listo para ser procesado.');
 INSERT INTO "StatusCodes" ("Code", "Name", "Description") VALUES
@@ -59,14 +64,51 @@ INSERT INTO "StatusCodes" ("Code", "Name", "Description") VALUES
 INSERT INTO "StatusCodes" ("Code", "Name", "Description") VALUES
 (2, 'Processing', 'Documento en proceso activo de consulta, validación o envío a Hacienda.');
 INSERT INTO "StatusCodes" ("Code", "Name", "Description") VALUES
-(3, 'Sent', 'Documento procesado y enviado a Hacienda exitosamente.');
+(3, 'Sent', 'Documento enviado a Hacienda; todavía sin respuesta de aceptación o rechazo (equivale a "EnHacienda" del sistema legacy).');
 INSERT INTO "StatusCodes" ("Code", "Name", "Description") VALUES
 (4, 'Error', 'Fallo de validación o error técnico.');
 INSERT INTO "StatusCodes" ("Code", "Name", "Description") VALUES
 (5, 'Cancelled', 'Documento descartado u omitido porque un intento previo ya finalizó con éxito.');
+INSERT INTO "StatusCodes" ("Code", "Name", "Description") VALUES
+(6, 'Accepted', 'Hacienda aceptó el comprobante.');
+INSERT INTO "StatusCodes" ("Code", "Name", "Description") VALUES
+(7, 'Rejected', 'Hacienda rechazó el comprobante.');
 
 
--- 2. Tabla Principal de Cola de Documentos
+-- 2. Tabla Catálogo de Tipos de Documento (PK Nvarchar Manual)
+--
+-- Espejo de `DocType` (app/models/doc_type.rb) — pero solo de los códigos que
+-- SÍ son comprobantes encolables. Los tres mensajes de receptor (`05`/`06`/`07`,
+-- `DocType::RECEIVER_MESSAGES`) no llevan `DocEntry` de factura ni pasan por
+-- esta cola: no tienen detalle de líneas ni resumen, así que no son un
+-- "tipo de documento" para `DocumentsQueue` (mismo criterio que ya aplica
+-- `db/seeds.rb` para `qsSlUpdateDocumentInfo`). Si `DocType` agrega o quita un
+-- comprobante real, este catálogo se actualiza junto con él. HANA no acepta
+-- VALUES multi-fila: un INSERT por código.
+CREATE COLUMN TABLE "DocTypes" (
+    "Code"        NVARCHAR(2)   NOT NULL,
+    "Name"        NVARCHAR(10)  NOT NULL,
+    "Description" NVARCHAR(255) NOT NULL,
+    CONSTRAINT "PK_DocTypes" PRIMARY KEY ("Code")
+);
+
+INSERT INTO "DocTypes" ("Code", "Name", "Description") VALUES
+('01', 'FE', 'Factura electrónica');
+INSERT INTO "DocTypes" ("Code", "Name", "Description") VALUES
+('02', 'ND', 'Nota de débito electrónica');
+INSERT INTO "DocTypes" ("Code", "Name", "Description") VALUES
+('03', 'NC', 'Nota de crédito electrónica');
+INSERT INTO "DocTypes" ("Code", "Name", "Description") VALUES
+('04', 'TE', 'Tiquete electrónico');
+INSERT INTO "DocTypes" ("Code", "Name", "Description") VALUES
+('08', 'FEC', 'Factura electrónica de compra');
+INSERT INTO "DocTypes" ("Code", "Name", "Description") VALUES
+('09', 'FEE', 'Factura electrónica de exportación');
+INSERT INTO "DocTypes" ("Code", "Name", "Description") VALUES
+('10', 'REP', 'Recibo electrónico de pago');
+
+
+-- 3. Tabla Principal de Cola de Documentos
 --
 -- COLUMN TABLE es el default recomendado por SAP. Si el volumen de UPDATE por fila
 -- llegara a ser el cuello de botella (cola muy caliente, delta merge constante),
@@ -81,13 +123,19 @@ CREATE COLUMN TABLE "DocumentsQueue" (
     "CreatedAt"  TIMESTAMP      DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "UpdatedAt"  TIMESTAMP      DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
-    CONSTRAINT "PK_DocumentsQueue" PRIMARY KEY ("Id"),
-    CONSTRAINT "FK_DocumentsQueue_StatusCodes" FOREIGN KEY ("StatusCode")
-        REFERENCES "StatusCodes" ("Code") ON UPDATE RESTRICT ON DELETE RESTRICT
+    CONSTRAINT "PK_DocumentsQueue" PRIMARY KEY ("Id")
 );
 
+ALTER TABLE "DocumentsQueue"
+    ADD CONSTRAINT "FK_DocumentsQueue_StatusCodes" FOREIGN KEY ("StatusCode")
+        REFERENCES "StatusCodes" ("Code") ON UPDATE RESTRICT ON DELETE RESTRICT;
 
--- 3. Índices de Rendimiento
+ALTER TABLE "DocumentsQueue"
+    ADD CONSTRAINT "FK_DocumentsQueue_DocTypes" FOREIGN KEY ("DocType")
+        REFERENCES "DocTypes" ("Code") ON UPDATE RESTRICT ON DELETE RESTRICT;
+
+
+-- 4. Índices de Rendimiento
 
 -- Optimiza la lectura de documentos pendientes/encolados por el FE Service.
 -- Sin INCLUDE (DocEntry, DocType): en un column table no hay covering index, cada

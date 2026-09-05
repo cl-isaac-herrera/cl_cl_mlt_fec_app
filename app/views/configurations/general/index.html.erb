@@ -353,6 +353,134 @@
     </div>
   </div>
 
+  <%# ---------------------------------------------------------------- %>
+  <%# SECCIÓN: Ambiente de Hacienda (grupo HACIENDA_FE) — fila completa %>
+  <%#                                                                  %>
+  <%# Reemplaza la tabla `environments`: un ambiente entero (pruebas o  %>
+  <%# producción) es configuración de ESTA instalación, no una entidad %>
+  <%# con muchas filas — el despliegue es una instancia por cliente    %>
+  <%# (CLAUDE.md §31, mismo criterio que el de `groups`).              %>
+  <%# ---------------------------------------------------------------- %>
+  <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6"
+       style="grid-column: 1 / -1;">
+
+    <%= render 'configurations/general/section_loader', target: 'groupLoader', group: 'HACIENDA_FE' %>
+
+    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+      Ambiente de Hacienda
+    </h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+
+      <%= render 'configurations/general/setting_field',
+            code:        'HACIENDA_FE_URI_TOKEN',
+            label:       'URL de autenticación (token)',
+            placeholder: 'https://idp.comprobanteselectronicos.go.cr/...' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'HACIENDA_FE_URI_SEND',
+            label:       'URL de envío del comprobante',
+            placeholder: 'https://api.comprobanteselectronicos.go.cr/recepcion/' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'HACIENDA_FE_URI_CHECK',
+            label:       'URL de consulta de estado',
+            placeholder: 'https://api.comprobanteselectronicos.go.cr/recepcion/{clave}' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'HACIENDA_FE_RESOLUTION_NUMBER',
+            label:       'Número de resolución',
+            placeholder: 'DGT-R-48-2016' %>
+
+      <%= render 'configurations/general/setting_field',
+            code: 'HACIENDA_FE_RESOLUTION_DATE',
+            label: 'Fecha de la resolución',
+            type: 'date' %>
+
+    </div>
+
+    <div class="mt-4 flex items-center justify-between gap-4">
+      <div data-general-configs-target="groupAudit" data-setting-group="HACIENDA_FE"
+           class="hidden flex items-center gap-1.5 text-xs text-gray-400">
+        <span class="material-icons text-sm leading-none">history</span>
+        <span data-audit-text></span>
+      </div>
+
+      <button type="button"
+              data-action="click->general-configs#saveGroup"
+              data-general-configs-target="groupButton"
+              data-setting-group="HACIENDA_FE"
+              data-testid="btn-update-hacienda-fe"
+              disabled
+              class="ml-auto flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm
+                     font-medium hover:bg-blue-700 transition-colors
+                     disabled:opacity-40 disabled:cursor-not-allowed">
+        <span class="material-icons text-base">loop</span>
+        <span>Actualizar</span>
+      </button>
+    </div>
+  </div>
+
+  <%# ---------------------------------------------------------------- %>
+  <%# SECCIÓN: Política de firma XAdES (grupo HACIENDA_XADES)          %>
+  <%#                                                                  %>
+  <%# La URL y el hash del documento de política DGT-R-48-2016 que usa %>
+  <%# `Hacienda::XmlSigner` para firmar cada comprobante. Es la MISMA  %>
+  <%# política para cualquier instalación —no la personaliza el       %>
+  <%# operador—: este grupo existe solo para poder corregirla sin      %>
+  <%# deploy si Hacienda la cambia. `db/seeds.rb` reafirma el valor    %>
+  <%# vigente en cada corrida, así que un cambio manual acá es un      %>
+  <%# parche de emergencia que el próximo `db:seeds` revierte.         %>
+  <%# ---------------------------------------------------------------- %>
+  <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6"
+       style="grid-column: 1 / -1;">
+
+    <%= render 'configurations/general/section_loader', target: 'groupLoader', group: 'HACIENDA_XADES' %>
+
+    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+      Política de firma XAdES
+    </h2>
+
+    <p class="text-xs text-gray-400 mb-4">
+      Solo cambia si Hacienda actualiza la política de firma DGT-R-48-2016 — no la personaliza cada cliente.
+    </p>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <%= render 'configurations/general/setting_field',
+            code:        'HACIENDA_XADES_POLICY_IDENTIFIER',
+            label:       'URL de la política de firma',
+            placeholder: 'https://tribunet.hacienda.go.cr/docs/esquemas/...' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'HACIENDA_XADES_POLICY_HASH',
+            label:       'SHA-1 (Base64) de la política',
+            placeholder: 'Ohixl6upD6av8N7pEvDABhEL6hM=' %>
+
+    </div>
+
+    <div class="mt-4 flex items-center justify-between gap-4">
+      <div data-general-configs-target="groupAudit" data-setting-group="HACIENDA_XADES"
+           class="hidden flex items-center gap-1.5 text-xs text-gray-400">
+        <span class="material-icons text-sm leading-none">history</span>
+        <span data-audit-text></span>
+      </div>
+
+      <button type="button"
+              data-action="click->general-configs#saveGroup"
+              data-general-configs-target="groupButton"
+              data-setting-group="HACIENDA_XADES"
+              data-testid="btn-update-hacienda-xades"
+              disabled
+              class="ml-auto flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm
+                     font-medium hover:bg-blue-700 transition-colors
+                     disabled:opacity-40 disabled:cursor-not-allowed">
+        <span class="material-icons text-base">loop</span>
+        <span>Actualizar</span>
+      </button>
+    </div>
+  </div>
+
   </div><%# /grid %>
 
 </div>

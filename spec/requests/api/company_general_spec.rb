@@ -143,8 +143,8 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
         CertPin: '9999', TokenUsr: 'atv', CertPath: 'C:\\otro.p12',
         # Sección "Factura a proveedor"
         PurchInvSeriesNum: 99, DefaultWarehouse: 'OTRO',
-        # Ni columnas que no expone ninguna sección
-        Uuid: 'reescrito', EnvironmentId: 4
+        # Ni una columna que no existe
+        Uuid: 'reescrito'
       )
 
       expect(response).to have_http_status(:ok)
@@ -154,8 +154,7 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
         purchase_invoice_series: 7,
         default_warehouse: 'PRIN',
         cert_pin: nil,
-        token_user: nil,
-        environment_id: nil
+        token_user: nil
       )
       expect(acme.uuid).to be_present
       expect(acme.uuid).not_to eq('reescrito')

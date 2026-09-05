@@ -792,9 +792,18 @@ proxy .NET:
       (`use_ap_invoice`) y `auto_send_ap_inv` en `serialize_detail`, y cablear la sección.
       Las listas que la alimentan (almacenes, impuestos, monedas) sí son consultas a SAP y
       hoy van al proxy .NET.
-- [ ] **Ambiente de Hacienda** — `companies.environment_id` existe y la tabla
-      `environments` está creada pero **vacía**: falta el seed con las URLs de pruebas y
-      producción. El formulario todavía no tiene el campo.
+- [x] **Ambiente de Hacienda — resuelto distinto de lo planteado (2026-09-05).** La tabla
+      `environments` y `companies.environment_id` se eliminaron; el ambiente pasó a ser
+      configuración de la instalación en `settings` (grupo `HACIENDA_FE`, cinco ajustes:
+      las tres URIs, número y fecha de resolución), con su propia sección en
+      Configuraciones → Generales. `is_prod` se perdió a propósito: con una instancia por
+      cliente ya no hay "dos ambientes" que un booleano tenga que distinguir. Ver
+      `20260905120000_move_environment_config_to_settings.rb`.
+      **Sigue sin usarse:** ningún flujo real lee todavía estos ajustes — hace falta el
+      cliente HTTP que hable con Hacienda (token/envío/consulta), que es donde entran.
+      **`EnvironmentId: 0`** sigue en `company_form_controller.js:1913`: va al endpoint
+      **.NET legado** de `/configurations/companies/new` y no a la tabla que se eliminó;
+      queda intacto hasta que ese formulario también migre (ver "Crear compañía", abajo).
 
 ### Crear compañía
 
@@ -914,6 +923,107 @@ pendientes, se traen los detalles de SAP y se arma el objeto unificado. **No se 
 nada a Hacienda ni se actualiza ningún estado** — es el corte del punto 12 del
 documento.
 
+- [x] **Firma XAdES-EPES — portada (2026-09-05).** `Hacienda::XmlSigner`
+      (`app/services/hacienda/xml_signer.rb`) es el port casi literal del prototipo
+      `xml_signer_rails`: firma enveloped, RSA-SHA256, Exclusive C14N, política
+      DGT-R-48-2016, con auto-verificación criptográfica antes de devolver el resultado.
+      Specs con un certificado efímero (`spec/services/hacienda/xml_signer_spec.rb`).
+      **No incluye la cadena de certificación** en `KeyInfo/X509Data` — solo el
+      certificado hoja. Si Hacienda llega a exigir la cadena completa, se agrega con
+      `pkcs12.ca_certs`. **Todavía no tiene quién lo llame**: falta el paso que arma el
+      XML del comprobante a partir del objeto unificado (`Documents::UnifiedBuilder`) y
+      se lo pasa a esta clase — eso es el punto 11 del flujo, sin empezar.
+
+- [x] **Validador de reglas de negocio — implementado para Factura Electrónica (2026-09-05).**
+      `Hacienda::InvoiceValidator` (`app/services/hacienda/invoice_validator.rb` +
+      `app/services/hacienda/validations/*`) migra las reglas de
+      `Validations.cs#OwnValidations` del .NET (`legacy/apis/clvsfesync4.3/CLVS_FE.DAO/
+      Validations.cs`), **no como port literal** sino como siete colaboradores por
+      bloque (cabecera, condición de venta, líneas, otros cargos, moneda, totales,
+      referencias), cada uno con su propio spec. 87 ejemplos, 0 fallos.
+      **Acumula errores en vez de cortar en el primero** (a diferencia del legacy,
+      fail-fast): no cambia qué documentos pasan, solo que se ven todos los problemas
+      de una sola pasada. Documentado en el comentario de cabecera de la clase.
+      **Alcance: solo DocType `01` (Factura Electrónica).** Las reglas que el legacy
+      excluye explícitamente para FE (partida arancelaria de FEE, exclusiones de FEC,
+      etc.) no se migraron — quedan para cuando este producto emita esos otros tipos.
+      **Tres divergencias deliberadas frente al legacy, documentadas en el código:**
+      · `ImpuestoNeto`/`MontoTotalLinea` (reglas #40-41) corren SIEMPRE, no solo con
+        exoneración — la fórmula sigue siendo válida con `MontoExoneracion = 0`.
+      · La lista de monedas no replica el catálogo ISO 4217 completo del XSD (~170
+        códigos); se valida el FORMATO (tres letras mayúsculas) nada más.
+      · `GetExoneratedTotalAmount` (recalculo de totales) no reproduce la división por
+        cero del legacy cuando `Tarifa` es 0 — usa el monto total sin ajustar en ese caso.
+      **No tiene quién lo invoque todavía.** Como el signer, es una pieza para el punto
+      11 del flujo (validar → generar XML → firmar → enviar), que sigue sin empezar.
+      Cuando se cablee: `Hacienda::InvoiceValidator.new(payload['Document']).call`,
+      antes de generar el XML — un documento con errores no debería ni intentar
+      firmarse.
+      **No verificado contra el XSD real todavía.** Los catálogos (`Hacienda::
+      Validations::Catalogs`) salen del reporte de la migración del XSD 4.4, pero
+      nadie corrió el validador contra un documento real de producción con toda la
+      variedad de casos (exoneraciones, monedas extranjeras, otros cargos). El primer
+      documento real que pase por acá es la prueba de fuego.
+
+- [x] **Actualizar el documento en SAP tras el envío a Hacienda — `sl_resources` listos
+      (2026-09-05).** Siete filas nuevas en el catálogo, una por tipo de documento que
+      NO es mensaje de receptor. El `code` lleva el CÓDIGO NUMÉRICO de Hacienda
+      (`updateDocument01`, `02`, `03`, `04`, `08`, `09`, `10`) y no la mnemotecnia —
+      es el mismo valor que trae `Documents::PendingQueue::Entry#doc_type`, así que
+      resolver la fila por ese código no exige traducir de un lado a otro. Corregido
+      una vez ya sembradas con la mnemotecnia (`updateDocumentFE`, …): se revirtió la
+      migración en dev y test, se renombraron los códigos y se volvió a migrar.
+      Sembradas en `db/seeds.rb` (`SL_RESOURCES_STATUS_UPDATES`) y con su migración de
+      datos para bases vivas (`20260905140000_add_update_document_sl_resources.rb`).
+      Cada una resuelve a `<Objeto>(#DocumentEntry#)` —
+      `Sap::ResourceQuery.path_for('updateDocument01', DocumentEntry: 25)` da
+      `"Invoices(25)"`, verificado contra la base real.
+      El body que se le manda por `PATCH` es siempre el mismo: `U_CL_FEC_Status`,
+      `U_CL_FEC_ErrorDetails`, `U_CL_FEC_Clave`, `U_CL_FEC_NumConsecutivo`,
+      `U_CL_FEC_XmlSentUrl`, `U_CL_FEC_XmlResponseUrl`.
+      **Mapeo a objeto de SAP:** `01`/`02`/`04`/`09` (FE/ND/TE/FEE) → `Invoices`;
+      `03` (NC) → `CreditNotes`; `10` (REP) → `IncomingPayments`; `08` (FEC) →
+      `PurchaseInvoices`.
+      ⚠️ **Corregido al implementar:** el pedido original decía "para ND con
+      CreditNotes", repitiendo ND (que ya iba con Invoices) y sin mencionar nunca a NC.
+      Se asumió que era una errata (ND↔NC) y que el `CreditNotes` era para NC —
+      SAP B1 no tiene un objeto de "nota de débito" separado, así que ND compartiendo
+      `Invoices` con FE/TE/FEE es lo único consistente. **Confirmar que la lectura es
+      correcta.**
+      **Dos estados nuevos en la cola** (`Accepted` = 6, `Rejected` = 7) en
+      `db/external/sql_server/schema.sql` y su espejo en `db/external/hana/schema.sql`,
+      más `Documents::PendingQueue::STATUS_ACCEPTED`/`STATUS_REJECTED`. La descripción
+      de `Sent` (3) se corrigió: ya no dice "enviado exitosamente" sino que es un
+      estado de TRÁNSITO — equivalente a "EnHacienda" del legacy — hasta que llegue
+      `Accepted` o `Rejected`.
+      **Sin implementar todavía:** el UPDATE en sí. No existe el paso que llama a
+      Hacienda, recibe la respuesta y hace el `PATCH`; estas filas y estados son
+      la preparación para cuando ese paso exista (punto 11-12 del flujo).
+      ⚠️ **Bloqueante real antes de poder usar esto contra SAP:** los seis
+      `U_CL_FEC_*` son UDFs y no tienen su schema declarado en `config/sap_schemas/`
+      (`CLAUDE.md` §32) — sin eso, una instalación nueva no los tiene y el primer
+      `PATCH` fallaría con "campo inválido". Faltan cuatro schemas (uno por tabla de
+      SAP que recibe el UDF): `OINV` (Invoices), `ORIN` (CreditNotes), `OPCH`
+      (PurchaseInvoices), `ORCT` (IncomingPayments). Tamaños a decidir: `Status` (un
+      código corto, ¿alpha 20?), `ErrorDetails` (memo, puede ser largo), `Clave` (alpha
+      50), `NumConsecutivo` (alpha 20), las dos URLs (alpha 254 probablemente).
+
+- [ ] **`bin/rails db:migrate RAILS_ENV=test` sembró el catálogo completo solo (2026-09-05).**
+      Al migrar la base de test para esta tanda, apareció con `permissions`,
+      `role_permissions`, `roles` y `sl_resources` completamente poblados —los 45
+      recursos, el rol "Administrador", 90 `role_permissions`— con el MISMO
+      `created_at` en todas las filas, como si `db:seed` hubiera corrido solo. Se
+      limpiaron esas tablas a mano para volver al estado vacío que la suite espera
+      (`RolePermission`/`UserRole`/`Role`/`Permission`/`Setting`/`SlResource`
+      `.unscoped.delete_all` en `RAILS_ENV=test`), y con eso la suite volvió a
+      784 ejemplos en verde. La base de desarrollo NO se vio afectada (verificado:
+      roles, `user_roles` y `role_permissions` intactos).
+      **No investigado a fondo:** el disparador más probable es el comportamiento de
+      Rails 7.1+/8 de correr `db:seed` cuando `db:prepare`/el mantenimiento automático
+      del esquema de test detecta que tiene que recrear la base desde cero. Si vuelve
+      a pasar, revisar `active_record.maintain_test_schema` y el flujo de
+      `db:test:prepare`.
+
 - [ ] **Las credenciales de licencia de SAP no tienen UI.** La migración
       `20260825140000_add_sap_license_to_connections.rb` agregó `connections.sap_license`
       y `connections.sap_license_password` (cifrada), y `Sap::CompanyClient` las consume,
@@ -960,10 +1070,20 @@ se corrige cada uno. Quedaron **cinco cerrados** —el vacío del emisor (UDT po
 su identidad (pasa a `companies`, ya implementado), la UDT ya declarada, el punto decimal
 del código de actividad y la ubicación de `Registrofiscal8707`— y **dos pasaron a
 corregirse en las vistas** y no en la aplicación (`NombreInstitucion`,
-`ProveedorSistemas`). Los que siguen abiertos son el filtro, el stub de referencias, los
-campos faltantes por vista, los medios de pago sin verificar y los cortes de fecha.
+`ProveedorSistemas`).
 
-- [ ] **⛔ EL FILTRO NO FUNCIONA EN CINCO DE LAS SEIS VISTAS.** Se sembró
+**Estado al 2026-09-02:** el filtro quedó resuelto en las vistas y el job armó el primer
+objeto real; lo que salió de mirarlo está en *Revisión del PRIMER objeto armado*, más
+abajo. `ProveedorSistemas` ya salió de la vista pero **falta cablearlo a `settings`** —
+hoy llega en null. Siguen abiertos el stub de referencias, los campos faltantes por vista,
+los medios de pago sin verificar y los cortes de fecha.
+
+- [x] **RESUELTO EN LAS VISTAS (2026-09-02).** Isaac corrigió los nombres de columna del
+      lado del origen, que era la opción que este ítem dejaba abierta. El job filtró y
+      trajo el detalle de los cinco documentos sin tocar `sl_resources`. Se conserva el
+      diagnóstico porque explica por qué el catálogo quedó como quedó.
+
+      ~~**⛔ EL FILTRO NO FUNCIONA EN CINCO DE LAS SEIS VISTAS.**~~ Se sembró
       `$filter=(DocEntry eq @DocEntry and DocType eq @DocType)` y esas columnas casi no
       existen con ese nombre:
 
@@ -1101,12 +1221,73 @@ campos faltantes por vista, los medios de pago sin verificar y los cortes de fec
       que es lo que fija `DocType` y lo contrario de los comentarios del `DocTypesString`
       del .NET.
 
+### Revisión del PRIMER objeto armado de verdad (2026-09-02)
+
+El pipeline se destrabó y armó los cinco documentos de la cola contra datos reales
+(`TST_CL_DEVDEMOCR`, factura electrónica). Lo que sigue sale de mirar ese objeto y de
+consultar la vista de cabecera directamente, para separar lo que falta en el builder de
+lo que falta en la vista.
+
+**Lo que quedó bien y no hay que volver a mirar:** el emisor completo —identidad desde
+`companies`, ubicación/teléfono/correo desde la UDT de sucursales—, los totales cuadrando
+(465 + 9,30 = 474,30), el desglose de impuestos agrupado por código y tarifa, y la tarifa
+del 2 % coherente con su `CodigoTarifaIVA` `03`.
+
+- [ ] **⛔ `FechaEmision` no existe en la vista de cabecera.** Es el bloqueante de fondo:
+      los cinco documentos salen con `"FechaEmision": null` y, peor, con
+      `SendDocumentHacienda.fecha` en null — que es el cuerpo del POST a Hacienda. Sin
+      fecha no hay comprobante.
+      La cabecera devuelve **66 columnas** y ninguna se llama así; lo que hay es `DocDate`
+      y `FechaCrea`, las dos con el mismo valor (`"2026-08-25"`). El contrato de
+      `docs/sync-documents-flow.md` sí la lista, así que el que se desvió es el origen.
+      **Decisión pendiente:** que la vista la exponga, o que el builder lea `DocDate`.
+
+- [ ] **`ProveedorSistemas` quedó en null.** Confirmado que ya salió de la vista (no está
+      entre las 66 columnas), como se había decidido. Falta la otra mitad del cambio:
+      `header.string('ProveedorSistemas')` → `Setting.value_for('GENERAL_PROVIDER_ID')`,
+      que ya existe sembrado y con campo en Configuraciones → Generales. Ver el ítem del
+      mismo nombre en *Correcciones pendientes*.
+
+- [ ] **`MedioPago` vacío en los cinco.** La vista de medios de pago devuelve cero filas
+      para estos documentos. Puede ser correcto en venta a crédito (`CondicionVenta` `02`),
+      pero hay que confirmarlo: Hacienda pide al menos un medio de pago. Es además la
+      única de las seis vistas cuyo contenido no se ha podido verificar nunca.
+
+- [ ] **⛔ Los nodos opcionales viajan a medias, y el XSD no los acepta así.** El objeto
+      conserva todas las llaves aunque no haya contenido. El caso claro es el receptor:
+
+      ```json
+      "Telefono": { "CodigoPais": 506, "NumTelefono": null }
+      ```
+
+      La vista devuelve `RcprTlfNumTelefono` como cadena vacía y `Row#string` la vuelve
+      `nil`. Si ese nodo llega al XML, el esquema 4.4 exige las dos partes y rechaza. Lo
+      mismo con `Exoneracion` entero en null y `DatosImpuestoEspecifico` todo en ceros.
+      **Decisión pendiente:** quién poda, el builder o el generador del XML.
+      **Recomendación:** el builder — el objeto ya representa el documento, y un teléfono
+      a medias no es un dato válido en ninguna capa. Hacerlo después obliga a que cada
+      consumidor repita la misma limpieza.
+
+- [ ] **Los montos salen como texto**, no como número: `"PrecioUnitario": "465.0"`. Es
+      `BigDecimal#to_json`, y es deliberado del serializador (el tipo es correcto — usar
+      `Float` daría diferencias de centavos contra los totales de Hacienda). Para generar
+      XML da igual; **si el objeto alguna vez se manda como JSON a un servicio, no**.
+      Anotado para que la decisión se tome a la vista y no por descuido.
+
+- [ ] **Dato, no código: `cola#3` (DocEntry 535) no trae `Clave` ni `NumeroConsecutivo`.**
+      Los otros cuatro sí. Ese comprobante no se puede enviar así; hay que ver por qué SAP
+      lo dejó sin numerar.
+
 ### Estado de las vistas en SAP
 
-- [ ] **Faltan las vistas de la etapa que sigue.** De las seis sembradas, existen cinco
-      (cabecera, líneas, otros cargos, otros, medios de pago) más el stub de referencias.
-      Ninguna se probó todavía contra el job porque la credencial ODBC de desarrollo está
-      rechazada.
+- [x] **Las vistas ya se probaron contra el job (2026-09-02).** Existen cinco de las seis
+      (cabecera, líneas, otros cargos, otros, medios de pago) más el stub de referencias, y
+      el job las consultó con datos reales y armó el objeto. La credencial ODBC dejó de ser
+      un impedimento: la conexión usa autenticación integrada de Windows
+      (`DOCS_DB_ODBC_TRUSTED`), que ya venía funcionando por `EXTRA_PARAMS`.
+      Los nombres de columna del `$filter` los corrigió Isaac en las vistas esa tarde, así
+      que el desfase de la sección anterior quedó resuelto del lado del origen.
+      **Lo que salió de esa primera corrida está en *Revisión del PRIMER objeto armado*.**
 
 - [ ] **Sembrar el catálogo en una base viva no es `db:seed`.** Las seis filas nuevas de
       `sl_resources` llegan con el seed, pero `db/seeds.rb` hace

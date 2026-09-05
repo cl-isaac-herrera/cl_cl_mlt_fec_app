@@ -7,15 +7,48 @@ CREATE TABLE dbo.StatusCodes (
 );
 
 -- Inserción de Estados
+--
+-- `Sent` (3) es el que la resolución de Hacienda todavía no contestó. Equivale
+-- al estado "EnHacienda" del sistema legacy: se envió el comprobante y se
+-- consulta después, en otra pasada, si ya hay aceptación o rechazo. Es un
+-- estado de TRÁNSITO y no uno final — a diferencia de `Accepted`/`Rejected`,
+-- que sí lo son.
 INSERT INTO StatusCodes (Code, [Name], [Description]) VALUES
 (0, 'Pending',    'Documento registrado por SAP, listo para ser procesado.'),
 (1, 'OnHold',     'En espera por conflicto de concurrencia (un intento anterior del mismo documento está en Processing).'),
 (2, 'Processing', 'Documento en proceso activo de consulta, validación o envío a Hacienda.'),
-(3, 'Sent',       'Documento procesado y enviado a Hacienda exitosamente.'),
+(3, 'Sent',       'Documento enviado a Hacienda; todavía sin respuesta de aceptación o rechazo (equivale a "EnHacienda" del sistema legacy).'),
 (4, 'Error',      'Fallo de validación o error técnico.'),
-(5, 'Cancelled',  'Documento descartado u omitido porque un intento previo ya finalizó con éxito.');
+(5, 'Cancelled',  'Documento descartado u omitido porque un intento previo ya finalizó con éxito.'),
+(6, 'Accepted',   'Hacienda aceptó el comprobante.'),
+(7, 'Rejected',   'Hacienda rechazó el comprobante.');
 
--- 2. Tabla Principal de Cola de Documentos
+-- 2. Tabla Catálogo de Tipos de Documento (PK Nvarchar Manual)
+--
+-- Espejo de `DocType` (app/models/doc_type.rb) — pero solo de los códigos que
+-- SÍ son comprobantes encolables. Los tres mensajes de receptor (`05`/`06`/`07`,
+-- `DocType::RECEIVER_MESSAGES`) no llevan `DocEntry` de factura ni pasan por
+-- esta cola: no tienen detalle de líneas ni resumen, así que no son un
+-- "tipo de documento" para `DocumentsQueue` (mismo criterio que ya aplica
+-- `db/seeds.rb` para `qsSlUpdateDocumentInfo`). Si `DocType` agrega o quita un
+-- comprobante real, este catálogo se actualiza junto con él.
+CREATE TABLE dbo.DocTypes (
+    Code NVARCHAR(2) NOT NULL,
+    [Name] VARCHAR(10) NOT NULL,
+    [Description] VARCHAR(255) NOT NULL,
+    CONSTRAINT PK_DocTypes PRIMARY KEY CLUSTERED (Code)
+);
+
+INSERT INTO DocTypes (Code, [Name], [Description]) VALUES
+('01', 'FE',  'Factura electrónica'),
+('02', 'ND',  'Nota de débito electrónica'),
+('03', 'NC',  'Nota de crédito electrónica'),
+('04', 'TE',  'Tiquete electrónico'),
+('08', 'FEC', 'Factura electrónica de compra'),
+('09', 'FEE', 'Factura electrónica de exportación'),
+('10', 'REP', 'Recibo electrónico de pago');
+
+-- 3. Tabla Principal de Cola de Documentos
 CREATE TABLE dbo.DocumentsQueue (
     Id BIGINT IDENTITY(1,1) NOT NULL,
     DocEntry INT NOT NULL,
@@ -25,12 +58,17 @@ CREATE TABLE dbo.DocumentsQueue (
     Details NVARCHAR(MAX) NULL,
     CreatedAt DATETIME2(3) NOT NULL DEFAULT SYSDATETIME(),
     UpdatedAt DATETIME2(3) NOT NULL DEFAULT SYSDATETIME(),
-    
-    CONSTRAINT PK_DocumentsQueue PRIMARY KEY CLUSTERED (Id),
-    CONSTRAINT FK_DocumentsQueue_StatusCodes FOREIGN KEY (StatusCode) REFERENCES StatusCodes (Code)
+
+    CONSTRAINT PK_DocumentsQueue PRIMARY KEY CLUSTERED (Id)
 );
 
--- 3. Índices de Rendimiento
+ALTER TABLE dbo.DocumentsQueue
+    ADD CONSTRAINT FK_DocumentsQueue_StatusCodes FOREIGN KEY (StatusCode) REFERENCES StatusCodes (Code);
+
+ALTER TABLE dbo.DocumentsQueue
+    ADD CONSTRAINT FK_DocumentsQueue_DocTypes FOREIGN KEY (DocType) REFERENCES DocTypes (Code);
+
+-- 4. Índices de Rendimiento
 
 -- Optimiza la lectura de documentos pendientes/encolados por el FE Service
 CREATE NONCLUSTERED INDEX IX_DocumentsQueue_Polling

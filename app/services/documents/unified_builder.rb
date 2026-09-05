@@ -28,11 +28,6 @@ module Documents
   # Un campo del mapeo no tiene origen en las vistas declaradas hoy. Se deja en
   # `[]` y NO se inventa: `DetalleSurtido`, porque no hay vista de surtidos (el
   # mapeo la nombra, pero `docs/sync-documents-flow.md` no la define).
-  #
-  # `ProveedorSistemas` se sigue leyendo de la cabecera, donde la vista lo trae
-  # hardcodeado. Está decidido que se mueve al ajuste `GENERAL_PROVIDER_ID` —es un
-  # dato del producto y no del documento— pero mientras la vista lo devuelva, esto
-  # funciona. Anotado en `TODOS.md` → Emisión de documentos.
   class UnifiedBuilder
     # @param company [Company]
     # @param doc_type [String] código de Hacienda (`DocType::FE`, …).
@@ -64,7 +59,7 @@ module Documents
       {
         'NumeroConsecutivo' => header.string('NumeroConsecutivo'),
         'Clave' => header.string('Clave'),
-        'ProveedorSistemas' => header.string('ProveedorSistemas'),
+        'ProveedorSistemas' => proveedor_sistemas,
         'FechaEmision' => header.string('FechaEmision'),
         'CodigoActividadEmisor' => codigo_actividad_emisor,
         'CodigoActividadReceptor' => header.string('CodigoActividadReceptor'),
@@ -86,6 +81,14 @@ module Documents
     # viajó con el documento.
     def codigo_actividad_emisor
       header.string('CodigoActividadEmisor') || company.economic_activity_code.presence
+    end
+
+    # La cédula del proveedor de software ante Hacienda. Es un dato del
+    # PRODUCTO y no del documento —la vista lo traía hardcodeado antes de que
+    # existiera este ajuste—, así que vive en Configuraciones → Generales y no
+    # en ninguna vista de SAP.
+    def proveedor_sistemas
+      Setting.value_for('GENERAL_PROVIDER_ID')
     end
 
     # El emisor tiene DOS orígenes, y la línea que los separa es si el dato cambia
