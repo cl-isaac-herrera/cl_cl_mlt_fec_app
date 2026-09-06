@@ -7,21 +7,24 @@ import { relativeDate } from 'vendor/clavisco/format/dates';
 /**
  * DocumentsIssuedController — Búsqueda de documentos emitidos (FE/ND/NC/TE/FEC/FEE/REP).
  *
- * Replica la funcionalidad del componente Angular DocumentsComponent
- * (pages/documents/documents/documents.component.ts):
+ * El listado consulta `GET /api/documents`, que a su vez pasa por
+ * `Sap::IssuedDocumentsSearch` — en vivo contra SAP Service Layer, ya NO contra
+ * el proxy .NET (`Api::DocumentsController`, `db/seeds.rb` sección 5,
+ * `getDocuments01`..`10`). Dos consecuencias directas de ese cambio de fuente:
  *
- *   - Formulario de filtros: 10 campos (fechas, consecutivo, estado, cédula,
- *     código moneda, clave, receptor, consecutivo FE, tipo doc)
- *   - Botón "Hoy" en ambas fechas
- *   - Parámetro URL ?clave=xxx pre-llena el campo Clave
- *   - Tabla Tabulator server-side: FechaFact, N° FE, N° Ref, Receptor, Estado, Total
- *   - Íconos de estado como badges coloreados
- *   - Menú de opciones por fila (dropdown): Ver PDF, Descargar PDF, Ver/Descargar XML Hacienda,
- *     Descargar Doc XML, Correos, Consultar Info, Omitir Validaciones, Anulación Interna, Reprocesar
- *   - Contadores de estado en toolbar
- *   - Botón "Más Información" (chart) — visible solo tras búsqueda exitosa sin cambios en form
- *   - Botón "Descarga Masiva" — visible solo si perm F_CreateBulkDownloadOfDocuments
- *   - Modales: Correos (tabla + reenvío), Info, Chart (canvas), Confirmación, Error
+ *   - El filtro "Tipo de Documento" ahora es OBLIGATORIO: cada tipo pega a un
+ *     recurso distinto del catálogo (no hay forma de traer "todos" de una)
+ *   - No hay `Total` de filas: el Service Layer no lo expone sin un header que
+ *     el submódulo todavía no soporta (`TODOS.md` → SAP). Se usa `HasMore` en
+ *     su lugar — el contador de paginación muestra el rango de la página
+ *     actual, sin "de N filas".
+ *
+ * ⚠️ Fuera de alcance de esta migración (siguen pegándole al proxy .NET, con un
+ * `Id` de fila que ya no existe en un resultado que viene de SAP — anotado en
+ * `TODOS.md` → Emisión de documentos): Ver/Descargar PDF, Ver/Descargar XML
+ * Hacienda, Descargar Doc XML, Correos, Omitir Validaciones, Anulación Interna,
+ * Reprocesar, Descarga Masiva, y el gráfico "Más Información" (dependía de
+ * `DocumentQtyList`, que el .NET calculaba y SAP no).
  */
 export default class extends TabulatorController {
   static targets = [
@@ -67,11 +70,20 @@ export default class extends TabulatorController {
   /** Tamaño de página actual (lo gestiona Tabulator, lo guardamos para bulkDownload) */
   #stepPos = 10;
 
-  /** Contadores de estado (del último fetch) */
-  #quantities = {};
+  /**
+   * Cantidad de filas que trajo la ÚLTIMA página (no el total: SAP no lo da,
+   * ver cabecera del archivo). Alcanza para un contador de rango honesto
+   * ("Mostrando X-Y") sin inventar un total que no existe.
+   */
+  #lastPageRowCount = 0;
 
-  /** Total real de registros (para el counter de paginación) */
-  #totalRecords = 0;
+  /**
+   * Contadores de estado para el gráfico "Más Información". SIEMPRE vacío: sin
+   * `DocumentQtyList` (el .NET lo calculaba, SAP no expone un conteo así) no hay
+   * de dónde sacarlos, así que el botón queda oculto (ver `search()`) y
+   * `openChartModal` avisa "sin datos" en vez de romper. Ver cabecera del archivo.
+   */
+  #quantities = {};
 
   /** Id del documento activo en el modal de correos */
   #activeEmailDocId = null;
@@ -134,14 +146,13 @@ export default class extends TabulatorController {
       paginationMode: 'remote',
       paginationSize: 10,
       paginationSizeSelector: [5, 10, 15],
-      // paginationCounter custom — Tabulator calcula el total como last_page*pageSize, lo que
-      // sobreestima cuando la última página no está llena. Usamos el total real del servidor.
-      paginationCounter: (_pageSize, currentRow, _currentPage, _totalRows, _totalPages) => {
-        const total = this.#totalRecords;
-        if (!total) return '';
-        const from = currentRow;
-        const to   = Math.min(currentRow + _pageSize - 1, total);
-        return `Mostrando ${from.toLocaleString('es-CR')}-${to.toLocaleString('es-CR')} de ${total.toLocaleString('es-CR')} filas`;
+      // paginationCounter custom — SAP no da un total real (ver cabecera del archivo),
+      // así que se muestra el rango de la página actual sin "de N filas" (CLAUDE.md §17
+      // asume un total conocible; acá NO lo hay, y es a propósito).
+      paginationCounter: (_pageSize, currentRow) => {
+        if (!this.#lastPageRowCount) return '';
+        const to = currentRow + this.#lastPageRowCount - 1;
+        return `Mostrando ${currentRow.toLocaleString('es-CR')}-${to.toLocaleString('es-CR')}`;
       },
       // ajaxURL es requerido para activar el modo remote; el request real lo hace ajaxRequestFunc
       ajaxURL: '/api/documents',
@@ -208,28 +219,29 @@ export default class extends TabulatorController {
   // ── API fetch (llamado por Tabulator en cada cambio de página/tamaño) ────────
 
   async #tabulatorRequest(params) {
-    // params.page = página actual (1-based), params.size = registros por página
+    // params.page = página actual (1-based), params.size = registros por página.
+    // El backend clampea per_page a Sap::IssuedDocumentsSearch::MAX_PAGE_SIZE (19)
+    // — bien por encima de [5,10,15] (paginationSizeSelector), así que nunca se
+    // choca contra el techo real de 20 filas por respuesta de SAP.
     const page     = params.page || 1;
     const pageSize = params.size || 10;
     this.#stepPos  = pageSize;
 
-    // StartPost es el índice del primer registro (1-based), no el número de página
-    // Página 1 → StartPost=1, Página 2 → StartPost=11, Página 3 → StartPost=21, etc.
-    const startPost = (page - 1) * pageSize + 1;
+    const docType = this.selectDocTypeTarget.value;
 
     const queryParams = new URLSearchParams({
-      StartDate:     this.inputStartDateTarget.value,
-      EndDate:       this.inputEndDateTarget.value,
-      DoctType:      this.selectDocTypeTarget.value,
-      Status:        this.selectStatusTarget.value,
-      Consecutivo:   this.inputConsecutivoTarget.value,
-      ConsecutivoFE: this.inputConsecutivoFETarget.value,
-      Receptor:      this.inputReceptorTarget.value,
-      Cedula:        this.inputCedulaTarget.value,
-      Clave:         this.inputClaveTarget.value,
-      CodigoMoneda:  this.inputCodigoMonedaTarget.value,
-      StartPost:     startPost,
-      StepPost:      pageSize,
+      doc_type:       docType,
+      start_date:     this.inputStartDateTarget.value,
+      end_date:       this.inputEndDateTarget.value,
+      status:         this.selectStatusTarget.value,
+      consecutivo:    this.inputConsecutivoTarget.value,
+      consecutivo_fe: this.inputConsecutivoFETarget.value,
+      receptor:       this.inputReceptorTarget.value,
+      cedula:         this.inputCedulaTarget.value,
+      clave:          this.inputClaveTarget.value,
+      codigo_moneda:  this.inputCodigoMonedaTarget.value,
+      page,
+      per_page: pageSize,
     });
 
     const json = await this.#apiFetch(`/api/documents?${queryParams}`);
@@ -237,26 +249,17 @@ export default class extends TabulatorController {
     if (!json.Data) {
       showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener los documentos', message: json.Message || 'Error desconocido' });
       // Retornar formato válido para que Tabulator no quede en estado roto
+      this.#lastPageRowCount = 0;
       return { data: [], last_page: 1 };
     }
 
-    // Cantidades por estado (usadas por el modal de gráfico "Más Información")
-    this.#quantities = {};
-    (json.Data.DocumentQtyList || []).forEach(q => { this.#quantities[q.Status] = q.Quantity; });
+    const docs = (json.Data.Items || []).map(d => this.#mapDocument(d, docType));
+    this.#lastPageRowCount = docs.length;
 
-    // Mapear documentos
-    const docs = (json.Data.DocumentList || []).map(d => this.#mapDocument(d));
-
-    // MaxQtyRowsFetch viene en cada fila con el total real de registros. Si la página pedida
-    // queda fuera de rango (DocumentList vacío) no hay MaxQtyRowsFetch; en ese caso derivamos
-    // el total de DocumentQtyList (suma por estado) para no reportar last_page=1 ni colapsar
-    // la tabla a "1 página vacía" cuando aún quedan registros en otras páginas.
-    const qtyTotal = Object.values(this.#quantities).reduce((sum, q) => sum + (q || 0), 0);
-    const total    = docs[0]?.MaxQtyRowsFetch || qtyTotal || 0;
-    this.#totalRecords = total;
-    const lastPage = Math.max(1, Math.ceil(total / pageSize));
-
-    if (docs.length > 0) this.btnChartTarget.classList.remove('hidden');
+    // Sin un total real (ver cabecera del archivo), `last_page` es "esta página
+    // + 1" cuando SAP avisó que hay más, o la página actual cuando no —
+    // suficiente para que el botón "Siguiente" de Tabulator se habilite o no.
+    const lastPage = json.Data.HasMore ? page + 1 : page;
 
     showToast('Documentos obtenidos correctamente!', 'success');
 
@@ -264,14 +267,30 @@ export default class extends TabulatorController {
     return { data: docs, last_page: lastPage };
   }
 
-  #mapDocument(doc) {
+  // `doc` trae los campos crudos de SAP (`DocEntry`, `DocNum`, `CardName`,
+  // `DocCurrency`, `DocTotal`, `U_CL_FEC_*`) — se traducen acá a los nombres que
+  // usan las columnas de la tabla. `docType` es el filtro con el que se buscó
+  // (SAP no lo devuelve en la fila): se estampa para que el dropdown de
+  // acciones pueda decidir según tipo (ej. "Anulación Interna" solo en FEC).
+  //
+  // `Id` queda como alias de `DocEntry` — las acciones por fila (PDF, XML,
+  // reprocesar, …) siguen sin migrar y esperan un `Id` que ya no existe en un
+  // resultado que viene de SAP (ver cabecera del archivo).
+  #mapDocument(doc, docType) {
     return {
-      ...doc,
-      CodigoMoneda:    this.#normalizeCurrency(doc.CodigoMoneda),
-      TotalComprobante: this.#normalizeCurrency(doc.CodigoMoneda) +
-                        Number(doc.TotalComprobante).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,'),
-      StatusForTable:  this.#statusLabel(doc.Status),
-      FechaFact:       this.#formatDate(doc.FechaFact),
+      Id: doc.DocEntry,
+      DocType: docType,
+      NumeroConsecutivo: doc.U_CL_FEC_NumConsecutivo,
+      Consecutivo: doc.DocNum,
+      RcprNombre: doc.CardName,
+      Clave: doc.U_CL_FEC_Clave,
+      ErrDetails: doc.U_CL_FEC_ErrorDetails,
+      Status: doc.U_CL_FEC_Status,
+      StatusForTable: this.#statusLabel(doc.U_CL_FEC_Status),
+      FechaFact: this.#formatDate(doc.U_CL_FEC_FechaEmision),
+      FechaEmision: doc.U_CL_FEC_FechaEmision,
+      TotalComprobante: this.#normalizeCurrency(doc.DocCurrency) +
+                        Number(doc.DocTotal || 0).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,'),
     };
   }
 
@@ -284,16 +303,18 @@ export default class extends TabulatorController {
 
   // ── Formatters ────────────────────────────────────────────────────────────
 
-  /** Devuelve texto del estado para mostrar en la tabla como badge */
+  // Devuelve texto del estado para mostrar en la tabla como badge. Los códigos
+  // son los de `U_CL_FEC_Status` (el UDF que escribe la sincronización de
+  // emitidos — `config/sap_schemas/marketing_documents.json`,
+  // `db/external/sql_server/schema.sql` StatusCodes), NO los del `.NET` legacy
+  // (que numeraba 1=Aceptado..7=Anulado): esos dos catálogos no coinciden.
   #statusLabel(status) {
     const map = {
-      1: { label: 'Aceptado',    bg: '#e8f5ee', color: '#3a7d52' },
-      2: { label: 'Procesando',  bg: '#e8f0fe', color: '#1a56db' },
-      3: { label: 'En Hacienda', bg: '#e8f0fe', color: '#1a56db' },
-      4: { label: 'Rechazado',   bg: '#fdecea', color: '#c0392b' },
-      5: { label: 'Error',       bg: '#fffbeb', color: '#b45309' },
-      6: { label: 'Reprocesar',  bg: '#e8f0fe', color: '#1a56db' },
-      7: { label: 'Anulado',     bg: '#fdecea', color: '#c0392b' },
+      0: { label: 'Pendiente', bg: '#fffbeb', color: '#b45309' },
+      3: { label: 'Enviado',   bg: '#e8f0fe', color: '#1a56db' },
+      4: { label: 'Error',     bg: '#fdecea', color: '#c0392b' },
+      6: { label: 'Aceptado',  bg: '#e8f5ee', color: '#3a7d52' },
+      7: { label: 'Rechazado', bg: '#fef2f2', color: '#991b1b' },
     };
     return map[status] ? { ...map[status], status } : { label: 'N/A', bg: '#f3f4f6', color: '#6b7280', status };
   }
@@ -334,37 +355,41 @@ export default class extends TabulatorController {
       { label: 'Ver PDF',               icon: 'picture_as_pdf', action: 'view-pdf'     },
       { label: 'Descargar PDF',         icon: 'download',       action: 'download-pdf' },
       {
+        // Códigos de `U_CL_FEC_Status`: 6 Aceptado, 7 Rechazado (ver #statusLabel).
         label: 'Ver XML (Resp Hacienda)', icon: 'terminal', action: 'view-xml',
-        disabled: row.Status !== 1 && row.Status !== 4,
+        disabled: row.Status !== 6 && row.Status !== 7,
         disabledReason: 'Solo disponible para documentos en estado Aceptado o Rechazado',
       },
       {
         label: 'Descargar XML (Resp Hacienda)', icon: 'download', action: 'download-xml',
-        disabled: row.Status !== 1 && row.Status !== 4,
+        disabled: row.Status !== 6 && row.Status !== 7,
         disabledReason: 'Solo disponible para documentos en estado Aceptado o Rechazado',
       },
       {
         label: 'Descargar Doc XML', icon: 'description', action: 'download-doc-xml',
-        disabled: row.Status === 5,
+        disabled: row.Status === 4,
         disabledReason: 'No disponible para documentos en estado Error',
       },
       { label: 'Correos',               icon: 'mail',     action: 'emails' },
       { label: 'Consultar Información', icon: 'info',     action: 'info'   },
       {
         label: 'Omitir Validaciones', icon: 'lock_open', action: 'skip-validations',
-        disabled: row.Status !== 5,
+        disabled: row.Status !== 4,
         disabledReason: 'Solo disponible para documentos en estado Error',
       },
       {
+        // `U_CL_FEC_Status` no tiene un código de "anulado internamente" (solo
+        // Pendiente/Enviado/Error/Aceptado/Rechazado) — a diferencia del enum
+        // legacy, que sí lo tenía. Sin esa marca no se puede saber acá si ya
+        // se anuló antes; queda pendiente junto con la migración de la acción
+        // (`TODOS.md` → Emisión de documentos).
         label: 'Anulación Interna', icon: 'cancel', action: 'internal-cancel',
-        disabled: row.Status === 7 || row.DocType !== '08',
-        disabledReason: row.Status === 7
-          ? 'El documento ya se encuentra anulado'
-          : 'Solo disponible para documentos de tipo FEC (08)',
+        disabled: row.DocType !== '08',
+        disabledReason: 'Solo disponible para documentos de tipo FEC (08)',
       },
       {
         label: 'Reprocesar', icon: 'autorenew', action: 'reprocess',
-        disabled: row.Status !== 4,
+        disabled: row.Status !== 7,
         disabledReason: 'Solo disponible para documentos en estado Rechazado',
       },
     ];
@@ -518,7 +543,8 @@ export default class extends TabulatorController {
   }
 
   async #internalCancel(row) {
-    const statusLabels = { 1: 'Aceptado', 2: 'Procesando', 3: 'En Hacienda', 4: 'Rechazado', 5: 'Error', 7: 'Anulada Interna' };
+    // Códigos de `U_CL_FEC_Status` — ver #statusLabel.
+    const statusLabels = { 0: 'Pendiente', 3: 'Enviado', 4: 'Error', 6: 'Aceptado', 7: 'Rechazado' };
     const statusText = statusLabels[row.Status] || 'Desconocido';
 
     const confirmed = await confirm('¿Está seguro que desea continuar?', `Esta acción anulará de manera interna la FEC bajo su propia responsabilidad, la cuál se encuentra en estado: ${statusText}`);
@@ -940,7 +966,7 @@ export default class extends TabulatorController {
     }
 
     this.infoErrorHaciendaSectionTarget.classList.add('hidden');
-    if (row.Status === 4) {
+    if (row.Status === 7) { // Rechazado (`U_CL_FEC_Status`) — ver #statusLabel
       try {
         const json = await this.#apiFetch(`/api/Documents/issued/${row.Id}/xml-response-message`);
         if (json.Data?.HrRespuestaXml) {

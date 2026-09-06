@@ -162,6 +162,11 @@ Rails.application.routes.draw do
     resources :external_db_health_checks, only: [:create]
 
     put 'session/company', to: 'sessions#update_company'
+
+    # Búsqueda de documentos emitidos, en vivo contra SAP Service Layer.
+    # Reemplaza GET /api/documents del .NET — que en realidad consultaba la base
+    # propia de la app, no SAP (ver `Api::DocumentsController`).
+    resources :documents, only: [:index]
   end
 
   # Todo lo que no migró todavía sigue reenviándose al backend .NET.

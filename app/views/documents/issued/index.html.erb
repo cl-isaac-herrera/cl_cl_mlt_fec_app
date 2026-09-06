@@ -58,15 +58,17 @@
       <%# Estado %>
       <div class="flex flex-col gap-1">
         <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Estado</label>
+        <%# Códigos de `U_CL_FEC_Status` (el UDF que escribe la sincronización de
+            emitidos) — NO los del legacy .NET, que numeraba distinto. %>
         <select data-documents-issued-target="selectStatus"
                 data-testid="select-status"
                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-          <option value="1">Aceptado</option>
-          <option value="2">Procesando</option>
-          <option value="3">En Hacienda</option>
-          <option value="4">Rechazado</option>
-          <option value="5">Error</option>
-          <option value="99" selected>Todos</option>
+          <option value="" selected>Todos</option>
+          <option value="0">Pendiente</option>
+          <option value="3">Enviado</option>
+          <option value="4">Error</option>
+          <option value="6">Aceptado</option>
+          <option value="7">Rechazado</option>
         </select>
       </div>
 

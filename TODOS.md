@@ -1408,6 +1408,52 @@ del 2 % coherente con su `CodigoTarifaIVA` `03`.
 
 ---
 
+## Documentos emitidos — pantalla de consulta (`/documents/issued`)
+
+`GET /api/documents` (`Api::DocumentsController` + `Sap::IssuedDocumentsSearch`) migró la
+BÚSQUEDA/listado: consulta en vivo el catálogo `getDocuments01`..`10` de `sl_resources`
+(SAP es la fuente de verdad; `DocumentsQueue`, §37, queda para el historial de reintentos,
+no para este listado — decisión del 2026-09-05). Lo que sigue sin migrar:
+
+- [ ] **Las acciones por fila siguen pegándole al proxy .NET con un `Id` que ya no
+      existe.** Ver/Descargar PDF (`/api/Report/*InvoicePDF`), Ver/Descargar XML Hacienda
+      y Descargar Doc XML (`/api/Documents/*XML*`), Correos (`/api/Email/*`), Omitir
+      Validaciones y Anulación Interna (`/api/Documents` PATCH), Reprocesar
+      (`/api/Documents/:id/Reprocess`, servidor `ApiFEUrl`) y Descarga Masiva
+      (`/api/Report/BulkDownloadOfDocuments`). Todas asumían un `Id` de la base local del
+      .NET (`spGetDocuments`); el listado nuevo viene de SAP y solo puede ofrecer
+      `DocEntry` (`documents_issued_controller.js#mapDocument` lo estampa como `Id` de
+      paso, para que el código no reciba `undefined`, pero ningún backend nativo lo
+      resuelve todavía).
+      **Pendiente:** una migración por acción (o por grupo), decidiendo primero si cada
+      una se resuelve por `DocEntry`+`DocType` contra SAP o necesita datos que hoy solo
+      tiene el .NET (el PDF sale de un Crystal Report, el XML/envío a Hacienda depende del
+      paso 4 de "Emisión de documentos" más arriba, que tampoco existe todavía).
+
+- [ ] **El gráfico "Más Información" se quedó sin datos.** Dependía de
+      `DocumentQtyList` (conteo por estado que calculaba `spGetDocuments`); SAP no expone
+      un conteo así de una vez y armar uno propio (una consulta por estado, con el mismo
+      límite de 20 filas por respuesta) no se hizo en esta migración. El botón queda
+      oculto (`documents_issued_controller.js`, `#quantities` permanece vacío a
+      propósito) — **pendiente:** decidir si vale la pena reconstruirlo (varias consultas
+      a SAP en paralelo) o retirarlo del todo.
+
+- [ ] **"Anulación Interna" perdió su forma de saber si el documento ya está anulado.**
+      El enum legacy tenía un código 7=Anulado; `U_CL_FEC_Status` (el que escribe la
+      sincronización de emitidos) solo tiene Pendiente(0)/Enviado(3)/Error(4)/Aceptado(6)/
+      Rechazado(7) — ningún código para "anulado internamente". Hoy el botón solo se
+      deshabilita si el tipo no es FEC (`08`); nunca detecta un anulado previo.
+      **Pendiente:** junto con la migración de la acción en sí (ver el primer punto),
+      decidir dónde vive esa marca — ¿un UDF nuevo?, ¿se infiere de otra forma?
+
+- [ ] **El filtro de "Tipo de Documento" pasó de ser un `$filter` a elegir el recurso.**
+      Cada tipo pega a una fila `getDocuments<tipo>` distinta del catálogo — ya no hay
+      forma de traer "todos los tipos" en una sola consulta como hacía `spGetDocuments`.
+      Es una limitación conocida y aceptada (`db/seeds.rb` sección 5, comentario de
+      `SL_RESOURCES_DOCUMENT_QUERIES`), no un olvido — se documenta acá para que quien
+      toque la pantalla no intente "arreglar" el select para que admita blanco/todos sin
+      antes leer esa nota.
+
 ## Base de documentos — conector ODBC (`ExternalDb`)
 
 Conector a la base externa de documentos, que según la instalación corre sobre SQL

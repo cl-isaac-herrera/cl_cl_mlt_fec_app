@@ -611,6 +611,23 @@ SL_RESOURCES_STATUS_UPDATES = [
 # mentira: por más que el llamador pida `$top=999`, SAP corta en 20 igual.
 # Quien construya el listado tiene que paginar de a 20 filas o menos por
 # request hasta que el submódulo agregue el header.
+#
+# ⚠️ El `$select` de acá abajo es el de referencia, NO necesariamente el que
+# corre en una instalación real: `Invoices` es compartido por FE/ND/TE/FEE
+# dentro de SAP, y lo único que distingue un subtipo de otro es la `Series` de
+# numeración — configurada por instalación (varía de un cliente a otro), así
+# que ese `$filter` se agrega directamente en la fila `sl_resources` de cada
+# instalación (pantalla de mantenimiento, `Configurations_SlResources_Update`),
+# NUNCA acá. `Sap::IssuedDocumentsSearch` (el consumidor) no conoce la `Series`:
+# solo agrega los filtros que sí varían por request (fechas, receptor, etc.) al
+# `$filter` que la fila ya trae.
+#
+# También conviene sumar al `$select` real, si el listado los va a mostrar:
+# `DocNum` (el "N° Ref" interno de SAP), `DocTotal` (el monto) y
+# `U_CL_FEC_ErrorDetails` (el detalle de error del panel de información) — acá
+# se dejaron fuera para no repetir columnas ya cubiertas por otras filas del
+# catálogo, pero `app/javascript/controllers/documents_issued_controller.js` sí
+# los necesita.
 SL_RESOURCES_DOCUMENT_QUERIES = [
   ['getDocuments01', 'Obtiene el listado paginado de facturas electrónicas desde SAP',
    'Invoices',
