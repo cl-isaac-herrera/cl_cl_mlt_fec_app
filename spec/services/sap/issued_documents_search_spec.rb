@@ -21,9 +21,12 @@ RSpec.describe Sap::IssuedDocumentsSearch do
     record
   end
 
+  # start_date/end_date son obligatorios (`InvalidDateRange` si faltan): se
+  # dan por defecto acá para que los tests que no ponen a prueba la fecha no
+  # tengan que repetirlos, y se pisan con `filters:` cuando sí importan.
   def search(doc_type: DocType::FE, page: 1, per_page: 10, filters: {})
     described_class.new(doc_type: doc_type, client: client, page: page, per_page: per_page,
-                        filters: filters).call
+                        filters: { start_date: '2026-01-01', end_date: '2026-01-31' }.merge(filters)).call
   end
 
   before { allow(client).to receive(:get).and_return([]) }
@@ -87,16 +90,35 @@ RSpec.describe Sap::IssuedDocumentsSearch do
     end
   end
 
-  describe 'filtros del request' do
+  describe 'rango de fechas (DocDate) — obligatorio' do
     before { create_resource('getDocuments01', 'Invoices', filter: 'Series eq 72') }
 
-    it 'combina el filtro de fecha con AND, sin pisar el de Series' do
+    it 'filtra DocDate con literal datetime, combinado con el Series del catálogo' do
       search(filters: { start_date: '2026-09-01', end_date: '2026-09-05' })
 
       expect(client).to have_received(:get).with(
-        /Series eq 72\) and U_CL_FEC_FechaEmision ge '2026-09-01' and U_CL_FEC_FechaEmision le '2026-09-05T23:59:59'/
+        /Series eq 72\) and DocDate ge datetime'2026-09-01T00:00:00' and DocDate le datetime'2026-09-05T23:59:59'/
       )
     end
+
+    it 'levanta InvalidDateRange si falta start_date' do
+      expect { search(filters: { start_date: nil, end_date: '2026-09-05' }) }
+        .to raise_error(described_class::InvalidDateRange, /fecha de inicio/)
+    end
+
+    it 'levanta InvalidDateRange si falta end_date' do
+      expect { search(filters: { start_date: '2026-09-01', end_date: nil }) }
+        .to raise_error(described_class::InvalidDateRange, /fecha de inicio/)
+    end
+
+    it 'levanta InvalidDateRange si el formato no es AAAA-MM-DD' do
+      expect { search(filters: { start_date: '01/09/2026', end_date: '2026-09-05' }) }
+        .to raise_error(described_class::InvalidDateRange, /formato/)
+    end
+  end
+
+  describe 'filtros del request' do
+    before { create_resource('getDocuments01', 'Invoices', filter: 'Series eq 72') }
 
     it 'usa contains para texto libre' do
       search(filters: { receptor: "O'Brien" })
@@ -104,10 +126,19 @@ RSpec.describe Sap::IssuedDocumentsSearch do
       expect(client).to have_received(:get).with(/contains\(CardName,'O''Brien'\)/)
     end
 
+    # La cédula del receptor se filtra por `FederalTaxID` (el campo del
+    # documento), no por `CardCode` (el código interno del socio de negocio en
+    # SAP) — son datos distintos y el segundo nunca coincide con una cédula.
+    it 'filtra la cédula por FederalTaxID, no por CardCode' do
+      search(filters: { cedula: '3101822733' })
+
+      expect(client).to have_received(:get).with(/contains\(FederalTaxID,'3101822733'\)/)
+    end
+
     it 'ignora un status no numérico' do
       search(filters: { status: 'todos' })
 
-      expect(client).to have_received(:get).with(/Invoices\?\$select=.*Series eq 72\)&\$top=/)
+      expect(client).not_to have_received(:get).with(/U_CL_FEC_Status eq/)
     end
 
     it 'filtra por status cuando es numérico' do
@@ -116,10 +147,18 @@ RSpec.describe Sap::IssuedDocumentsSearch do
       expect(client).to have_received(:get).with(/U_CL_FEC_Status eq 4/)
     end
 
-    it 'no agrega ninguna condición cuando no hay filtros' do
+    it 'no agrega ninguna condición opcional cuando solo llegan las fechas (obligatorias)' do
+      captured_path = nil
+      allow(client).to receive(:get) { |path|
+        captured_path = path
+        []
+      }
+
       search
 
-      expect(client).to have_received(:get).with(/Invoices\?\$select=.*Series eq 72\)&\$top=/)
+      expect(captured_path).to match(/Invoices\?\$select=.*Series eq 72\) and DocDate ge datetime'2026-01-01T00:00:00'/)
+      expect(captured_path).to match(/DocDate le datetime'2026-01-31T23:59:59'&\$top=/)
+      expect(captured_path).not_to match(/contains\(|U_CL_FEC_Status eq/)
     end
   end
 end

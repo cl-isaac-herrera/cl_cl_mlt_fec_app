@@ -20,6 +20,12 @@ RSpec.describe 'GET /api/documents', type: :request do
   def body      = JSON.parse(response.body)
   def body_data = body['Data']
 
+  # start_date/end_date son obligatorios (filtran DocDate) — se dan por
+  # defecto acá para no repetirlos en cada `it` que no los pone a prueba.
+  def get_documents(params = {})
+    get '/api/documents', params: { start_date: '2026-01-01', end_date: '2026-01-31' }.merge(params)
+  end
+
   before do
     SlResource.unscoped.find_or_initialize_by(code: 'getDocuments01').tap do |r|
       r.update!(resource: 'Invoices',
@@ -31,14 +37,14 @@ RSpec.describe 'GET /api/documents', type: :request do
 
   describe 'autorización' do
     it 'responde 401 sin sesión' do
-      get '/api/documents', params: { doc_type: '01' }
+      get_documents(doc_type: '01')
 
       expect(response).to have_http_status(:unauthorized)
     end
 
     it 'exige Documents_Issued_ViewDocuments' do
       sign_in_with('Documents_Issued_ViewDocuments_Otro')
-      get '/api/documents', params: { doc_type: '01' }
+      get_documents(doc_type: '01')
 
       expect(response).to have_http_status(:forbidden)
     end
@@ -50,7 +56,7 @@ RSpec.describe 'GET /api/documents', type: :request do
     it 'devuelve los documentos que trae SAP, sin un Total (no hay forma honesta de calcularlo)' do
       allow(client).to receive(:get).and_return([{ 'DocEntry' => 1, 'CardName' => 'ACME' }])
 
-      get '/api/documents', params: { doc_type: '01' }
+      get_documents(doc_type: '01')
 
       expect(response).to have_http_status(:ok)
       expect(body_data['Items']).to eq([{ 'DocEntry' => 1, 'CardName' => 'ACME' }])
@@ -63,29 +69,43 @@ RSpec.describe 'GET /api/documents', type: :request do
         [{ 'DocEntry' => 1 }, { 'DocEntry' => 2 }, { 'DocEntry' => 3 }]
       )
 
-      get '/api/documents', params: { doc_type: '01', per_page: 2 }
+      get_documents(doc_type: '01', per_page: 2)
 
       expect(body_data['Items'].size).to eq(2)
       expect(body_data['HasMore']).to be(true)
     end
 
     it 'rechaza un tipo de documento inválido' do
-      get '/api/documents', params: { doc_type: 'XX' }
+      get_documents(doc_type: 'XX')
 
       expect(response).to have_http_status(:unprocessable_content)
     end
 
     it 'rechaza un mensaje de receptor (no es un documento consultable acá)' do
-      get '/api/documents', params: { doc_type: '05' }
+      get_documents(doc_type: '05')
 
       expect(response).to have_http_status(:unprocessable_content)
+    end
+
+    it 'rechaza la búsqueda sin fecha de inicio o final — son obligatorias' do
+      get '/api/documents', params: { doc_type: '01', end_date: '2026-01-31' }
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to match(/fecha de inicio/)
+    end
+
+    it 'rechaza una fecha con formato distinto de AAAA-MM-DD' do
+      get_documents(doc_type: '01', start_date: '01/01/2026')
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to match(/formato/)
     end
 
     it 'responde con un error claro si la compañía no tiene SAP configurado' do
       allow(Sap::CompanyClient).to receive(:for)
         .and_raise(Sap::CompanyClient::MissingConfiguration, 'ACME no tiene una conexión de SAP asignada.')
 
-      get '/api/documents', params: { doc_type: '01' }
+      get_documents(doc_type: '01')
 
       expect(response).to have_http_status(:unprocessable_content)
       expect(body['Message']).to eq('ACME no tiene una conexión de SAP asignada.')
@@ -96,7 +116,7 @@ RSpec.describe 'GET /api/documents', type: :request do
         Clavisco::ServiceLayer::Client::ServiceLayerError.new('SL error: boom', sap_message: 'Sesión inválida')
       )
 
-      get '/api/documents', params: { doc_type: '01' }
+      get_documents(doc_type: '01')
 
       expect(response).to have_http_status(:bad_gateway)
       expect(body['Message']).to eq('Sesión inválida')

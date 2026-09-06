@@ -57,7 +57,8 @@ module Api
       ).call
 
       render json: ApiResponse.success({ Items: result.items, HasMore: result.has_more }).to_h
-    rescue Sap::CompanyClient::MissingConfiguration, Sap::IssuedDocumentsSearch::UnsupportedDocType => e
+    rescue Sap::CompanyClient::MissingConfiguration, Sap::IssuedDocumentsSearch::UnsupportedDocType,
+           Sap::IssuedDocumentsSearch::InvalidDateRange => e
       render json: ApiResponse.error(e.message).to_h, status: :unprocessable_content
     rescue Clavisco::ServiceLayer::Client::ServiceLayerError => e
       render json: ApiResponse.error(e.sap_message || e.message).to_h, status: :bad_gateway

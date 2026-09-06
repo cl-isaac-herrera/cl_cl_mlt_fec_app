@@ -10,7 +10,7 @@ module Sap
   #
   #   result = Sap::IssuedDocumentsSearch.new(
   #     doc_type: DocType::FE, client: client, page: 1, per_page: 10,
-  #     filters: { start_date: '2026-09-01', receptor: 'ACME' }
+  #     filters: { start_date: '2026-09-01', end_date: '2026-09-05', receptor: 'ACME' }
   #   ).call
   #   result.items    # => [{ 'DocEntry' => 25, 'CardName' => 'ACME S.A.', ... }, ...]
   #   result.has_more # => true/false
@@ -42,6 +42,14 @@ module Sap
     # de los 7 que `DocType` admite para esto, o la fila fue dada de baja).
     class UnsupportedDocType < StandardError; end
 
+    # `start_date`/`end_date` faltan o no tienen forma `AAAA-MM-DD`. A
+    # diferencia del resto de los filtros (opcionales), estos dos son
+    # OBLIGATORIOS: toda búsqueda filtra por rango de `DocDate`, nunca "todas
+    # las fechas" — es la misma restricción que ya traía el `WHERE DocDate >=`
+    # fijo de la vista legacy (`view.txt`), pero con el rango a cargo de quien
+    # busca en vez de una fecha de corte fija en la consulta.
+    class InvalidDateRange < StandardError; end
+
     MAX_PAGE_SIZE = 19
 
     Result = Struct.new(:items, :has_more, keyword_init: true)
@@ -50,9 +58,9 @@ module Sap
     # @param client [Clavisco::ServiceLayer::Client]
     # @param page [Integer] 1-indexado.
     # @param per_page [Integer] se acota a `MAX_PAGE_SIZE`.
-    # @param filters [Hash] `:start_date, :end_date, :status, :consecutivo,
-    #   :consecutivo_fe, :receptor, :cedula, :clave, :codigo_moneda` — todos
-    #   opcionales.
+    # @param filters [Hash] `:start_date, :end_date` (`AAAA-MM-DD`, OBLIGATORIOS
+    #   — filtran `DocDate`) + `:status, :consecutivo, :consecutivo_fe,
+    #   :receptor, :cedula, :clave, :codigo_moneda` (opcionales).
     def initialize(doc_type:, client:, page: 1, per_page: 10, filters: {})
       @doc_type = doc_type
       @client   = client
@@ -92,7 +100,7 @@ module Sap
     def extra_filter
       [
         date_range,
-        text_contains('CardCode', filters[:cedula]),
+        text_contains('FederalTaxID', filters[:cedula]),
         text_contains('DocCurrency', filters[:codigo_moneda]),
         text_contains('U_CL_FEC_Clave', filters[:clave]),
         text_contains('CardName', filters[:receptor]),
@@ -102,17 +110,36 @@ module Sap
       ].compact.join(' and ')
     end
 
-    # `U_CL_FEC_FechaEmision` es `db_Alpha` (texto ISO 8601), no una fecha nativa
-    # de SAP — comparar como string funciona porque ISO 8601 ordena igual
-    # lexicográfico que cronológico. Ver `config/sap_schemas/marketing_documents.json`.
+    # Formato exigido a `start_date`/`end_date`: `AAAA-MM-DD`, lo único que
+    # manda el `<input type="date">` de la vista. No se acepta nada más ancho
+    # para no tener que sanitizar un literal `datetime'...'` con datos libres.
+    DATE_FORMAT = /\A\d{4}-\d{2}-\d{2}\z/
+
+    # `DocDate` es una fecha NATIVA de SAP (`Edm.DateTime`), a diferencia de
+    # `U_CL_FEC_FechaEmision` (`db_Alpha`, texto): el literal OData va con el
+    # prefijo `datetime'…'`, comillas simples no alcanzan. Filtra por la fecha
+    # del documento en SAP, no por la fecha de emisión ante Hacienda —son datos
+    # distintos y el legacy (`view.txt`) también filtraba `DocDate`.
+    #
+    # Siempre presente: a diferencia de los demás filtros, `start_date`/
+    # `end_date` son obligatorios (levanta `InvalidDateRange` si faltan o no
+    # tienen el formato esperado) — nunca se busca sin acotar por fecha.
     def date_range
-      conditions = []
-      conditions << "U_CL_FEC_FechaEmision ge #{quote(filters[:start_date])}" if filters[:start_date].present?
-      # `le` con solo la fecha excluiría cualquier hora del día final (ISO ordena
-      # '2026-09-05T10:00:00' como MAYOR que '2026-09-05'): se completa con el
-      # último instante del día para incluirlo entero.
-      conditions << "U_CL_FEC_FechaEmision le #{quote("#{filters[:end_date]}T23:59:59")}" if filters[:end_date].present?
-      conditions.presence&.join(' and ')
+      start_date = filters[:start_date]
+      end_date   = filters[:end_date]
+
+      if start_date.blank? || end_date.blank?
+        raise InvalidDateRange, 'Debe indicar la fecha de inicio y la fecha final.'
+      end
+
+      unless start_date.match?(DATE_FORMAT) && end_date.match?(DATE_FORMAT)
+        raise InvalidDateRange, 'La fecha de inicio y la fecha final deben tener el formato AAAA-MM-DD.'
+      end
+
+      # `le` con la medianoche del día final excluiría cualquier documento
+      # creado más tarde ese mismo día: se completa con el último instante
+      # para incluirlo entero.
+      "DocDate ge datetime'#{start_date}T00:00:00' and DocDate le datetime'#{end_date}T23:59:59'"
     end
 
     def text_contains(field, value)
