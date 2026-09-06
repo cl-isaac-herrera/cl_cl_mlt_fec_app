@@ -108,6 +108,18 @@ RSpec.describe Azure::BlobStorage do
 
       expect { upload }.to raise_error(described_class::TransientError, /No se pudo contactar/)
     end
+
+    it 'un contenedor inexistente NO es transitorio' do
+      stub_put(status: 404)
+
+      expect { upload }.to raise_error(described_class::RejectedError, /rechazó la subida/)
+    end
+
+    it 'un 400 tampoco es transitorio' do
+      stub_put(status: 400)
+
+      expect { upload }.to raise_error(described_class::RejectedError)
+    end
   end
 
   describe 'instalación a medio configurar' do

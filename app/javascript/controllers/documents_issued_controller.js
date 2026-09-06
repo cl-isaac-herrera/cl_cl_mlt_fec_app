@@ -46,8 +46,9 @@ export default class extends TabulatorController {
 
     // Panel lateral info
     'infoModal', 'infoPanelBackdrop', 'infoClave', 'copyTooltip', 'infoFechaEmision',
-    'infoErrorSection', 'infoError',
+    'infoErrorSection', 'infoError', 'infoErrorChevron',
     'infoErrorHaciendaSection', 'infoErrorHacienda',
+    'infoAttemptsBody', 'infoAttemptsChevron',
 
     // Modal chart
     'chartModal', 'chartCanvas',
@@ -87,6 +88,13 @@ export default class extends TabulatorController {
 
   /** Id del documento activo en el modal de correos */
   #activeEmailDocId = null;
+
+  /**
+   * DocEntry del documento activo en el panel "Información del documento".
+   * `#loadAttempts` lo compara al terminar: si el usuario ya abrió el panel de
+   * otro documento, la respuesta vieja no debe pisar el contenido nuevo.
+   */
+  #activeInfoDocId = null;
 
   /** Gráfico (Chart.js) */
   #chart = null;
@@ -960,8 +968,23 @@ export default class extends TabulatorController {
   // ── Panel lateral Información ─────────────────────────────────────────────
 
   async #openInfoModal(row) {
+    this.#activeInfoDocId = row.Id;
+
     this.infoClaveTarget.textContent        = row.Clave || '';
     this.infoFechaEmisionTarget.textContent = this.#formatDateTime(row.FechaEmision);
+
+    // "Error interno" — expandida por defecto en cada apertura (§ ver
+    // #toggleErrorSection); el usuario puede colapsarla, pero cada documento
+    // nuevo arranca igual.
+    this.infoErrorTarget.classList.remove('hidden');
+    this.infoErrorChevronTarget.textContent = 'expand_less';
+
+    // "Detalles de intentos" — colapsada por defecto. Arranca acá, ANTES del
+    // await de Hacienda de abajo, para que la consulta corra en segundo plano
+    // mientras el resto del panel termina de armarse (no bloquea la apertura).
+    this.infoAttemptsBodyTarget.classList.add('hidden');
+    this.infoAttemptsChevronTarget.textContent = 'expand_more';
+    this.#loadAttempts(row);
 
     // `U_CL_FEC_ErrorDetails` mezcla dos cosas en un solo campo: el texto
     // técnico propio (antes de "[") y, cuando Hacienda rechaza, el array con
@@ -991,6 +1014,103 @@ export default class extends TabulatorController {
     this.infoPanelBackdropTarget.classList.remove('hidden');
     this.infoModalTarget.classList.remove('translate-x-full');
     document.body.style.overflow = 'hidden';
+  }
+
+  toggleErrorSection() {
+    const collapsed = this.infoErrorTarget.classList.toggle('hidden');
+    this.infoErrorChevronTarget.textContent = collapsed ? 'expand_more' : 'expand_less';
+  }
+
+  toggleAttemptsSection() {
+    const collapsed = this.infoAttemptsBodyTarget.classList.toggle('hidden');
+    this.infoAttemptsChevronTarget.textContent = collapsed ? 'expand_more' : 'expand_less';
+  }
+
+  // Expandir/colapsar el detalle de UNA tarjeta de intento (ver #renderAttempts).
+  // El botón es siempre el hermano siguiente del <p> que recorta: no hace
+  // falta buscar por id porque las tarjetas se arman todas del mismo molde.
+  toggleAttemptDetail(event) {
+    const button = event.currentTarget;
+    const paragraph = button.previousElementSibling;
+    const collapsed = paragraph.classList.toggle('line-clamp-3');
+    button.textContent = collapsed ? 'Ver más' : 'Ver menos';
+  }
+
+  // Consulta el historial de intentos de la cola propia (§37) en segundo
+  // plano. La sección arranca colapsada; el loader queda escrito en el body
+  // desde ya, así que si el usuario la expande antes de que esto responda, lo
+  // único que hay que mostrar es ese loader — no hace falta coordinar con
+  // #toggleAttemptsSection.
+  async #loadAttempts(row) {
+    this.infoAttemptsBodyTarget.innerHTML = this.#attemptsLoaderHtml();
+
+    try {
+      const json = await this.#apiFetch(`/api/documents/${row.Id}/attempts?doc_type=${encodeURIComponent(row.DocType)}`);
+      if (this.#activeInfoDocId !== row.Id) return; // el usuario ya abrió otro documento
+
+      const items = json.Data?.Items || [];
+      this.infoAttemptsBodyTarget.innerHTML = items.length
+        ? this.#renderAttempts(items)
+        : '<p class="text-sm text-gray-400 text-center py-6">No hay intentos registrados</p>';
+    } catch (err) {
+      if (this.#activeInfoDocId !== row.Id) return;
+
+      this.infoAttemptsBodyTarget.innerHTML =
+        `<p class="text-sm text-red-600 text-center py-6">${this.#escapeHtml(err.message || 'No se pudo consultar el historial de intentos.')}</p>`;
+    }
+  }
+
+  #attemptsLoaderHtml() {
+    return `
+      <div class="flex items-center justify-center gap-2 py-6 text-sm text-gray-500">
+        <svg class="animate-spin h-4 w-4 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        Cargando intentos...
+      </div>`;
+  }
+
+  // Una tarjeta por intento: fecha relativa arriba a la izquierda, estado como
+  // badge arriba a la derecha, y el detalle como cuerpo. El detalle se recorta
+  // a 3 líneas cuando es largo — un error con traza completa deformaba la
+  // tarjeta y arrastraba a las demás — con un "Ver más" para expandirlo.
+  #renderAttempts(items) {
+    return items.map((a) => {
+      const details = a.Details || 'Sin detalle';
+      const isLong = details.length > 160 || details.split('\n').length > 3;
+
+      return `
+        <div class="border border-gray-200 rounded-lg p-3">
+          <div class="flex items-start justify-between gap-2 mb-1.5">
+            ${this.#relativeDateSpan(a.CreatedAt, 'text-xs text-gray-500')}
+            ${this.#statusBadge(this.#attemptStatusLabel(a.StatusCode))}
+          </div>
+          <p class="text-sm text-gray-700 whitespace-pre-wrap break-words${isLong ? ' line-clamp-3' : ''}">${this.#escapeHtml(details)}</p>
+          ${isLong ? `
+            <button type="button"
+                    data-action="click->documents-issued#toggleAttemptDetail"
+                    class="mt-1 text-xs font-medium text-blue-600 hover:text-blue-700 cursor-pointer">
+              Ver más
+            </button>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Códigos de `dbo.StatusCodes` (base de la cola, `db/external/sql_server/schema.sql`)
+  // — catálogo distinto del `U_CL_FEC_Status` de `#statusLabel`: acá SÍ existe
+  // el estado intermedio "Procesando" (2).
+  #attemptStatusLabel(code) {
+    const map = {
+      0: { label: 'Pendiente',  bg: '#fffbeb', color: '#b45309' },
+      2: { label: 'Procesando', bg: '#f5f3ff', color: '#6d28d9' },
+      3: { label: 'Enviado',    bg: '#e8f0fe', color: '#1a56db' },
+      4: { label: 'Error',      bg: '#fdecea', color: '#c0392b' },
+      6: { label: 'Aceptado',   bg: '#e8f5ee', color: '#3a7d52' },
+      7: { label: 'Rechazado',  bg: '#fef2f2', color: '#991b1b' },
+    };
+    return map[code] || { label: 'N/A', bg: '#f3f4f6', color: '#6b7280' };
   }
 
   async copyClave() {

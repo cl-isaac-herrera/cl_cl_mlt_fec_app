@@ -34,6 +34,13 @@ module Azure
     # error del llamador.
     class TransientError < Error; end
 
+    # Azure rechazó la subida por algo que un reintento igual a sí mismo NUNCA
+    # arregla — el contenedor no existe, el nombre de la cuenta está mal, la
+    # ruta es inválida. Reintentar esto para siempre (`TransientError`) deja el
+    # documento en `Processing` sin que nadie se entere de por qué nunca avanza
+    # (ver `SyncIssuedDocumentsJob#transient` vs. `#failed`).
+    class RejectedError < Error; end
+
     API_VERSION = '2021-08-06'
     BLOB_TYPE = 'BlockBlob'
 
@@ -53,7 +60,7 @@ module Azure
     # @return [String] la URL del blob (sin SAS — es el mismo formato que el
     #   legacy guardaba: `blobClient.Uri.AbsoluteUri`, de solo lectura para
     #   quien no tenga la clave de la cuenta).
-    # @raise [TransientError]
+    # @raise [TransientError, RejectedError]
     def upload(container:, path:, content:, content_type:)
       uri = blob_uri(container, path)
       date = Time.now.utc.httpdate
@@ -68,15 +75,25 @@ module Azure
 
       response = perform(uri, request)
 
-      raise TransientError, "Azure Storage rechazó la subida (#{describe(response)})." unless
-        response.is_a?(Net::HTTPSuccess)
+      return uri.to_s if response.is_a?(Net::HTTPSuccess)
 
-      uri.to_s
+      message = "Azure Storage rechazó la subida (#{describe(response)})."
+      raise TransientError, message if transient?(response)
+
+      raise RejectedError, message
     end
 
     private
 
     attr_reader :account, :key
+
+    # 5xx es Azure fallando; 403 es casi siempre reloj desincronizado (ver
+    # `TransientError`) y no un problema del contenedor o la ruta. El resto
+    # (404 "el contenedor no existe", 400, …) es una subida que este mismo
+    # request nunca va a lograr, sin importar cuántas veces se reintente.
+    def transient?(response)
+      response.is_a?(Net::HTTPServerError) || response.is_a?(Net::HTTPForbidden)
+    end
 
     def blob_uri(container, path)
       encoded_path = path.split('/').map { |segment| ERB::Util.url_encode(segment) }.join('/')

@@ -81,12 +81,22 @@ RSpec.describe Hacienda::Client do
       expect { send_document }.to raise_error(described_class::TransientError, /token vacío/)
     end
 
-    it 'no manda el comprobante si el token falló' do
+    # Un 401 al pedir el token es Hacienda diciendo que el usuario, la
+    # contraseña o el Client ID están mal — no algo que se arregle solo
+    # reintentando la misma credencial (a diferencia de un 401 en el ENVÍO,
+    # donde el token pudo vencer entre que se pidió y que se usó).
+    it 'un 401 al pedir el token no es transitorio: son credenciales inválidas' do
       stub_token(status: 401, body: '')
       stub_send(status: 202)
 
-      expect { send_document }.to raise_error(described_class::TransientError, /usuario y la contraseña/)
+      expect { send_document }.to raise_error(described_class::InvalidCredentials, /usuario y la contraseña/)
       expect(a_request(:post, 'https://api.test/recepcion/v1/recepcion')).not_to have_been_made
+    end
+
+    it 'un 5xx al pedir el token sí es transitorio' do
+      stub_token(status: 503, body: '')
+
+      expect { send_document }.to raise_error(described_class::TransientError, /usuario y la contraseña/)
     end
 
     # Un token por instancia y no uno por documento: el job crea un cliente por
@@ -178,6 +188,81 @@ RSpec.describe Hacienda::Client do
       stub_request(:post, 'https://api.test/recepcion/v1/recepcion').to_timeout
 
       expect { send_document }.to raise_error(described_class::TransientError, /No se pudo contactar/)
+    end
+  end
+
+  describe '#check_status' do
+    def check_status(clave: '5' * 50)
+      described_class.new(company).check_status(clave)
+    end
+
+    def stub_check(clave: '5' * 50, status:, body: nil, headers: {})
+      stub_request(:get, "https://api.test/recepcion/v1/recepcion/#{clave}")
+        .to_return(status: status, body: body, headers: headers)
+    end
+
+    it 'consulta la URL de verificación con la clave y el Bearer' do
+      stub_token
+      stub_check(status: 200, body: { fecha: '2026-09-06T10:00:00-06:00', 'ind-estado': 'procesando' }.to_json)
+
+      check_status
+
+      expect(a_request(:get, "https://api.test/recepcion/v1/recepcion/#{'5' * 50}")
+        .with(headers: { 'Authorization' => 'Bearer el-token' })).to have_been_made
+    end
+
+    # `recibido`/`procesando` (o cualquier otro valor) no son un desenlace: el
+    # llamador (`CheckSentDocumentsJob`) los trata igual, como "sigue en proceso".
+    it 'no está resuelto cuando Hacienda todavía no contesta un desenlace final' do
+      stub_token
+      stub_check(status: 200, body: { 'ind-estado': 'procesando' }.to_json)
+
+      result = check_status
+
+      expect(result).not_to be_resolved
+      expect(result.xml_base64).to be_nil
+    end
+
+    it 'está resuelto y aceptado, con el XML de respuesta, cuando Hacienda acepta' do
+      stub_token
+      stub_check(status: 200, body: { 'ind-estado': 'aceptado', 'respuesta-xml': 'PE1lbnNhamU+' }.to_json)
+
+      result = check_status
+
+      expect(result).to be_resolved
+      expect(result).to be_accepted
+      expect(result.xml_base64).to eq('PE1lbnNhamU+')
+    end
+
+    it 'está resuelto y NO aceptado, con el XML de respuesta, cuando Hacienda rechaza' do
+      stub_token
+      stub_check(status: 200, body: { 'ind-estado': 'rechazado', 'respuesta-xml': 'PE1lbnNhamU+' }.to_json)
+
+      result = check_status
+
+      expect(result).to be_resolved
+      expect(result).not_to be_accepted
+    end
+
+    it 'un HTTP que no es 2xx es transitorio, no un rechazo del documento' do
+      stub_token
+      stub_check(status: 404, headers: { 'X-Error-Cause' => 'No existe el recurso' })
+
+      expect { check_status }.to raise_error(described_class::TransientError, /No existe el recurso/)
+    end
+
+    it 'un timeout es transitorio' do
+      stub_token
+      stub_request(:get, "https://api.test/recepcion/v1/recepcion/#{'5' * 50}").to_timeout
+
+      expect { check_status }.to raise_error(described_class::TransientError, /No se pudo contactar/)
+    end
+
+    it 'una respuesta que no es JSON es transitoria' do
+      stub_token
+      stub_check(status: 200, body: 'no-es-json')
+
+      expect { check_status }.to raise_error(described_class::TransientError, /no es JSON/)
     end
   end
 

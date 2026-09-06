@@ -158,7 +158,8 @@ BEGIN
 		DocType,
 		SAPDB
 	FROM dbo.DocumentsQueue
-	WHERE UpdatedAt <= DATEADD(SECOND, 3, GETDATE())
+	WHERE StatusCode = 3 
+	AND UpdatedAt <= DATEADD(SECOND, 5, GETDATE());
 END
 GO
 /****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS]    Script Date: 6/9/2026 13:32:32 ******/
@@ -236,6 +237,7 @@ BEGIN
 	JOIN dbo.DocumentAttemptDetails docAttemps ON doc.Id = docAttemps.DocumentQueueId
 	WHERE doc.SAPDB = @SAPDB
 	AND doc.DocEntry = @DocEntry
-	AND doc.DocType = @DocType;
+	AND doc.DocType = @DocType
+	ORDER BY docAttemps.CreatedAt DESC;
 END
 GO

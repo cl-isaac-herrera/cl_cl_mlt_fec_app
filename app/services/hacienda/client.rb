@@ -33,11 +33,11 @@ module Hacienda
   #    alguna vez apareciera un 415 o un 400 sin causa, esto es lo primero que
   #    hay que mirar.
   #
-  # ── Lo que NO hace ──────────────────────────────────────────────────────────
-  # No consulta la resolución (`GET Location`). Enviar deja el comprobante en
-  # tránsito y Hacienda contesta después; recogerla es otra pasada, que necesita
-  # del lado de la cola un procedimiento que devuelva lo que está en `Sent` —
-  # hoy no existe. Anotado en `TODOS.md` → Emisión de documentos.
+  # ── Recoger la resolución es otra pasada ────────────────────────────────────
+  # Enviar deja el comprobante en tránsito; Hacienda contesta después. `#check_status`
+  # es el `GET` que consulta esa resolución — lo llama `CheckSentDocumentsJob`, no
+  # este mismo envío, porque el legacy esperaba (`sleepToCheck`) y consultaba en el
+  # mismo request, y dormir dentro de un job retiene un hilo del worker.
   class Client
     class Error < StandardError; end
 
@@ -54,6 +54,13 @@ module Hacienda
     # sin corregirlo da el mismo resultado.
     class RejectedError < Error; end
 
+    # Hacienda rechazó el usuario/contraseña del ATV o el Client ID al pedir el
+    # token (un 4xx en `POST /token`, no un 5xx). Es distinto de `RejectedError`
+    # —no es el comprobante, es la credencial de la compañía— y de
+    # `TransientError` —no se arregla solo reintentando, hace falta que alguien
+    # corrija la credencial en la compañía o el ajuste—.
+    class InvalidCredentials < Error; end
+
     # Timeouts propios y no los del default de `Net::HTTP` (60 s de lectura, sin
     # tope de apertura): el job corre cada dos minutos y procesa los documentos
     # en fila, así que un Hacienda que no contesta no puede quedarse con la
@@ -69,6 +76,12 @@ module Hacienda
 
     # Hacienda pone el motivo real del rechazo en este header, no en el cuerpo.
     ERROR_CAUSE_HEADER = 'X-Error-Cause'
+
+    # Los dos valores de `ind-estado` que son un desenlace FINAL. Los demás
+    # (`recibido`, `procesando`, o cualquiera que Hacienda agregue) significan
+    # que el comprobante sigue en tránsito — ver `CheckResult#resolved?`.
+    STATUS_ACCEPTED = 'aceptado'
+    STATUS_REJECTED = 'rechazado'
 
     # Cómo se nombra cada credencial del ATV en el mensaje de configuración
     # faltante. El operador las conoce por su etiqueta en la pantalla de la
@@ -88,6 +101,20 @@ module Hacienda
       def duplicate? = duplicate
     end
 
+    # Lo que contesta Hacienda al consultar el estado de un comprobante.
+    #
+    # `xml_base64` solo viene (de Hacienda, y por eso solo se guarda) cuando
+    # `status` es `STATUS_ACCEPTED`/`STATUS_REJECTED` (mismo criterio que el
+    # legacy, `TransaccionesHacienda.cs:454`): en `recibido`/`procesando`
+    # Hacienda todavía no tiene una respuesta que devolver.
+    CheckResult = Data.define(:status, :xml_base64) do
+      def resolved?
+        [STATUS_ACCEPTED, STATUS_REJECTED].include?(status)
+      end
+
+      def accepted? = status == STATUS_ACCEPTED
+    end
+
     def initialize(company)
       @company = company
     end
@@ -100,7 +127,7 @@ module Hacienda
     # @param emisor [Hash] `{ 'numeroIdentificacion' =>, 'tipoIdentificacion' => }`
     # @param receptor [Hash] igual que `emisor`.
     # @return [Receipt]
-    # @raise [MissingConfiguration, TransientError, RejectedError]
+    # @raise [MissingConfiguration, TransientError, RejectedError, InvalidCredentials]
     def send_document(clave:, comprobante_xml:, fecha:, emisor:, receptor:)
       body = {
         'clave' => clave,
@@ -113,6 +140,23 @@ module Hacienda
       response = post_json(setting('URI_SEND'), body)
 
       interpret_send(response, clave)
+    end
+
+    # Consulta si Hacienda ya resolvió un comprobante que quedó `Sent`.
+    #
+    # A diferencia de `#send_document`, un HTTP que no sea 2xx (o un timeout, o
+    # una respuesta que no es JSON) NO es un rechazo del documento: es que
+    # todavía no se pudo confirmar el estado, y el llamador (`CheckSentDocumentsJob`)
+    # lo trata igual que "sigue procesando" — el mismo criterio que el legacy,
+    # que en ese caso deja `hr.Estado = "procesando"` (`TransaccionesHacienda.cs:480`).
+    #
+    # @param clave [String] la clave de 50 dígitos del comprobante.
+    # @return [CheckResult]
+    # @raise [MissingConfiguration, TransientError]
+    def check_status(clave)
+      response = get_json("#{setting('URI_CHECK').chomp('/')}/#{clave}")
+
+      interpret_check(response)
     end
 
     private
@@ -134,6 +178,10 @@ module Hacienda
       @token ||= request_token
     end
 
+    # Un 5xx es Hacienda fallando —vale la pena reintentar—; un 4xx (401
+    # incluido) es el `POST /token` diciendo que el usuario, la contraseña o el
+    # Client ID están mal, y reintentar con la misma credencial mala nunca
+    # cambia el resultado (ver `InvalidCredentials`).
     def request_token
       form = {
         'grant_type' => setting('GRANT_TYPE'),
@@ -143,14 +191,13 @@ module Hacienda
       }
 
       response = post_form(token_url, form)
+      return extract_access_token(response) if response.is_a?(Net::HTTPSuccess)
 
-      unless response.is_a?(Net::HTTPSuccess)
-        raise TransientError,
-              "Hacienda no entregó el token de autenticación (#{describe(response)}). " \
-              'Revise el usuario y la contraseña del ATV de la compañía y el Client ID configurado.'
-      end
+      message = "Hacienda no entregó el token de autenticación (#{describe(response)}). " \
+                'Revise el usuario y la contraseña del ATV de la compañía y el Client ID configurado.'
+      raise TransientError, message if response.is_a?(Net::HTTPServerError)
 
-      extract_access_token(response)
+      raise InvalidCredentials, message
     end
 
     def extract_access_token(response)
@@ -228,6 +275,28 @@ module Hacienda
       end
     end
 
+    # ── Interpretación de la respuesta de la verificación ─────────────────────
+
+    # Cualquier cosa que no sea un 2xx con JSON válido es `TransientError`: ver
+    # el comentario de `#check_status` sobre por qué acá NO hay un equivalente
+    # a `RejectedError`.
+    def interpret_check(response)
+      unless response.is_a?(Net::HTTPSuccess)
+        cause = response[ERROR_CAUSE_HEADER].presence
+        raise TransientError,
+              "Hacienda no pudo confirmar el estado del comprobante (#{describe(response)})." \
+              "#{" #{cause}" if cause}"
+      end
+
+      body = JSON.parse(response.body)
+      status = body['ind-estado'].to_s
+      xml_base64 = body['respuesta-xml'] if [STATUS_ACCEPTED, STATUS_REJECTED].include?(status)
+
+      CheckResult.new(status: status, xml_base64: xml_base64)
+    rescue JSON::ParserError
+      raise TransientError, 'Hacienda entregó una respuesta que no es JSON al consultar el estado.'
+    end
+
     # ── HTTP ──────────────────────────────────────────────────────────────────
 
     def post_form(url, form)
@@ -245,6 +314,14 @@ module Hacienda
           req['Content-Type'] = 'application/json'
           req['Authorization'] = "Bearer #{token}"
           req.body = body.to_json
+        end
+      end
+    end
+
+    def get_json(url)
+      request(url) do |uri|
+        Net::HTTP::Get.new(uri.request_uri).tap do |req|
+          req['Authorization'] = "Bearer #{token}"
         end
       end
     end

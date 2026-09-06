@@ -28,7 +28,8 @@ module Api
     DEFAULT_PER_PAGE = 10
 
     PERMISSIONS = {
-      'index' => 'Documents_Issued_ViewDocuments'
+      'index' => 'Documents_Issued_ViewDocuments',
+      'attempts' => 'Documents_Issued_ViewDocuments'
     }.freeze
 
     # GET /api/documents?doc_type=01&start_date=&end_date=&status=&consecutivo=
@@ -64,7 +65,39 @@ module Api
       render json: ApiResponse.error(e.sap_message || e.message).to_h, status: :bad_gateway
     end
 
+    # GET /api/documents/:id/attempts?doc_type=01
+    #
+    # `:id` es el `DocEntry` de SAP (ver la nota de la ruta). El historial vive
+    # en la cola propia (§37), no en SAP, así que la fuente es
+    # `Documents::AttemptDetails` — ODBC, no Service Layer.
+    def attempts
+      unless company
+        render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
+               status: :forbidden
+        return
+      end
+
+      doc_type = DocType.normalize(params[:doc_type])
+      if doc_type.nil? || DocType.receiver_message?(doc_type)
+        render json: ApiResponse.error('Debe indicar un tipo de documento válido.').to_h,
+               status: :unprocessable_content
+        return
+      end
+
+      items = Documents::AttemptDetails.for(sap_db: company.sap_db, doc_entry: params[:id].to_i, doc_type: doc_type)
+
+      render json: ApiResponse.success({ Items: items.map { |a| serialize_attempt(a) } }).to_h
+    rescue ExternalDb::ConfigurationError => e
+      render json: ApiResponse.error(e.message).to_h, status: :unprocessable_content
+    rescue ExternalDb::Error => e
+      render json: ApiResponse.error(e.message).to_h, status: :bad_gateway
+    end
+
     private
+
+    def serialize_attempt(attempt)
+      { CreatedAt: attempt.created_at, StatusCode: attempt.status_code, Details: attempt.details }
+    end
 
     def authorize_action
       require_permission!(PERMISSIONS.fetch(action_name))

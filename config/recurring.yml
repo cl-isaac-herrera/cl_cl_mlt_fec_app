@@ -17,6 +17,10 @@ default: &default
     class: SyncIssuedDocumentsJob
     schedule: every 2 minutes
 
+  check_sent_documents:
+    class: CheckSentDocumentsJob
+    schedule: every 2 minutes
+
 development:
   <<: *default
 

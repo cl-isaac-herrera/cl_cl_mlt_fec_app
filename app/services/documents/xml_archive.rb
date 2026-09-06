@@ -43,10 +43,8 @@ module Documents
     #   decodificado del Base64 con el que viaja `respuesta-xml`).
     # @return [String] la URL del blob.
     #
-    # ⚠️ Sin llamador todavía: es para cuando exista la pasada que recoge la
-    # resolución de Hacienda (`TODOS.md` → Emisión de documentos). Se declara
-    # ahora, con el mismo patrón que `#store_sent`, para que esa pasada no
-    # tenga que inventar la convención de nombre otra vez.
+    # La llama `CheckSentDocumentsJob` cuando `Hacienda::Client#check_status`
+    # confirma un desenlace final (`aceptado`/`rechazado`).
     def store_response(company:, clave:, xml:)
       store(company: company, path: "#{clave}_respuesta.xml", content: xml)
     end

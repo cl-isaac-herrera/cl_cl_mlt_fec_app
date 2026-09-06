@@ -25,14 +25,22 @@ module Sap
   # `PurchaseInvoices` para FEC, `IncomingPayments` para REP. Acá solo se
   # compone el código con el tipo de documento.
   #
-  # ── Los SEIS campos van SIEMPRE, en TODO desenlace ──────────────────────────
+  # ── Los SIETE campos van SIEMPRE, en TODO desenlace ─────────────────────────
   # Error de validación propia, error de XSD, envío, rechazo o aceptación:
   # ninguno es un caso especial que recorte el body. `#call` no acepta un
-  # subconjunto de argumentos — los seis parámetros están siempre en el `PATCH`,
+  # subconjunto de argumentos — los siete parámetros están siempre en el `PATCH`,
   # con `nil` cuando el llamador no tiene ese dato todavía (por ejemplo, un
   # documento que no pasó la validación nunca llegó a firmarse, así que no hay
   # `xml_sent_url`). El llamador (`SyncIssuedDocumentsJob`) es quien decide qué
   # sabe en cada desenlace; esta clase no adivina ni omite.
+  #
+  # ⚠️ `fecha_emision` es el único de los siete que el llamador NUNCA rellena
+  # fuera de un envío aceptado (`STATUS_SENT`) — ver `SyncIssuedDocumentsJob#sent`
+  # vs. `#failed`. A diferencia de `clave`/`consecutivo` (que sí sobreviven a un
+  # rechazo, porque ya existían en el payload antes de fallar), la fecha de
+  # emisión ante Hacienda representa que Hacienda YA lo recibió: escribirla en
+  # un desenlace que no fue un envío exitoso mentiría sobre si el documento
+  # llegó a Hacienda.
   class DocumentStatus
     # Prefijo de las filas del catálogo. El sufijo es el código numérico de
     # Hacienda tal como lo trae la cola (`'01'`), así que no hay que traducir.
@@ -53,14 +61,17 @@ module Sap
     # @param consecutivo [String, nil] el número consecutivo.
     # @param xml_sent_url [String, nil] URL del XML firmado que se envió (`Documents::XmlArchive`).
     # @param xml_response_url [String, nil] URL del XML de respuesta de Hacienda.
-    def call(status:, details: nil, clave: nil, consecutivo: nil, xml_sent_url: nil, xml_response_url: nil)
+    # @param fecha_emision [String, nil] fecha ISO 8601 de emisión, SOLO en un envío aceptado.
+    def call(status:, details: nil, clave: nil, consecutivo: nil, xml_sent_url: nil, xml_response_url: nil,
+             fecha_emision: nil)
       client.patch(path, body: {
                      'U_CL_FEC_Status' => status,
                      'U_CL_FEC_ErrorDetails' => details,
                      'U_CL_FEC_Clave' => clave,
                      'U_CL_FEC_NumConsecutivo' => consecutivo,
                      'U_CL_FEC_XmlSentUrl' => xml_sent_url,
-                     'U_CL_FEC_XmlResponseUrl' => xml_response_url
+                     'U_CL_FEC_XmlResponseUrl' => xml_response_url,
+                     'U_CL_FEC_FechaEmision' => fecha_emision
                    })
     end
 

@@ -130,6 +130,20 @@ class SyncIssuedDocumentsJob < ApplicationJob
     failed(entry, :tipo_sin_xml, e.message, company: company)
   rescue Hacienda::Client::RejectedError => e
     failed(entry, :rechazado, e.message, company: company)
+  rescue Hacienda::Client::InvalidCredentials => e
+    # No es un rechazo del documento ni "no se llegó a hablar con nadie": SÍ se
+    # habló con Hacienda y contestó que el usuario, la contraseña o el Client
+    # ID están mal. Iba a `TransientError` y quedaba en `Processing` para
+    # siempre, reintentando la misma credencial mala cada dos minutos sin que
+    # nadie se enterara (mismo bug que `Azure::BlobStorage::RejectedError`).
+    failed(entry, :credenciales_invalidas, e.message, level: :error, company: company)
+  rescue Azure::BlobStorage::RejectedError => e
+    # No es Hacienda rechazando el documento: es Azure rechazando la subida por
+    # algo que no se arregla reintentando (el contenedor no existe, por
+    # ejemplo). Sin este rescue caía en el de abajo (`TransientError`) y el
+    # documento quedaba en `Processing` para siempre, reintentando el mismo
+    # error cada diez minutos sin que nadie se enterara por qué nunca avanza.
+    failed(entry, :azure_rechazado, e.message, level: :error, company: company)
   rescue Sap::CompanyClient::MissingConfiguration,
          Hacienda::CompanySigner::MissingCertificate,
          Hacienda::Client::MissingConfiguration,
@@ -199,7 +213,12 @@ class SyncIssuedDocumentsJob < ApplicationJob
              status: Documents::PendingQueue::STATUS_SENT,
              clave: clave,
              consecutivo: document_field('NumeroConsecutivo'),
-             xml_sent_url: @issuer.xml_sent_url)
+             xml_sent_url: @issuer.xml_sent_url,
+             # SOLO acá: es el único desenlace donde Hacienda de verdad recibió el
+             # comprobante. `#failed` (más abajo) NUNCA manda este dato, aunque el
+             # payload ya lo tenga —a diferencia de `clave`/`consecutivo`—, porque
+             # escribirlo en un rechazo mentiría sobre si llegó a Hacienda.
+             fecha_emision: document_field('FechaEmision'))
 
     :enviado
   end

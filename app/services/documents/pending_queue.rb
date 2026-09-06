@@ -39,6 +39,9 @@ module Documents
   # `PROCEDURE`) en vez de re-encolar, y cada intento —no solo el último— se
   # guarda en `DocumentAttemptDetails` (ver `UPDATE_PROCEDURE`): es la
   # trazabilidad de cuántas veces se reintentó y por qué falló cada vez.
+  #
+  # `#pending_check` es la otra mitad del ciclo, que consume `CheckSentDocumentsJob`:
+  # los documentos que ya se enviaron (`Sent`) y falta que Hacienda resuelva.
   class PendingQueue
     # Grupo de `settings` con los datos ODBC. Es el mismo que administra
     # Configuraciones → Generales y que prueba el botón "Probar conexión".
@@ -74,6 +77,16 @@ module Documents
     # campo. `@DocEntry`/`@DocType`/`@SAPDB` quedan en la firma aunque `@Id` ya
     # identifique la fila, por compatibilidad con la firma existente.
     UPDATE_PROCEDURE = 'CL_D_CL_MLT_FEC_UPT_DOCUMENT'
+
+    # Procedimiento que devuelve los documentos `Sent` (3) que hay que volver a
+    # consultar contra Hacienda — el paso 1 de `CheckSentDocumentsJob`.
+    #
+    # ⚠️ A diferencia de `PROCEDURE`, es un `SELECT` puro: no reclama filas. No
+    # hace falta — leer el estado en Hacienda es idempotente (a diferencia de
+    # reenviar un comprobante), y el propio `WHERE StatusCode = 3` hace que un
+    # documento salga solo de esta lista en cuanto `#mark` lo deja en
+    # `Accepted`/`Rejected`.
+    CHECK_PROCEDURE = 'CL_D_CL_MLT_FEC_SLT_PENDINGCHECKDOCUMENTS'
 
     # Estados de la cola. Son el catálogo `dbo.StatusCodes` de la base externa
     # (ver `db/external/sql_server/schema.sql`), no una invención de este lado:
@@ -121,6 +134,12 @@ module Documents
         new.pending
       end
 
+      # @return [Array<Entry>] los `Sent` que `CheckSentDocumentsJob` tiene que
+      #   volver a consultar contra Hacienda.
+      def pending_check
+        new.pending_check
+      end
+
       # @see #mark
       def mark_error(entry, details)
         new.mark(entry, status: STATUS_ERROR, details: details)
@@ -134,6 +153,11 @@ module Documents
       def mark_sent(entry, location)
         new.mark(entry, status: STATUS_SENT, details: location)
       end
+
+      # @see #mark
+      def mark(entry, status:, details: nil)
+        new.mark(entry, status: status, details: details)
+      end
     end
 
     # @return [Array<Entry>] en el orden en que los devolvió el procedimiento.
@@ -146,7 +170,17 @@ module Documents
     def pending
       rows = ExternalDb::Pool.with(GROUP_CODE) { |client| client.call(PROCEDURE, [], commit: true) }
 
-      rows.filter_map { |row| build_entry(row) }
+      rows.filter_map { |row| build_entry(row, PROCEDURE) }
+    end
+
+    # @return [Array<Entry>] en el orden en que los devolvió el procedimiento.
+    #
+    # Sin `commit: true`: es un `SELECT` puro (ver `CHECK_PROCEDURE`), no hay
+    # ningún `UPDATE` que confirmar.
+    def pending_check
+      rows = ExternalDb::Pool.with(GROUP_CODE) { |client| client.call(CHECK_PROCEDURE, []) }
+
+      rows.filter_map { |row| build_entry(row, CHECK_PROCEDURE) }
     end
 
     # Devuelve el documento a la cola con su desenlace y el detalle.
@@ -203,7 +237,7 @@ module Documents
     # documento existe: lo que no se sabe es cómo armarlo. Se deja pasar para que
     # el llamador lo reporte como lo que es —un tipo sin soporte— y no como una
     # fila corrupta.
-    def build_entry(raw)
+    def build_entry(raw, procedure)
       row = Row.new(raw)
 
       id        = row.integer('Id')
@@ -213,7 +247,7 @@ module Documents
 
       if id.nil? || doc_entry.nil? || doc_type.nil? || sap_db.nil?
         Rails.logger.warn(
-          "[Documents::PendingQueue] fila incompleta en #{PROCEDURE}, se omite: #{row.to_h.inspect}"
+          "[Documents::PendingQueue] fila incompleta en #{procedure}, se omite: #{row.to_h.inspect}"
         )
         return nil
       end

@@ -314,41 +314,78 @@
       </button>
     </div>
 
-    <div class="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-      <div>
-        <p class="text-xs font-medium text-gray-500 mb-0.5">Clave</p>
-        <div class="group relative flex items-start gap-1">
-          <p data-documents-issued-target="infoClave" data-testid="info-clave"
-             class="text-sm text-gray-800 break-all flex-1"></p>
-          <div class="relative flex-shrink-0">
-            <button type="button"
-                    data-action="click->documents-issued#copyClave"
-                    data-testid="btn-copy-clave"
-                    class="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-gray-300 hover:text-gray-500 cursor-pointer">
-              <span class="material-icons text-base leading-none">content_copy</span>
-            </button>
-            <span data-documents-issued-target="copyTooltip"
-                  class="hidden absolute -top-7 left-1/2 -translate-x-1/2 bg-gray-700 text-white text-xs rounded px-2 py-0.5 whitespace-nowrap pointer-events-none">
-              ¡Copiado!
-            </span>
+    <div class="flex-1 min-h-0 overflow-y-auto px-6 py-5 flex flex-col">
+      <%# Bloque de alto natural (Clave/Fecha/Error interno/Hacienda). Es lo
+          que crece o encoge según "Error interno" esté expandida o no, y ese
+          cambio es justo lo que le deja más o menos espacio a "Detalles de
+          intentos" (flex-1 más abajo) — puro flexbox, sin JS de por medio. %>
+      <div class="flex-shrink-0 space-y-4">
+        <div>
+          <p class="text-xs font-medium text-gray-500 mb-0.5">Clave</p>
+          <div class="group relative flex items-start gap-1">
+            <p data-documents-issued-target="infoClave" data-testid="info-clave"
+               class="text-sm text-gray-800 break-all flex-1"></p>
+            <div class="relative flex-shrink-0">
+              <button type="button"
+                      data-action="click->documents-issued#copyClave"
+                      data-testid="btn-copy-clave"
+                      class="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-gray-300 hover:text-gray-500 cursor-pointer">
+                <span class="material-icons text-base leading-none">content_copy</span>
+              </button>
+              <span data-documents-issued-target="copyTooltip"
+                    class="hidden absolute -top-7 left-1/2 -translate-x-1/2 bg-gray-700 text-white text-xs rounded px-2 py-0.5 whitespace-nowrap pointer-events-none">
+                ¡Copiado!
+              </span>
+            </div>
           </div>
         </div>
+        <div>
+          <p class="text-xs font-medium text-gray-500 mb-0.5">Fecha de Emisión</p>
+          <p data-documents-issued-target="infoFechaEmision" data-testid="info-fecha-emision"
+             class="text-sm text-gray-800"></p>
+        </div>
+        <%# Sin tarjeta propia acá: #formatHaciendaError arma su(s) propia(s)
+            tarjeta(s) roja(s) por cada entrada — mismo patrón que
+            infoErrorHacienda, más abajo. %>
+        <%# Expandible (chevron), expandida por defecto — ver #toggleErrorSection. %>
+        <div data-documents-issued-target="infoErrorSection" class="hidden">
+          <button type="button"
+                  data-action="click->documents-issued#toggleErrorSection"
+                  data-testid="btn-toggle-error"
+                  class="w-full flex items-center justify-between gap-2 text-left cursor-pointer">
+            <p class="text-xs font-medium text-gray-500">Error interno</p>
+            <span data-documents-issued-target="infoErrorChevron"
+                  class="material-icons text-lg text-gray-400">expand_less</span>
+          </button>
+          <div data-documents-issued-target="infoError" data-testid="info-error" class="mt-2"></div>
+        </div>
+        <div data-documents-issued-target="infoErrorHaciendaSection" class="hidden">
+          <p class="text-xs font-medium text-gray-500 mb-2">Respuesta Hacienda</p>
+          <div data-documents-issued-target="infoErrorHacienda" data-testid="info-error-hacienda"></div>
+        </div>
       </div>
-      <div>
-        <p class="text-xs font-medium text-gray-500 mb-0.5">Fecha de Emisión</p>
-        <p data-documents-issued-target="infoFechaEmision" data-testid="info-fecha-emision"
-           class="text-sm text-gray-800"></p>
-      </div>
-      <%# Sin tarjeta propia acá: #formatHaciendaError arma su(s) propia(s)
-          tarjeta(s) roja(s) por cada entrada — mismo patrón que
-          infoErrorHacienda, más abajo. %>
-      <div data-documents-issued-target="infoErrorSection" class="hidden">
-        <p class="text-xs font-medium text-gray-500 mb-2">Error interno</p>
-        <div data-documents-issued-target="infoError" data-testid="info-error"></div>
-      </div>
-      <div data-documents-issued-target="infoErrorHaciendaSection" class="hidden">
-        <p class="text-xs font-medium text-gray-500 mb-2">Respuesta Hacienda</p>
-        <div data-documents-issued-target="infoErrorHacienda" data-testid="info-error-hacienda"></div>
+
+      <%# "Detalles de intentos" — historial de la cola de reintentos
+          (`CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS`, ver CLAUDE.md §37). Siempre
+          visible (no depende de si el documento tiene error) y colapsada por
+          defecto. La consulta arranca en segundo plano al abrir el panel
+          (`#loadAttempts`), así que si el usuario la expande antes de que
+          responda, lo único que hay es el loader que ya está en el body.
+          `flex-1 min-h-0` acá y en el body: ocupa lo que sobra del bloque de
+          arriba y el scroll, si hace falta, queda contenido en el body — no
+          en el panel completo. %>
+      <div class="flex-1 min-h-0 flex flex-col mt-4">
+        <button type="button"
+                data-action="click->documents-issued#toggleAttemptsSection"
+                data-testid="btn-toggle-attempts"
+                class="w-full flex items-center justify-between gap-2 text-left cursor-pointer flex-shrink-0">
+          <p class="text-xs font-medium text-gray-500">Detalles de intentos</p>
+          <span data-documents-issued-target="infoAttemptsChevron"
+                class="material-icons text-lg text-gray-400">expand_more</span>
+        </button>
+        <div data-documents-issued-target="infoAttemptsBody"
+             data-testid="info-attempts"
+             class="hidden mt-2 space-y-2 flex-1 min-h-0 overflow-y-auto pr-1"></div>
       </div>
     </div>
 

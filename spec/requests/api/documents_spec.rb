@@ -123,3 +123,88 @@ RSpec.describe 'GET /api/documents', type: :request do
     end
   end
 end
+
+RSpec.describe 'GET /api/documents/:id/attempts', type: :request do
+  let(:user)    { User.create!(email: 'documentos-intentos@example.com') }
+  let(:role)    { Role.create!(name: 'Configurador') }
+  let(:company) { Company.create!(name: 'ACME S.A.', sap_db: 'SBO_ACME') }
+  let(:odbc_client) { instance_double(ExternalDb::Client) }
+
+  def sign_in_with(*permission_names)
+    UsersByCompany.create!(user: user, company: company)
+    UserRole.create!(user: user, role: role, company: company)
+    permission_names.each do |name|
+      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
+    end
+    sign_in(user, company: company)
+  end
+
+  def body      = JSON.parse(response.body)
+  def body_data = body['Data']
+
+  def get_attempts(id, params = {})
+    get "/api/documents/#{id}/attempts", params: params
+  end
+
+  def stub_procedure(rows)
+    allow(ExternalDb::Pool).to receive(:with).with(Documents::AttemptDetails::GROUP_CODE).and_yield(odbc_client)
+    allow(odbc_client).to receive(:call).and_return(rows)
+  end
+
+  describe 'autorización' do
+    it 'responde 401 sin sesión' do
+      get_attempts(25, doc_type: '01')
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'exige Documents_Issued_ViewDocuments' do
+      sign_in_with('Documents_Issued_ViewDocuments_Otro')
+      get_attempts(25, doc_type: '01')
+
+      expect(response).to have_http_status(:forbidden)
+    end
+  end
+
+  describe 'con permiso' do
+    before { sign_in_with('Documents_Issued_ViewDocuments') }
+
+    it 'consulta la cola con el SAPDB de la compañía activa, el DocEntry del path y el DocType' do
+      stub_procedure([])
+
+      get_attempts(25, doc_type: '01')
+
+      expect(response).to have_http_status(:ok)
+      expect(odbc_client).to have_received(:call).with(
+        'CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS', ['SBO_ACME', 25, '01']
+      )
+    end
+
+    it 'devuelve los intentos con las llaves en PascalCase' do
+      stub_procedure([{ 'CreatedAt' => Time.new(2026, 9, 5, 10, 3, 12), 'StatusCode' => 4,
+                        'Details' => 'SAP no respondió' }])
+
+      get_attempts(25, doc_type: '01')
+
+      expect(body_data['Items']).to eq(
+        [{ 'CreatedAt' => '2026-09-05 10:03:12', 'StatusCode' => 4, 'Details' => 'SAP no respondió' }]
+      )
+    end
+
+    it 'rechaza un tipo de documento inválido' do
+      get_attempts(25, doc_type: 'XX')
+
+      expect(response).to have_http_status(:unprocessable_content)
+    end
+
+    it 'responde 502 si la base de documentos no responde' do
+      allow(ExternalDb::Pool).to receive(:with).with(Documents::AttemptDetails::GROUP_CODE)
+                                               .and_raise(ExternalDb::ConnectionError, 'no se pudo conectar')
+
+      get_attempts(25, doc_type: '01')
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(body['Message']).to eq('no se pudo conectar')
+    end
+  end
+end

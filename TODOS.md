@@ -262,6 +262,18 @@ pendiente:
       **Pendiente submódulo:** que el error de login y el error de recurso sean clases
       distintas, o el `Client#login` del punto anterior.
 
+- [x] **`$select` no es confiable sobre las vistas `qs*`/`_B1SLQuery` (SQL Queries) — confirmado
+      contra SAP real (2026-09-06).** Al acotar `qsGetDocumentHeaderInfo` a `$select=Clave` (para
+      `CheckSentDocumentsJob`, sin traer la cabecera completa), SAP Service Layer devolvía el
+      valor de `Clave` bajo OTRO nombre de campo (`OtrosDatos`), y solo se corregía agregando MÁS
+      columnas al `$select`. No es un bug de `Sap::ResourceQuery` ni de este producto: estas vistas
+      son SQL Queries expuestas por Service Layer (`view.svc`/`sml.svc`), no una entidad OData
+      nativa con metadata fija, y `$select` no mapea por nombre de forma confiable sobre ellas.
+      **Regla:** ninguna consulta contra una vista `qs*`/`_B1SLQuery` debe agregar `$select` propio
+      (vía `Sap::ResourceQuery#merge`) — traer la fila completa, como ya hace `Sap::DocumentDetails`.
+      Sí es seguro usar `$select` sobre entidades NATIVAS de SAP (`Invoices`, `BusinessPartners`,
+      …), que es lo que ya hacen `getDocuments01`..`10` en `db/seeds.rb`.
+
 - [x] **`connections.service_layer_url` no se llamaba como el estándar** — resuelto:
       `db/migrate/20260812100000_rename_connection_columns_to_standard.rb` la renombró a
       `sl_url` (§8) y, por consistencia de prefijo, `service_layer_type` → `sl_type`.
@@ -949,8 +961,8 @@ pendientes, se traen los detalles de SAP, se arma el objeto unificado, **se vali
 genera el XML 4.4, se firma y se envía a Hacienda**, y el desenlace se anota en la cola y
 en el documento de SAP.
 
-Lo que NO cierra el ciclo todavía: **recoger la resolución**. Un envío aceptado deja el
-comprobante en `Sent` (3), que es de tránsito — ver el pendiente de abajo.
+**Recoger la resolución** (`ind-estado` → `Accepted`/`Rejected`) ya cierra el ciclo —
+ver el pendiente marcado como hecho más abajo, y `CheckSentDocumentsJob`.
 
 ### Estado general (2026-09-07)
 
@@ -963,6 +975,7 @@ Los cinco pasos de `docs/sync-documents-flow.md` (sección "Flujo"), con lo que 
 | 3. Consultar detalle en SAP | `Sap::DocumentDetails` + `Documents::UnifiedBuilder` | ✅ funciona, probado contra la base real |
 | 4. Enviar a Hacienda | `Documents::Issuer`: validar → `Hacienda::XmlBuilder` → `Hacienda::XmlSigner` → `Documents::XmlArchive` → `Hacienda::Client` | ✅ implementado (FE y TE); **sin probar contra Hacienda ni Azure reales** |
 | 5. Actualizar estado en Queue y en SAP | `Documents::PendingQueue#mark` + `Sap::DocumentStatus` | ✅ los dos lados, con el mismo catálogo de estados y los SEIS campos (`Status`, `ErrorDetails`, `Clave`, `NumConsecutivo`, `XmlSentUrl`, `XmlResponseUrl`) SIEMPRE en el `PATCH`, en cualquier desenlace |
+| 6. Recoger la resolución (`Sent` → `Accepted`/`Rejected`) | `CheckSentDocumentsJob`: `Documents::PendingQueue.pending_check` + `Hacienda::Client#check_status` + `Sap::DocumentCheckStatus` | ✅ implementado; **sin probar contra Hacienda real** |
 
 **Cómo se clasifica una falla** — la pregunta es si reintentar sin que nadie toque nada
 puede funcionar:
@@ -973,12 +986,29 @@ puede funcionar:
 | El documento no cuadra, Hacienda lo rechaza, falta el certificado o un ajuste | `Error` (4) en la cola y en SAP, con el motivo |
 | Envío aceptado | `Sent` (3) en los dos lados; el `Location` queda en `Details` de la cola |
 
-- [ ] **Recoger la resolución de Hacienda** (`ind-estado` → `Accepted` 6 / `Rejected` 7).
-      Falta de los dos lados: (a) del lado de la cola, un procedimiento que devuelva lo
-      que está en `Sent` con su `Location` — `CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS` solo
-      devuelve `Pending` y el `Processing` viejo; (b) de este lado, el `GET Location` con
-      Bearer y la escritura del resultado. `Hacienda::Client` **no** trae el método de
-      consulta a propósito: sin quien lo llame sería código muerto.
+- [x] **Recoger la resolución de Hacienda — implementado (2026-09-06).** `ind-estado` →
+      `Accepted` (6) / `Rejected` (7), en un job nuevo y separado del de envío:
+      `CheckSentDocumentsJob` (`config/recurring.yml`, cada 2 minutos). Los dos lados:
+      (a) la cola — `CL_D_CL_MLT_FEC_SLT_PENDINGCHECKDOCUMENTS` (`Documents::PendingQueue
+      .pending_check`), que a diferencia de `PENDINGDOCUMENTS` es un `SELECT` puro (leer el
+      estado en Hacienda es idempotente, no hace falta reclamar filas) filtrado por
+      `StatusCode = 3`; (b) `Hacienda::Client#check_status`, el `GET` con Bearer contra
+      `HACIENDA_FE_URI_CHECK` que faltaba.
+      La `Clave` se pide a SAP con la MISMA vista y filtro de `Sap::DocumentDetails::HEADER`,
+      pero SIN `$select` — se probó acotar a `$select=Clave` para no traer el documento
+      entero de nuevo, y SAP Service Layer devolvía el valor bajo OTRO nombre de campo
+      (`OtrosDatos`); confirmado a mano contra SAP real que estas vistas (`view.svc`/
+      `sml.svc`, SQL Queries, no una entidad OData nativa) no mapean `$select` de forma
+      confiable. Se usa la fila completa, igual que ya hace `Sap::DocumentDetails`. El desenlace se
+      escribe con `Sap::DocumentCheckStatus` (NO `Sap::DocumentStatus`: esa manda los
+      siete campos siempre, y acá `Clave`/`NumConsecutivo`/`XmlSentUrl` NO se tocan —
+      mandarlos en `nil` los borraría). Mientras Hacienda no resuelva (`procesando`,
+      `recibido`, o cualquier error al consultar) el documento se queda en `Sent`, con el
+      detalle del error si lo hubo, pero NUNCA escala a `Error`: no es un desenlace del
+      documento, es que todavía no hay uno.
+      `Documents::XmlArchive.store_response` (declarado sin llamador) ya tiene quien lo
+      llame. El motivo del rechazo sale de `DetalleMensaje` en el XML de respuesta
+      (Nokogiri, sin namespace), igual que hacía el legacy.
       **Nota:** el legacy esperaba (`sleepToCheck`) y consultaba en el mismo request —
       eso NO se replicó: dormir dentro del job retiene un hilo del worker.
 - [x] **`U_CL_FEC_XmlSentUrl` — implementado (2026-09-07).** `Documents::XmlArchive` sube el
@@ -1420,14 +1450,15 @@ lo que falta en la vista.
 (465 + 9,30 = 474,30), el desglose de impuestos agrupado por código y tarifa, y la tarifa
 del 2 % coherente con su `CodigoTarifaIVA` `03`.
 
-- [ ] **⛔ `FechaEmision` no existe en la vista de cabecera.** Es el bloqueante de fondo:
-      los cinco documentos salen con `"FechaEmision": null` y, peor, con
-      `SendDocumentHacienda.fecha` en null — que es el cuerpo del POST a Hacienda. Sin
-      fecha no hay comprobante.
-      La cabecera devuelve **66 columnas** y ninguna se llama así; lo que hay es `DocDate`
-      y `FechaCrea`, las dos con el mismo valor (`"2026-08-25"`). El contrato de
-      `docs/sync-documents-flow.md` sí la lista, así que el que se desvió es el origen.
-      **Decisión pendiente:** que la vista la exponga, o que el builder lea `DocDate`.
+- [x] **`FechaEmision` ya existe en la vista de cabecera (confirmado por el usuario, 2026-09-06).**
+      Se había anotado como bloqueante de fondo: los cinco documentos de prueba salían con
+      `"FechaEmision": null` y, peor, con `SendDocumentHacienda.fecha` en null — el cuerpo del
+      POST a Hacienda. La cabecera parecía devolver solo `DocDate`/`FechaCrea` entre sus 66
+      columnas. El usuario lo notó resuelto revisando el error de payload de Hacienda: la vista
+      ya expone `FechaEmision` y el builder (`header.string('FechaEmision')`,
+      `unified_builder.rb:75`) la toma sin cambios. Sin acción de código de por medio —era la
+      vista externa de SAP la que se puso al día—, así que no hay commit que lo respalde; si
+      vuelve a aparecer en `null`, revisar si la vista se revirtió.
 
 - [ ] **`ProveedorSistemas` quedó en null.** Confirmado que ya salió de la vista (no está
       entre las 66 columnas), como se había decidido. Falta la otra mitad del cambio:

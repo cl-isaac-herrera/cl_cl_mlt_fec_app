@@ -33,7 +33,9 @@ RSpec.describe SyncIssuedDocumentsJob do
     SlResource.create!(code: 'updateDocument01', resource: 'Invoices(#DocumentEntry#)', page_size: 0)
 
     allow(Sap::CompanyClient).to receive(:for).and_return(client)
-    allow(client).to receive(:get) { |path| path.match?(/HEADER/) ? [{ 'Clave' => '506123' }] : [] }
+    allow(client).to receive(:get) do |path|
+      path.match?(/HEADER/) ? [{ 'Clave' => '506123', 'FechaEmision' => '2026-09-06T09:06:00Z' }] : []
+    end
     allow(client).to receive(:patch)
 
     allow(Hacienda::CompanySigner).to receive(:for).and_return(signer)
@@ -129,6 +131,29 @@ RSpec.describe SyncIssuedDocumentsJob do
         .to have_received(:mark_sent).with(anything, 'https://api.test/recepcion/555')
       expect(client).to have_received(:patch)
         .with('Invoices(25)', body: hash_including('U_CL_FEC_Status' => 3))
+    end
+
+    # La fecha de emisión ante Hacienda solo tiene sentido cuando Hacienda de
+    # verdad recibió el comprobante: por eso se manda únicamente en el envío
+    # aceptado, nunca en un rechazo (ver el siguiente ejemplo).
+    it 'manda U_CL_FEC_FechaEmision en el envío aceptado' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(client).to have_received(:patch)
+        .with(anything, body: hash_including('U_CL_FEC_FechaEmision' => '2026-09-06T09:06:00Z'))
+    end
+
+    it 'NO manda U_CL_FEC_FechaEmision cuando Hacienda rechaza el envío, aunque ya la tenga' do
+      queue(entry)
+      allow(hacienda).to receive(:send_document)
+        .and_raise(Hacienda::Client::RejectedError, 'La clave no cumple el formato')
+
+      described_class.perform_now
+
+      expect(client).to have_received(:patch)
+        .with(anything, body: hash_including('U_CL_FEC_FechaEmision' => nil))
     end
 
     # El orden exacto (firmar → archivar → enviar) lo prueba
@@ -252,6 +277,28 @@ RSpec.describe SyncIssuedDocumentsJob do
       expect(Rails.logger).to have_received(:warn).with(/se reintenta solo/)
     end
 
+    # A diferencia de Hacienda caída, un 401 al pedir el token es Hacienda
+    # rechazando la credencial de la compañía: reintentar con la misma
+    # contraseña mala nunca cambia el resultado (bug real visto en desarrollo,
+    # igual que el del contenedor de Azure).
+    it 'marca Error cuando Hacienda rechaza las credenciales del ATV al pedir el token' do
+      queue(entry)
+      allow(hacienda).to receive(:send_document).and_raise(
+        Hacienda::Client::InvalidCredentials,
+        'Hacienda no entregó el token de autenticación (HTTP 401 Unauthorized). ' \
+        'Revise el usuario y la contraseña del ATV de la compañía y el Client ID configurado.'
+      )
+      allow(Sentry).to receive(:capture_exception)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error)
+        .with(anything, /usuario y la contraseña del ATV/)
+      expect(client).to have_received(:patch)
+        .with(anything, body: hash_including('U_CL_FEC_Status' => 4))
+      expect(Sentry).not_to have_received(:capture_exception)
+    end
+
     it 'marca Error sin alertar cuando falta el certificado de la compañía' do
       queue(entry)
       allow(Hacienda::CompanySigner).to receive(:for)
@@ -319,6 +366,27 @@ RSpec.describe SyncIssuedDocumentsJob do
       expect(Documents::PendingQueue).not_to have_received(:mark_sent)
       expect(hacienda).not_to have_received(:send_document)
       expect(Rails.logger).to have_received(:warn).with(/se reintenta solo/)
+    end
+
+    # A diferencia de Azure caído, un contenedor que no existe NUNCA se
+    # arregla solo reintentando: dejarlo como transitorio (bug real, visto en
+    # desarrollo) escondía el documento en `Processing` para siempre sin que
+    # nadie se enterara por qué nunca avanzaba.
+    it 'marca Error cuando Azure Storage rechaza la subida (contenedor inexistente)' do
+      queue(entry)
+      allow(Documents::XmlArchive).to receive(:store_sent).and_raise(
+        Azure::BlobStorage::RejectedError,
+        'Azure Storage rechazó la subida (HTTP 404 The specified container does not exist.).'
+      )
+      allow(Sentry).to receive(:capture_exception)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error)
+        .with(anything, /container does not exist/)
+      expect(client).to have_received(:patch)
+        .with(anything, body: hash_including('U_CL_FEC_Status' => 4))
+      expect(Sentry).not_to have_received(:capture_exception)
     end
   end
 

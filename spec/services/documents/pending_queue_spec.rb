@@ -122,6 +122,72 @@ RSpec.describe Documents::PendingQueue do
     end
   end
 
+  describe '.pending_check' do
+    it 'invoca el procedimiento de verificación sobre el grupo de ajustes ODBC' do
+      stub_procedure([])
+
+      described_class.pending_check
+
+      expect(client).to have_received(:call).with('CL_D_CL_MLT_FEC_SLT_PENDINGCHECKDOCUMENTS', [])
+    end
+
+    # A diferencia de `.pending`, es un SELECT puro: no reclama filas, así que
+    # no hay nada que confirmar.
+    it 'no manda commit: true — no hay ningún UPDATE que confirmar' do
+      stub_procedure([])
+
+      described_class.pending_check
+
+      expect(client).to have_received(:call).with(anything, anything)
+    end
+
+    it 'mapea las cuatro columnas del procedimiento' do
+      stub_procedure([{ 'Id' => 7, 'DocEntry' => 25, 'DocType' => '01', 'SAPDB' => 'SBO_ACME' }])
+
+      entry = described_class.pending_check.first
+
+      expect(entry.id).to eq(7)
+      expect(entry.doc_entry).to eq(25)
+      expect(entry.doc_type).to eq('01')
+      expect(entry.sap_db).to eq('SBO_ACME')
+    end
+
+    it 'omite las filas incompletas con un aviso, sin tumbar la corrida' do
+      stub_procedure([{ 'Id' => 1, 'DocEntry' => nil, 'DocType' => '01', 'SAPDB' => 'X' }])
+      allow(Rails.logger).to receive(:warn)
+
+      expect(described_class.pending_check).to eq([])
+      expect(Rails.logger).to have_received(:warn).with(/fila incompleta en CL_D_CL_MLT_FEC_SLT_PENDINGCHECKDOCUMENTS/)
+    end
+  end
+
+  describe '.mark' do
+    let(:entry) do
+      described_class::Entry.new(id: 7, doc_entry: 25, doc_type: '01', sap_db: 'SBO_ACME')
+    end
+
+    def stub_update
+      allow(ExternalDb::Pool).to receive(:with).with(described_class::GROUP_CODE).and_yield(client)
+      allow(client).to receive(:call).and_return([])
+    end
+
+    # A diferencia de `.mark_sent`/`.mark_error` (que fijan el estado), esta es
+    # la que usa `CheckSentDocumentsJob`: el estado varía según lo que conteste
+    # Hacienda (`Sent` si sigue en tránsito, `Accepted`/`Rejected` si ya se
+    # resolvió).
+    it 'manda el estado y el detalle que reciba, sin fijar ninguno' do
+      stub_update
+
+      described_class.mark(entry, status: described_class::STATUS_ACCEPTED, details: nil)
+
+      expect(client).to have_received(:call).with(
+        'CL_D_CL_MLT_FEC_UPT_DOCUMENT',
+        [7, 25, '01', 'SBO_ACME', nil, described_class::STATUS_ACCEPTED],
+        commit: true
+      )
+    end
+  end
+
   describe 'Entry' do
     # El tipo desconocido NO se descarta: la fila está bien formada y el documento
     # existe. Lo que falta es saber cómo armarlo, y eso lo reporta el job.

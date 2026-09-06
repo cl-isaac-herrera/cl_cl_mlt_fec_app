@@ -26,13 +26,14 @@ RSpec.describe Sap::DocumentStatus do
     expect(client).to have_received(:patch).with('CreditNotes(25)', anything)
   end
 
-  # Los seis campos van SIEMPRE — ningún desenlace es un caso especial que
+  # Los siete campos van SIEMPRE — ningún desenlace es un caso especial que
   # recorte el body. Es la corrección explícita a la versión anterior, que
   # omitía Clave/NumConsecutivo cuando venían en blanco.
-  describe 'los seis campos van siempre, en cualquier desenlace' do
+  describe 'los siete campos van siempre, en cualquier desenlace' do
     it 'en un envío aceptado' do
       status.call(status: Documents::PendingQueue::STATUS_SENT, clave: '506123',
-                  consecutivo: '00100001010000000001', xml_sent_url: 'https://azure.test/x.xml')
+                  consecutivo: '00100001010000000001', xml_sent_url: 'https://azure.test/x.xml',
+                  fecha_emision: '2026-09-06T09:06:00Z')
 
       expect(client).to have_received(:patch).with(anything, body: {
         'U_CL_FEC_Status' => Documents::PendingQueue::STATUS_SENT,
@@ -40,7 +41,8 @@ RSpec.describe Sap::DocumentStatus do
         'U_CL_FEC_Clave' => '506123',
         'U_CL_FEC_NumConsecutivo' => '00100001010000000001',
         'U_CL_FEC_XmlSentUrl' => 'https://azure.test/x.xml',
-        'U_CL_FEC_XmlResponseUrl' => nil
+        'U_CL_FEC_XmlResponseUrl' => nil,
+        'U_CL_FEC_FechaEmision' => '2026-09-06T09:06:00Z'
       })
     end
 
@@ -54,7 +56,8 @@ RSpec.describe Sap::DocumentStatus do
         'U_CL_FEC_Clave' => '506123',
         'U_CL_FEC_NumConsecutivo' => '00100001010000000001',
         'U_CL_FEC_XmlSentUrl' => nil,
-        'U_CL_FEC_XmlResponseUrl' => nil
+        'U_CL_FEC_XmlResponseUrl' => nil,
+        'U_CL_FEC_FechaEmision' => nil
       })
     end
 
@@ -67,7 +70,8 @@ RSpec.describe Sap::DocumentStatus do
         'U_CL_FEC_Clave' => nil,
         'U_CL_FEC_NumConsecutivo' => nil,
         'U_CL_FEC_XmlSentUrl' => nil,
-        'U_CL_FEC_XmlResponseUrl' => nil
+        'U_CL_FEC_XmlResponseUrl' => nil,
+        'U_CL_FEC_FechaEmision' => nil
       })
     end
   end

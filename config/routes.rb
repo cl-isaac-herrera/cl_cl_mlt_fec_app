@@ -166,7 +166,15 @@ Rails.application.routes.draw do
     # Búsqueda de documentos emitidos, en vivo contra SAP Service Layer.
     # Reemplaza GET /api/documents del .NET — que en realidad consultaba la base
     # propia de la app, no SAP (ver `Api::DocumentsController`).
-    resources :documents, only: [:index]
+    #
+    # `attempts` es el historial de reintentos de la cola propia (§37,
+    # `Documents::AttemptDetails`) — una fuente distinta (ODBC, no Service
+    # Layer), pero sigue siendo información DE ESTE documento, así que cuelga
+    # del mismo recurso en vez de uno aparte. `:id` es el `DocEntry` (ver
+    # `#mapDocument` en `documents_issued_controller.js`).
+    resources :documents, only: [:index] do
+      get :attempts, on: :member
+    end
   end
 
   # Todo lo que no migró todavía sigue reenviándose al backend .NET.
