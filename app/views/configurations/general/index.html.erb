@@ -496,8 +496,9 @@
   <%#                                                                   %>
   <%# Cuenta donde `Documents::XmlArchive` guarda el XML firmado que se %>
   <%# envía a Hacienda y el XML de respuesta que Hacienda devuelve. El  %>
-  <%# contenedor NO es un ajuste: es fijo ("clvsfe", igual que el       %>
-  <%# legacy) y no varía por instalación — solo la cuenta sí.           %>
+  <%# contenedor viene sembrado ("clvsfe", igual que el legacy) y no lo %>
+  <%# personaliza el operador — solo la cuenta sí —, pero vive acá y no %>
+  <%# como constante para poder corregirlo sin deploy (`db/seeds.rb`).  %>
   <%# ---------------------------------------------------------------- %>
   <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6"
        style="grid-column: 1 / -1;">
@@ -519,6 +520,12 @@
             code:  'AZURE_STORAGE_ACCOUNT_KEY',
             label: 'Clave de acceso',
             type:  'password' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'AZURE_STORAGE_CONTAINER',
+            label:       'Contenedor',
+            placeholder: 'clvsfe',
+            hint:        'Solo cambia si el proveedor de Azure exige otro contenedor.' %>
 
     </div>
 

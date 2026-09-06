@@ -982,8 +982,10 @@ puede funcionar:
       **Nota:** el legacy esperaba (`sleepToCheck`) y consultaba en el mismo request —
       eso NO se replicó: dormir dentro del job retiene un hilo del worker.
 - [x] **`U_CL_FEC_XmlSentUrl` — implementado (2026-09-07).** `Documents::XmlArchive` sube el
-      XML firmado a Azure Blob Storage (`Azure::BlobStorage`, Shared Key — cuenta y clave en
-      `settings`, grupo `AZURE_STORAGE`; contenedor FIJO `"clvsfe"`, igual que el legacy) y
+      XML firmado a Azure Blob Storage (`Azure::BlobStorage`, Shared Key — cuenta, clave y
+      contenedor en `settings`, grupo `AZURE_STORAGE`; `AZURE_STORAGE_CONTAINER` se siembra
+      con `"clvsfe"`, igual que el legacy, pero vive como ajuste y no como constante para
+      poder corregirlo desde la UI sin deploy) y
       `Documents::Issuer` guarda la URL ANTES de enviar a Hacienda, así que sobrevive a un
       rechazo. Convención de nombre (indicada por el negocio): `{cédula}/{clave}.xml`.
       `Sap::DocumentStatus` manda los SEIS campos SIEMPRE, en cualquier desenlace (error de

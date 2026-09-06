@@ -5,8 +5,9 @@
 # Son las credenciales de la cuenta de Azure Storage donde `Documents::XmlArchive`
 # guarda el XML firmado que se envía a Hacienda y el XML de respuesta que
 # Hacienda devuelve (`U_CL_FEC_XmlSentUrl` / `U_CL_FEC_XmlResponseUrl` en SAP).
-# El contenedor NO es un ajuste — es fijo (`Documents::XmlArchive::CONTAINER`,
-# "clvsfe", igual que en el legacy) y no varía por instalación.
+# El contenedor va aparte, en `20260907130000_add_azure_storage_container_setting.rb`:
+# también es un ajuste de este grupo, pero con un `value` sembrado ("clvsfe",
+# igual que el legacy) en vez de en blanco.
 #
 # ── Por qué una migración y no `db:seed` ─────────────────────────────────────
 # El catálogo se declara en `db/seeds.rb` (§36), y ese archivo hace upsert de

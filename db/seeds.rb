@@ -823,15 +823,21 @@ HACIENDA_XADES_SETTINGS = [
 ].freeze
 
 # Cuenta de Azure Storage donde `Documents::XmlArchive` guarda el XML firmado
-# que se envía a Hacienda y el XML de respuesta que Hacienda devuelve. El
-# CONTENEDOR no está acá: es fijo (`Documents::XmlArchive::CONTAINER`, "clvsfe",
-# igual que en el legacy) y no varía por instalación, así que no tiene sentido
-# como ajuste editable. Lo que SÍ varía por instalación es la cuenta —y
-# potencialmente por ambiente (dev/staging/prod usan cuentas distintas)—, por
-# eso nombre y clave van acá, con el mismo criterio que `HACIENDA_FE_CLIENT_ID`.
+# que se envía a Hacienda y el XML de respuesta que Hacienda devuelve. Nombre y
+# clave de la cuenta SÍ varían por instalación —y potencialmente por ambiente
+# (dev/staging/prod usan cuentas distintas)—, con el mismo criterio que
+# `HACIENDA_FE_CLIENT_ID`.
+#
+# El CONTENEDOR, en cambio, es el mismo "clvsfe" que usaba el legacy en
+# cualquier instalación: no lo elige el operador, así que lleva `fixed_value` y
+# se reafirma en cada corrida — igual que `HACIENDA_FE_GRANT_TYPE` y
+# `HACIENDA_XADES_SETTINGS` de más arriba. Vive en `settings` (no en una
+# constante) solo para poder corregirlo desde la UI sin deploy si Hacienda
+# alguna vez pidiera otro contenedor.
 AZURE_STORAGE_SETTINGS = [
   ['AZURE_STORAGE_ACCOUNT_NAME', 'Nombre de la cuenta de Azure Storage', true],
-  ['AZURE_STORAGE_ACCOUNT_KEY',  'Clave de acceso de la cuenta de Azure Storage', false]
+  ['AZURE_STORAGE_ACCOUNT_KEY',  'Clave de acceso de la cuenta de Azure Storage', false],
+  ['AZURE_STORAGE_CONTAINER',    'Contenedor de Azure Storage donde se guardan los XML', true, 'clvsfe']
 ].freeze
 
 # El grupo es el prefijo del `code` sin el campo, y se declara junto a las filas

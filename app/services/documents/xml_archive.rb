@@ -7,19 +7,14 @@ module Documents
   #   Documents::XmlArchive.store_sent(company: company, clave: clave, xml: signed_xml)
   #   # => "https://miempresa.blob.core.windows.net/clvsfe/3101822733/5061....xml"
   #
-  # El contenedor y el nombre de archivo los fija Hacienda/el legacy, no una
-  # elección de esta clase: `<contenedor fijo>/<cédula>/<clave>.xml` para el
-  # firmado que se envía, `<clave>_respuesta.xml` para el que Hacienda
-  # devuelve. La cédula (y no `company.id` ni `company.sap_db`) es la carpeta
+  # El nombre de archivo lo fija Hacienda/el legacy, no una elección de esta
+  # clase: `<contenedor>/<cédula>/<clave>.xml` para el firmado que se envía,
+  # `<clave>_respuesta.xml` para el que Hacienda devuelve — el contenedor sale
+  # del ajuste `AZURE_STORAGE_CONTAINER` (`db/seeds.rb`), sembrado con "clvsfe"
+  # igual que el legacy. La cédula (y no `company.id` ni `company.sap_db`) es la carpeta
   # porque es el identificador estable del contribuyente — el mismo criterio
   # que usa `CompanyFiles::Store` para el certificado y el logo (`CLAUDE.md` §34).
   module XmlArchive
-    # "clvsfe" — el mismo contenedor que usaba el legacy. Es FIJO: no varía por
-    # instalación (todas comparten la misma cuenta de Azure), así que no es un
-    # ajuste de `settings` — a diferencia de la cuenta y la clave, que sí
-    # cambian por ambiente y viven en el grupo `AZURE_STORAGE`.
-    CONTAINER = 'clvsfe'
-
     # Mismo patrón que `CompanyFiles::Store::VALID_ID_NUMBER`: solo alfanumérico
     # y guion. Una cédula con `/` cambiaría a qué blob se está escribiendo.
     VALID_ID_NUMBER = /\A[A-Za-z0-9-]+\z/
@@ -58,13 +53,25 @@ module Documents
 
     def store(company:, path:, content:)
       Azure::BlobStorage.new.upload(
-        container: CONTAINER,
+        container: container,
         path: "#{id_number(company)}/#{path}",
         content: content,
         content_type: 'application/xml'
       )
     end
     private_class_method :store
+
+    # "clvsfe", el mismo contenedor que usaba el legacy — es un ajuste (no una
+    # constante) para poder corregirlo desde la UI sin deploy si Hacienda
+    # alguna vez pidiera otro (`db/seeds.rb` lo reafirma en cada corrida).
+    def container
+      Setting.group('AZURE_STORAGE').fetch('CONTAINER')
+    rescue KeyError
+      raise Azure::BlobStorage::MissingConfiguration,
+            'Falta el ajuste AZURE_STORAGE_CONTAINER en Configuraciones → Generales, ' \
+            'necesario para guardar los XML de Hacienda.'
+    end
+    private_class_method :container
 
     def id_number(company)
       id_number = company.issuer_id_number.to_s.strip

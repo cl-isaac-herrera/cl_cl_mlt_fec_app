@@ -7,6 +7,11 @@ RSpec.describe Documents::XmlArchive do
   let(:blob_storage) { instance_double(Azure::BlobStorage) }
 
   before do
+    Setting.find_or_create_by!(code: 'AZURE_STORAGE_CONTAINER') do |s|
+      s.group_code = 'AZURE_STORAGE'
+      s.description = 'x'
+    end.update!(value: 'clvsfe')
+
     allow(Azure::BlobStorage).to receive(:new).and_return(blob_storage)
     allow(blob_storage).to receive(:upload).and_return('https://azure.test/clvsfe/3101822733/506123.xml')
   end
@@ -56,6 +61,16 @@ RSpec.describe Documents::XmlArchive do
 
       expect { described_class.store_sent(company: company, clave: '506123', xml: '<Factura/>') }
         .to raise_error(described_class::MissingIdNumber, /no es válido/)
+    end
+  end
+
+  describe 'sin el ajuste del contenedor' do
+    it 'nombra el ajuste que falta' do
+      Setting.find_by!(code: 'AZURE_STORAGE_CONTAINER').update!(value: nil)
+
+      expect { described_class.store_sent(company: company, clave: '506123', xml: '<Factura/>') }
+        .to raise_error(Azure::BlobStorage::MissingConfiguration, /AZURE_STORAGE_CONTAINER/)
+      expect(blob_storage).not_to have_received(:upload)
     end
   end
 end
