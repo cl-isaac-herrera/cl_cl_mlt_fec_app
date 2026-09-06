@@ -1,86 +1,124 @@
--- 1. Tabla Catálogo de Estados (PK Tinyint Manual)
-CREATE TABLE dbo.StatusCodes (
-    Code TINYINT NOT NULL,
-    [Name] VARCHAR(20) NOT NULL,
-    [Description] VARCHAR(255) NOT NULL,
-    CONSTRAINT PK_StatusCodes PRIMARY KEY CLUSTERED (Code)
-);
-
--- Inserción de Estados
---
--- `Sent` (3) es el que la resolución de Hacienda todavía no contestó. Equivale
--- al estado "EnHacienda" del sistema legacy: se envió el comprobante y se
--- consulta después, en otra pasada, si ya hay aceptación o rechazo. Es un
--- estado de TRÁNSITO y no uno final — a diferencia de `Accepted`/`Rejected`,
--- que sí lo son.
-INSERT INTO StatusCodes (Code, [Name], [Description]) VALUES
-(0, 'Pending',    'Documento registrado por SAP, listo para ser procesado.'),
-(1, 'OnHold',     'En espera por conflicto de concurrencia (un intento anterior del mismo documento está en Processing).'),
-(2, 'Processing', 'Documento en proceso activo de consulta, validación o envío a Hacienda.'),
-(3, 'Sent',       'Documento enviado a Hacienda; todavía sin respuesta de aceptación o rechazo (equivale a "EnHacienda" del sistema legacy).'),
-(4, 'Error',      'Fallo de validación o error técnico.'),
-(5, 'Cancelled',  'Documento descartado u omitido porque un intento previo ya finalizó con éxito.'),
-(6, 'Accepted',   'Hacienda aceptó el comprobante.'),
-(7, 'Rejected',   'Hacienda rechazó el comprobante.');
-
--- 2. Tabla Catálogo de Tipos de Documento (PK Nvarchar Manual)
---
--- Espejo de `DocType` (app/models/doc_type.rb) — pero solo de los códigos que
--- SÍ son comprobantes encolables. Los tres mensajes de receptor (`05`/`06`/`07`,
--- `DocType::RECEIVER_MESSAGES`) no llevan `DocEntry` de factura ni pasan por
--- esta cola: no tienen detalle de líneas ni resumen, así que no son un
--- "tipo de documento" para `DocumentsQueue` (mismo criterio que ya aplica
--- `db/seeds.rb` para `qsSlUpdateDocumentInfo`). Si `DocType` agrega o quita un
--- comprobante real, este catálogo se actualiza junto con él.
-CREATE TABLE dbo.DocTypes (
-    Code NVARCHAR(2) NOT NULL,
-    [Name] VARCHAR(10) NOT NULL,
-    [Description] VARCHAR(255) NOT NULL,
-    CONSTRAINT PK_DocTypes PRIMARY KEY CLUSTERED (Code)
-);
-
-INSERT INTO DocTypes (Code, [Name], [Description]) VALUES
-('01', 'FE',  'Factura electrónica'),
-('02', 'ND',  'Nota de débito electrónica'),
-('03', 'NC',  'Nota de crédito electrónica'),
-('04', 'TE',  'Tiquete electrónico'),
-('08', 'FEC', 'Factura electrónica de compra'),
-('09', 'FEE', 'Factura electrónica de exportación'),
-('10', 'REP', 'Recibo electrónico de pago');
-
--- 3. Tabla Principal de Cola de Documentos
-CREATE TABLE dbo.DocumentsQueue (
-    Id BIGINT IDENTITY(1,1) NOT NULL,
-    DocEntry INT NOT NULL,
-    DocType NVARCHAR(2) NOT NULL,
-    SAPDB NVARCHAR(30) NOT NULL,
-    StatusCode TINYINT NOT NULL DEFAULT 0,
-    Details NVARCHAR(MAX) NULL,
-    CreatedAt DATETIME2(3) NOT NULL DEFAULT SYSDATETIME(),
-    UpdatedAt DATETIME2(3) NOT NULL DEFAULT SYSDATETIME(),
-
-    CONSTRAINT PK_DocumentsQueue PRIMARY KEY CLUSTERED (Id)
-);
-
-ALTER TABLE dbo.DocumentsQueue
-    ADD CONSTRAINT FK_DocumentsQueue_StatusCodes FOREIGN KEY (StatusCode) REFERENCES StatusCodes (Code);
-
-ALTER TABLE dbo.DocumentsQueue
-    ADD CONSTRAINT FK_DocumentsQueue_DocTypes FOREIGN KEY (DocType) REFERENCES DocTypes (Code);
-
--- 4. Índices de Rendimiento
-
--- Optimiza la lectura de documentos pendientes/encolados por el FE Service
-CREATE NONCLUSTERED INDEX IX_DocumentsQueue_Polling
-ON DocumentsQueue (SAPDB, StatusCode, Id)
-INCLUDE (DocEntry, DocType);
-
--- Optimiza la búsqueda de historial/trazabilidad por documento
-CREATE NONCLUSTERED INDEX IX_DocumentsQueue_DocLookup
-ON DocumentsQueue (SAPDB, DocType, DocEntry, CreatedAt DESC);
-
-
-/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_CRT_DOCUMENTTOQUEUE]    Script Date: 24/8/2026 16:18:55 ******/
+/****** Object:  Table [dbo].[DocTypes]    Script Date: 6/9/2026 13:32:31 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[DocTypes](
+	[Code] [nvarchar](2) NOT NULL,
+	[Name] [varchar](10) NOT NULL,
+	[Description] [varchar](255) NOT NULL,
+ CONSTRAINT [PK_DocTypes] PRIMARY KEY CLUSTERED 
+(
+	[Code] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+/****** Object:  Table [dbo].[DocumentAttemptDetails]    Script Date: 6/9/2026 13:32:32 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[DocumentAttemptDetails](
+	[Id] [bigint] IDENTITY(1,1) NOT NULL,
+	[DocumentQueueId] [bigint] NOT NULL,
+	[StatusCode] [tinyint] NOT NULL,
+	[Details] [nvarchar](max) NULL,
+	[CreatedAt] [datetime2](3) NOT NULL,
+ CONSTRAINT [PK_DocumentAttemptDetails] PRIMARY KEY CLUSTERED 
+(
+	[Id] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+GO
+/****** Object:  Table [dbo].[DocumentsQueue]    Script Date: 6/9/2026 13:32:32 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[DocumentsQueue](
+	[Id] [bigint] IDENTITY(1,1) NOT NULL,
+	[DocEntry] [int] NOT NULL,
+	[DocType] [nvarchar](2) NOT NULL,
+	[SAPDB] [nvarchar](30) NOT NULL,
+	[StatusCode] [tinyint] NOT NULL,
+	[CreatedAt] [datetime2](3) NOT NULL,
+	[UpdatedAt] [datetime2](3) NOT NULL,
+	[Attempts] [tinyint] NOT NULL,
+ CONSTRAINT [PK_DocumentsQueue] PRIMARY KEY CLUSTERED 
+(
+	[Id] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+/****** Object:  Table [dbo].[StatusCodes]    Script Date: 6/9/2026 13:32:32 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[StatusCodes](
+	[Code] [tinyint] NOT NULL,
+	[Name] [varchar](20) NOT NULL,
+	[Description] [varchar](255) NOT NULL,
+ CONSTRAINT [PK_StatusCodes] PRIMARY KEY CLUSTERED 
+(
+	[Code] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+INSERT [dbo].[DocTypes] ([Code], [Name], [Description]) VALUES (N'01', N'FE', N'Factura electrónica')
+GO
+INSERT [dbo].[DocTypes] ([Code], [Name], [Description]) VALUES (N'02', N'ND', N'Nota de débito electrónica')
+GO
+INSERT [dbo].[DocTypes] ([Code], [Name], [Description]) VALUES (N'03', N'NC', N'Nota de crédito electrónica')
+GO
+INSERT [dbo].[DocTypes] ([Code], [Name], [Description]) VALUES (N'04', N'TE', N'Tiquete electrónico')
+GO
+INSERT [dbo].[DocTypes] ([Code], [Name], [Description]) VALUES (N'08', N'FEC', N'Factura electrónica de compra')
+GO
+INSERT [dbo].[DocTypes] ([Code], [Name], [Description]) VALUES (N'09', N'FEE', N'Factura electrónica de exportación')
+GO
+INSERT [dbo].[DocTypes] ([Code], [Name], [Description]) VALUES (N'10', N'REP', N'Recibo electrónico de pago')
+GO
+INSERT [dbo].[StatusCodes] ([Code], [Name], [Description]) VALUES (0, N'Pending', N'Documento registrado por SAP, listo para ser procesado.')
+GO
+INSERT [dbo].[StatusCodes] ([Code], [Name], [Description]) VALUES (2, N'Processing', N'Documento en proceso activo de consulta, validación o envío a Hacienda.')
+GO
+INSERT [dbo].[StatusCodes] ([Code], [Name], [Description]) VALUES (3, N'Sent', N'Documento procesado y enviado a Hacienda exitosamente.')
+GO
+INSERT [dbo].[StatusCodes] ([Code], [Name], [Description]) VALUES (4, N'Error', N'Fallo de validación o error técnico.')
+GO
+INSERT [dbo].[StatusCodes] ([Code], [Name], [Description]) VALUES (6, N'Accepted', N'Hacienda aceptó el comprobante.')
+GO
+INSERT [dbo].[StatusCodes] ([Code], [Name], [Description]) VALUES (7, N'Rejected', N'Hacienda rechazó el comprobante.')
+GO
+ALTER TABLE [dbo].[DocumentAttemptDetails] ADD  DEFAULT ((0)) FOR [StatusCode]
+GO
+ALTER TABLE [dbo].[DocumentAttemptDetails] ADD  DEFAULT (sysdatetime()) FOR [CreatedAt]
+GO
+ALTER TABLE [dbo].[DocumentsQueue] ADD  DEFAULT ((0)) FOR [StatusCode]
+GO
+ALTER TABLE [dbo].[DocumentsQueue] ADD  DEFAULT (sysdatetime()) FOR [CreatedAt]
+GO
+ALTER TABLE [dbo].[DocumentsQueue] ADD  DEFAULT (sysdatetime()) FOR [UpdatedAt]
+GO
+ALTER TABLE [dbo].[DocumentsQueue] ADD  CONSTRAINT [DF_DocumentsQueue_Attempts]  DEFAULT ((0)) FOR [Attempts]
+GO
+ALTER TABLE [dbo].[DocumentAttemptDetails]  WITH CHECK ADD  CONSTRAINT [FK_DocumentAttemptDetails_DocumentsQueue] FOREIGN KEY([DocumentQueueId])
+REFERENCES [dbo].[DocumentsQueue] ([Id])
+GO
+ALTER TABLE [dbo].[DocumentAttemptDetails] CHECK CONSTRAINT [FK_DocumentAttemptDetails_DocumentsQueue]
+GO
+ALTER TABLE [dbo].[DocumentsQueue]  WITH CHECK ADD  CONSTRAINT [FK_DocumentsQueue_DocTypes] FOREIGN KEY([DocType])
+REFERENCES [dbo].[DocTypes] ([Code])
+GO
+ALTER TABLE [dbo].[DocumentsQueue] CHECK CONSTRAINT [FK_DocumentsQueue_DocTypes]
+GO
+ALTER TABLE [dbo].[DocumentsQueue]  WITH CHECK ADD  CONSTRAINT [FK_DocumentsQueue_StatusCodes] FOREIGN KEY([StatusCode])
+REFERENCES [dbo].[StatusCodes] ([Code])
+GO
+ALTER TABLE [dbo].[DocumentsQueue] CHECK CONSTRAINT [FK_DocumentsQueue_StatusCodes]
+GO
+/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_CRT_DOCUMENTTOQUEUE]    Script Date: 6/9/2026 13:32:32 ******/
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
@@ -95,27 +133,35 @@ BEGIN
 	-- interfering with SELECT statements.
 	SET NOCOUNT ON;
 
-	DECLARE @statusCode TINYINT = 1;
-
-	IF EXISTS (SELECT TOP(1) 1 FROM dbo.DocumentsQueue WHERE SAPDB = @SAPDB AND DocEntry = @DocEntry AND DocType = @DocType AND StatusCode = 2 ORDER BY Id DESC)
-	BEGIN
-		/*
-			Se guarda en estado OnHold debido a que no sabemos si el documento duplicado que esta en estado Processing se procesara correctamente, por lo cual
-			no podemos dejarlo en "Pending" provocando que otro proceso lo tome y lo procese duplicado.
-		*/
-		
-		INSERT dbo.DocumentsQueue (DocEntry, DocType, SAPDB, StatusCode, CreatedAt, UpdatedAt)
-		VALUES (@DocEntry, @DocType, @SAPDB, 1, GETDATE(), GETDATE());
-	END
-	ELSE IF NOT EXISTS (SELECT TOP(1) 1 FROM dbo.DocumentsQueue WHERE SAPDB = @SAPDB AND DocEntry = @DocEntry AND DocType = @DocType AND StatusCode NOT IN (0,3) ORDER BY Id DESC)
+	IF NOT EXISTS (SELECT 1 FROM dbo.DocumentsQueue WHERE SAPDB = @SAPDB AND DocEntry = @DocEntry AND DocType = @DocType)
 	BEGIN
 		INSERT dbo.DocumentsQueue (DocEntry, DocType, SAPDB, StatusCode, CreatedAt, UpdatedAt)
 		VALUES (@DocEntry, @DocType, @SAPDB, 0, GETDATE(), GETDATE());
 	END
-    
 END
 GO
-/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS]    Script Date: 24/8/2026 16:18:55 ******/
+/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_SLT_PENDINGCHECKDOCUMENTS]    Script Date: 6/9/2026 13:32:32 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_SLT_PENDINGCHECKDOCUMENTS]
+AS
+BEGIN
+	-- SET NOCOUNT ON added to prevent extra result sets from
+	-- interfering with SELECT statements.
+	SET NOCOUNT ON;
+
+	SELECT 
+		Id,
+		DocEntry,
+		DocType,
+		SAPDB
+	FROM dbo.DocumentsQueue
+	WHERE UpdatedAt <= DATEADD(SECOND, 3, GETDATE())
+END
+GO
+/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS]    Script Date: 6/9/2026 13:32:32 ******/
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
@@ -136,10 +182,11 @@ BEGIN
 		inserted.DocType,
 		inserted.SAPDB
 	WHERE StatusCode = 0 
-		OR (StatusCode = 2 AND UpdatedAt <= DATEADD(MINUTE, -10, GETDATE()));
+		OR (StatusCode = 2 AND UpdatedAt <= DATEADD(MINUTE, -10, GETDATE()))
+		OR (StatusCode = 4 AND DATEDIFF(MINUTE, UpdatedAt, GETDATE()) >= POWER(2, Attempts))
 END
 GO
-/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_UPT_DOCUMENT]    Script Date: 24/8/2026 16:18:55 ******/
+/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_UPT_DOCUMENT]    Script Date: 6/9/2026 13:32:32 ******/
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
@@ -159,25 +206,36 @@ BEGIN
 
 	UPDATE dbo.DocumentsQueue SET
 		StatusCode = @StatusCode,
-		Details = @Details,
-		UpdatedAt = GETDATE()
+		UpdatedAt = GETDATE(),
+		Attempts = Attempts + 1
 	WHERE Id = @Id;
 
-	IF @StatusCode = 3
-	BEGIN
-		UPDATE dbo.DocumentsQueue SET
-			StatusCode = 5,
-			Details = 'Este documento ya fué procesado exitosamente.',
-			UpdatedAt = GETDATE()
-		WHERE SAPDB = @SAPDB AND DocEntry = @DocEntry AND DocType = @DocType AND StatusCode = 1;
-	END
-	ELSE IF @StatusCode = 4
-	BEGIN
-		UPDATE dbo.DocumentsQueue SET
-			StatusCode = 0,
-			Details = NULL,
-			UpdatedAt = GETDATE()
-		WHERE SAPDB = @SAPDB AND DocEntry = @DocEntry AND DocType = @DocType AND StatusCode = 1;
-	END
+	INSERT INTO dbo.DocumentAttemptDetails (DocumentQueueId, CreatedAt, Details, StatusCode)
+	VALUES (@Id, GETDATE(), @Details, @StatusCode);
+END
+GO
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS]
+	@SAPDB NVARCHAR(30),
+	@DocEntry INT,
+	@DocType NVARCHAR(2)
+AS
+BEGIN
+	-- SET NOCOUNT ON added to prevent extra result sets from
+	-- interfering with SELECT statements.
+	SET NOCOUNT ON;
+
+	SELECT
+		docAttemps.CreatedAt,
+		docAttemps.Details,
+		docAttemps.StatusCode
+	FROM dbo.DocumentsQueue doc 
+	JOIN dbo.DocumentAttemptDetails docAttemps ON doc.Id = docAttemps.DocumentQueueId
+	WHERE doc.SAPDB = @SAPDB
+	AND doc.DocEntry = @DocEntry
+	AND doc.DocType = @DocType;
 END
 GO

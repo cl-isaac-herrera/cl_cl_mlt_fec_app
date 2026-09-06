@@ -7,7 +7,7 @@ module Documents
   #   # => [#<Entry id=1 doc_entry=25 doc_type="01" sap_db="CL_DEMO">, …]
   #
   # Es el paso 2 del flujo de `docs/sync-documents-flow.md`: el Post Transact de
-  # SAP inserta una fila por intento y este procedimiento devuelve las que están
+  # SAP inserta una fila por documento y este procedimiento devuelve las que están
   # en `pending`.
   #
   # La conexión va por `ExternalDb::Pool` (`CLAUDE.md` §37) — nunca ODBC a mano—,
@@ -18,6 +18,27 @@ module Documents
   # ⚠️ Esto NO habla con SAP. La base de la cola es una base propia del producto;
   # llegar a la base de compañía de SAP por ODBC saltaría su lógica de negocio y
   # anularía su soporte (§37).
+  #
+  # ── Una sola fila por documento, nunca un duplicado ──────────────────────────
+  # El Post Transact (`db/external/sql_server/sap_post_transact_section.sql`)
+  # solo encola en `@transaction_type = 'A'` (alta) y el procedimiento que llama
+  # inserta nada más si todavía no existe una fila para esa llave — sin importar
+  # su estado. Es a propósito: cuando este producto corrige el documento por
+  # Service Layer (para reintentarlo), esa escritura también dispara el Post
+  # Transact, y antes eso volvía a insertar una fila nueva — un ciclo
+  # encolar→emitir→re-encolar del propio arreglo, no del documento real.
+  #
+  # El motivo de que haga falta reintentar en primer lugar: un documento puede
+  # fallar por un dato maestro fuera de sí mismo (el socio de negocio, un
+  # impuesto, etc.), y el Post Transact no vuelve a disparar cuando se corrige
+  # ESE dato — solo cuando el documento cambia. Sin un reintento que vuelva a
+  # consultar la información ya corregida, el documento se queda varado para
+  # siempre en `Error`.
+  #
+  # Por eso `#pending` reintenta `Error` con backoff exponencial (ver
+  # `PROCEDURE`) en vez de re-encolar, y cada intento —no solo el último— se
+  # guarda en `DocumentAttemptDetails` (ver `UPDATE_PROCEDURE`): es la
+  # trazabilidad de cuántas veces se reintentó y por qué falló cada vez.
   class PendingQueue
     # Grupo de `settings` con los datos ODBC. Es el mismo que administra
     # Configuraciones → Generales y que prueba el botón "Probar conexión".
@@ -32,35 +53,37 @@ module Documents
     #   OUTPUT inserted.Id, inserted.DocEntry, inserted.DocType, inserted.SAPDB
     #   WHERE StatusCode = 0
     #      OR (StatusCode = 2 AND UpdatedAt <= DATEADD(MINUTE, -10, GETDATE()))
+    #      OR (StatusCode = 4 AND DATEDIFF(MINUTE, UpdatedAt, GETDATE()) >= POWER(2, Attempts))
     #
     # Marcar y devolver en una sola operación atómica es lo que impide que dos
-    # corridas —o dos workers— tomen el mismo documento. La segunda mitad del
-    # `WHERE` es la recuperación: lo que quedó en "procesando" más de diez minutos
-    # se considera abandonado y se vuelve a repartir.
+    # corridas —o dos workers— tomen el mismo documento. La segunda condición es
+    # la recuperación de lo que quedó "procesando" más de diez minutos (abandonado,
+    # se reparte de nuevo). La tercera es el reintento de `Error` con backoff
+    # exponencial: 1 intento → 2 min, 2 → 4 min, 3 → 8 min…, para que un documento
+    # que falla por un dato maestro corregido después (ver la nota de la clase)
+    # no dependa de que alguien lo re-encole a mano.
     PROCEDURE = 'CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS'
 
     # Procedimiento que devuelve un documento a la cola con su estado y el motivo.
     #
     #   EXEC …UPT_DOCUMENT @Id, @DocEntry, @DocType, @SAPDB, @Details, @StatusCode
     #
-    # Además de actualizar la fila, resuelve el duplicado en espera: si el
-    # documento terminó `Sent`, el `OnHold` del mismo comprobante pasa a
-    # `Cancelled`; si terminó `Error`, vuelve a `Pending` para que se reintente.
-    # Por eso los cuatro identificadores viajan aunque `@Id` ya identifique la
-    # fila — el procedimiento los necesita para encontrar al duplicado.
+    # Además de actualizar la fila (y sumar el intento a `Attempts`, para el
+    # backoff exponencial de `#pending`), guarda el detalle en el historial de
+    # intentos (`DocumentAttemptDetails`) en vez de sobrescribir un único
+    # campo. `@DocEntry`/`@DocType`/`@SAPDB` quedan en la firma aunque `@Id` ya
+    # identifique la fila, por compatibilidad con la firma existente.
     UPDATE_PROCEDURE = 'CL_D_CL_MLT_FEC_UPT_DOCUMENT'
 
     # Estados de la cola. Son el catálogo `dbo.StatusCodes` de la base externa
     # (ver `db/external/sql_server/schema.sql`), no una invención de este lado:
     # la columna tiene una llave foránea contra esa tabla.
     STATUS_PENDING    = 0 # registrado por SAP, listo para procesarse
-    STATUS_ON_HOLD    = 1 # en espera: otro intento del mismo documento está en curso
     STATUS_PROCESSING = 2 # tomado por una corrida
     # De TRÁNSITO, no final: se envió el comprobante y Hacienda todavía no
     # contestó si lo aceptó o lo rechazó (equivale a "EnHacienda" del legacy).
     STATUS_SENT       = 3
     STATUS_ERROR      = 4 # fallo de validación o error técnico
-    STATUS_CANCELLED  = 5 # descartado porque un intento previo ya terminó bien
     STATUS_ACCEPTED   = 6 # Hacienda aceptó el comprobante — final
     STATUS_REJECTED   = 7 # Hacienda rechazó el comprobante — final
 
@@ -70,7 +93,9 @@ module Documents
     # tenga mejor.
     MAX_DETAILS = 2_000
 
-    # Una fila de la cola. `id` es la fila de la cola (el historial de intentos);
+    # Una fila de la cola. `id` identifica al documento dentro de la cola —hay una
+    # sola fila por documento, nunca una por intento (ver la nota de la clase); el
+    # historial de cada intento se guarda aparte, en `DocumentAttemptDetails`—.
     # `doc_entry` + `doc_type` identifican el documento dentro de la compañía, y
     # `sap_db` dice en cuál.
     #

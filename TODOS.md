@@ -1174,6 +1174,27 @@ clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo p
       (`OINV`, cubre también `ORIN`/`OPCH` por la replicación) y `payments.json`
       (`ORCT`).
 
+- [ ] **`db/external/hana/schema.sql` quedó desactualizado tras el rediseño de la cola (2026-09-06).**
+      `db/external/sql_server/schema.sql` se reescribió: ya no hay `OnHold`(1)/`Cancelled`(5)
+      ni la lógica de duplicados que dependía de ellos. Motivo (explicado por el usuario):
+      el Post Transact de SAP (`sap_post_transact_section.sql`) solo encola en altas, y
+      antes, cuando este producto corregía un documento por Service Layer para reintentarlo,
+      esa misma escritura volvía a disparar el Post Transact y a insertar otra fila —un
+      ciclo del propio arreglo, no del documento—; y un documento puede fallar por un dato
+      maestro fuera de sí mismo (socio, impuesto…) que el Post Transact nunca vuelve a ver
+      corregido. La solución: una sola fila por documento, con reintento automático de
+      `Error` con backoff exponencial (`POWER(2, Attempts)` minutos, columna `Attempts`) que
+      sí vuelve a consultar todo fresco en cada intento, y cada intento —no solo el
+      último— se guarda en la tabla nueva `DocumentAttemptDetails` para trazabilidad.
+      También agregó dos procedimientos nuevos
+      (`CL_D_CL_MLT_FEC_SLT_PENDINGCHECKDOCUMENTS`, `CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS`).
+      `app/services/documents/pending_queue.rb` ya está al día con esto (sin
+      `STATUS_ON_HOLD`/`STATUS_CANCELLED`; la firma de `UPDATE_PROCEDURE` no cambió, así
+      que `#mark` sigue igual). **Pendiente:** `db/external/hana/schema.sql` sigue con la
+      versión vieja completa (`OnHold`/`Cancelled`, sin `Attempts`/`DocumentAttemptDetails`);
+      y `PendingQueue` todavía no consume el historial de intentos ni
+      `SLT_PENDINGCHECKDOCUMENTS` (sin llamador todavía en Ruby).
+
 - [ ] **`bin/rails db:migrate RAILS_ENV=test` sembró el catálogo completo solo (2026-09-05).**
       Al migrar la base de test para esta tanda, apareció con `permissions`,
       `role_permissions`, `roles` y `sl_resources` completamente poblados —los 45
