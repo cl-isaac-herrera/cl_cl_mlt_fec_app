@@ -169,14 +169,19 @@ export default class extends TabulatorController {
   getColumns() {
     return [
       {
-        title: 'Fecha Fact.',
-        field: 'FechaFact',
-        width: 150,
+        // `DocDate` — fecha del documento en SAP, no la de emisión ante Hacienda.
+        title: 'Fecha Factura',
+        field: 'FechaFactura',
+        width: 130,
       },
       {
+        // Vacío hasta que Hacienda acepta el comprobante y asigna el
+        // consecutivo — no es un dato faltante, es el estado normal de un
+        // documento que todavía no se envió (o está en trámite).
         title: 'N° FE',
         field: 'NumeroConsecutivo',
         widthGrow: 2,
+        formatter: (cell) => cell.getValue() || '<span class="text-gray-400">—</span>',
       },
       {
         title: 'N° Ref',
@@ -267,9 +272,9 @@ export default class extends TabulatorController {
     return { data: docs, last_page: lastPage };
   }
 
-  // `doc` trae los campos crudos de SAP (`DocEntry`, `DocNum`, `CardName`,
-  // `DocCurrency`, `DocTotal`, `U_CL_FEC_*`) — se traducen acá a los nombres que
-  // usan las columnas de la tabla. `docType` es el filtro con el que se buscó
+  // `doc` trae los campos crudos de SAP (`DocEntry`, `DocDate`, `DocNum`,
+  // `CardName`, `DocCurrency`, `DocTotal`, `U_CL_FEC_*`) — se traducen acá a
+  // los nombres que usan las columnas de la tabla. `docType` es el filtro con el que se buscó
   // (SAP no lo devuelve en la fila): se estampa para que el dropdown de
   // acciones pueda decidir según tipo (ej. "Anulación Interna" solo en FEC).
   //
@@ -287,9 +292,11 @@ export default class extends TabulatorController {
       ErrDetails: doc.U_CL_FEC_ErrorDetails,
       Status: doc.U_CL_FEC_Status,
       StatusForTable: this.#statusLabel(doc.U_CL_FEC_Status),
-      FechaFact: this.#formatDate(doc.U_CL_FEC_FechaEmision),
+      FechaFactura: this.#formatDate(doc.DocDate),
+      // Sin columna propia en la tabla (se sacó a pedido): sigue viajando
+      // cruda para el panel "Consultar Información" (`#openInfoModal`).
       FechaEmision: doc.U_CL_FEC_FechaEmision,
-      TotalComprobante: this.#normalizeCurrency(doc.DocCurrency) +
+      TotalComprobante: this.#normalizeCurrency(doc.DocCurrency) + ' ' +
                         Number(doc.DocTotal || 0).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,'),
     };
   }
@@ -954,12 +961,15 @@ export default class extends TabulatorController {
 
   async #openInfoModal(row) {
     this.infoClaveTarget.textContent        = row.Clave || '';
-    this.infoFechaEmisionTarget.textContent = row.FechaEmision
-      ? row.FechaEmision.substring(0, 10)
-      : '';
+    this.infoFechaEmisionTarget.textContent = this.#formatDateTime(row.FechaEmision);
 
+    // `U_CL_FEC_ErrorDetails` mezcla dos cosas en un solo campo: el texto
+    // técnico propio (antes de "[") y, cuando Hacienda rechaza, el array con
+    // código+mensaje por cada error — `#formatHaciendaError` ya sabía separar
+    // eso (lo usa la sección de abajo), así que se reutiliza acá en vez de
+    // volcar el string crudo.
     if (row.ErrDetails) {
-      this.infoErrorTarget.textContent = row.ErrDetails;
+      this.infoErrorTarget.innerHTML = this.#formatHaciendaError(row.ErrDetails);
       this.infoErrorSectionTarget.classList.remove('hidden');
     } else {
       this.infoErrorSectionTarget.classList.add('hidden');
@@ -1195,6 +1205,24 @@ export default class extends TabulatorController {
     if (isNaN(d.getTime())) return '';
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  // Formato canónico de fecha+hora (CLAUDE.md §5): `yyyy-MM-dd HH:mm:ss`.
+  // `U_CL_FEC_FechaEmision` sí trae hora — el panel de información la mostraba
+  // truncada con `.substring(0, 10)`, perdiéndola sin necesidad.
+  //
+  // ⚠️ NO usar `new Date(dateStr).getHours()` acá: el valor llega con sufijo
+  // `Z` (ej. `2026-09-06T09:06:00Z`), y `new Date` lo toma como UTC — `getHours()`
+  // (hora LOCAL del navegador) lo convierte a la zona del browser, corriendo la
+  // hora 6 horas para atrás en Costa Rica (09:06 → 03:06). Se extraen los
+  // dígitos tal cual vienen en el string, sin pasar por conversión de huso
+  // horario ninguna.
+  #formatDateTime(dateStr) {
+    if (!dateStr) return '';
+    const match = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (!match) return '';
+    const [, year, month, day, hours, minutes, seconds] = match;
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   }
 
   #openBase64InTab(b64, mimeType) {

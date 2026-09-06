@@ -397,6 +397,16 @@
             label: 'Fecha de la resolución',
             type: 'date' %>
 
+      <%= render 'configurations/general/setting_field',
+            code:        'HACIENDA_FE_CLIENT_ID',
+            label:       'Client ID',
+            placeholder: 'api-stag / api-prod' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'HACIENDA_FE_GRANT_TYPE',
+            label:       'Grant type',
+            placeholder: 'password' %>
+
     </div>
 
     <div class="mt-4 flex items-center justify-between gap-4">
@@ -471,6 +481,59 @@
               data-general-configs-target="groupButton"
               data-setting-group="HACIENDA_XADES"
               data-testid="btn-update-hacienda-xades"
+              disabled
+              class="ml-auto flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm
+                     font-medium hover:bg-blue-700 transition-colors
+                     disabled:opacity-40 disabled:cursor-not-allowed">
+        <span class="material-icons text-base">loop</span>
+        <span>Actualizar</span>
+      </button>
+    </div>
+  </div>
+
+  <%# ---------------------------------------------------------------- %>
+  <%# SECCIÓN: Azure Storage (grupo AZURE_STORAGE)                      %>
+  <%#                                                                   %>
+  <%# Cuenta donde `Documents::XmlArchive` guarda el XML firmado que se %>
+  <%# envía a Hacienda y el XML de respuesta que Hacienda devuelve. El  %>
+  <%# contenedor NO es un ajuste: es fijo ("clvsfe", igual que el       %>
+  <%# legacy) y no varía por instalación — solo la cuenta sí.           %>
+  <%# ---------------------------------------------------------------- %>
+  <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6"
+       style="grid-column: 1 / -1;">
+
+    <%= render 'configurations/general/section_loader', target: 'groupLoader', group: 'AZURE_STORAGE' %>
+
+    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+      Azure Storage
+    </h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <%= render 'configurations/general/setting_field',
+            code:        'AZURE_STORAGE_ACCOUNT_NAME',
+            label:       'Nombre de la cuenta',
+            placeholder: 'clvsfe...' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:  'AZURE_STORAGE_ACCOUNT_KEY',
+            label: 'Clave de acceso',
+            type:  'password' %>
+
+    </div>
+
+    <div class="mt-4 flex items-center justify-between gap-4">
+      <div data-general-configs-target="groupAudit" data-setting-group="AZURE_STORAGE"
+           class="hidden flex items-center gap-1.5 text-xs text-gray-400">
+        <span class="material-icons text-sm leading-none">history</span>
+        <span data-audit-text></span>
+      </div>
+
+      <button type="button"
+              data-action="click->general-configs#saveGroup"
+              data-general-configs-target="groupButton"
+              data-setting-group="AZURE_STORAGE"
+              data-testid="btn-update-azure-storage"
               disabled
               class="ml-auto flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm
                      font-medium hover:bg-blue-700 transition-colors

@@ -12,22 +12,53 @@ RSpec.describe SyncIssuedDocumentsJob do
   end
   let(:client) { instance_double(Clavisco::ServiceLayer::Client) }
 
+  # La firma y el envío se doblan: acá se prueba la ORQUESTACIÓN —qué se
+  # intenta, en qué orden y qué se anota en la cola y en SAP según el
+  # desenlace—, no el XML ni el HTTP. Eso lo cubren
+  # `spec/services/hacienda/xml_builder_spec.rb` y `client_spec.rb`.
+  let(:signer) { instance_double(Hacienda::XmlSigner, sign: 'PEZhY3R1cmE+') }
+  let(:hacienda) { instance_double(Hacienda::Client) }
+  let(:receipt) do
+    Hacienda::Client::Receipt.new(location: 'https://api.test/recepcion/555', duplicate: false)
+  end
+  let(:xml_sent_url) { 'https://azure.test/clvsfe/3101822733/506123.xml' }
+
   before do
     filter = '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)'
     %w[HEADER LINES OTHER_CHARGES PAYMENT_METHODS REFERENCES OTHERS].each do |name|
       SlResource.create!(code: Sap::DocumentDetails.const_get(name),
                          resource: "view.svc/#{name}_B1SLQuery", query_params: filter, page_size: 0)
     end
+    # El recurso con el que se le escribe el desenlace al documento de SAP.
+    SlResource.create!(code: 'updateDocument01', resource: 'Invoices(#DocumentEntry#)', page_size: 0)
 
     allow(Sap::CompanyClient).to receive(:for).and_return(client)
     allow(client).to receive(:get) { |path| path.match?(/HEADER/) ? [{ 'Clave' => '506123' }] : [] }
+    allow(client).to receive(:patch)
+
+    allow(Hacienda::CompanySigner).to receive(:for).and_return(signer)
+    allow(Hacienda::Client).to receive(:new).and_return(hacienda)
+    allow(hacienda).to receive(:send_document).and_return(receipt)
+    # El archivado en Azure se dobla igual que la firma y el envío: tiene su
+    # propio spec (`spec/services/azure/blob_storage_spec.rb`,
+    # `xml_archive_spec.rb`). Acá solo importa que `Documents::Issuer` lo llama
+    # y que la URL que devuelve termina en el `PATCH` a SAP.
+    allow(Documents::XmlArchive).to receive(:store_sent).and_return(xml_sent_url)
+    # El documento de prueba no pasa las reglas de FE (la cabecera que devuelve
+    # el doble de SAP trae solo la clave), así que el validador se dobla en los
+    # ejemplos que no lo están probando.
+    allow(Hacienda::InvoiceValidator).to receive(:new).and_return(
+      instance_double(Hacienda::InvoiceValidator,
+                      call: Hacienda::InvoiceValidator::Result.new(errors: []))
+    )
   end
 
   def queue(*entries)
     allow(Documents::PendingQueue).to receive(:pending).and_return(entries)
-    # Toda falla devuelve el documento a la cola como `Error`. Se dobla siempre:
-    # sin esto un ejemplo que falla intentaría hablar con la base externa.
+    # El desenlace vuelve a la cola. Se doblan los dos: sin esto un ejemplo
+    # intentaría hablar con la base externa.
     allow(Documents::PendingQueue).to receive(:mark_error)
+    allow(Documents::PendingQueue).to receive(:mark_sent)
   end
 
   def entry(id: 1, doc_entry: 25, doc_type: DocType::FE, sap_db: 'SBO_ACME')
@@ -63,6 +94,231 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Sap::CompanyClient).to have_received(:for).once
+    end
+
+    # Abrir el `.p12` descifra la llave privada y pedir el token es un viaje a
+    # Hacienda: los dos son por compañía, no por documento.
+    it 'reutiliza el firmador y el cliente de Hacienda entre documentos' do
+      queue(entry(id: 1, doc_entry: 25), entry(id: 2, doc_entry: 26))
+
+      described_class.perform_now
+
+      expect(Hacienda::CompanySigner).to have_received(:for).once
+      expect(Hacienda::Client).to have_received(:new).once
+    end
+
+    it 'firma el XML y lo envía a Hacienda' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(signer).to have_received(:sign).with(/<FacturaElectronica/)
+      expect(hacienda).to have_received(:send_document)
+        .with(hash_including(comprobante_xml: 'PEZhY3R1cmE+'))
+    end
+
+    # Enviar deja el comprobante EN TRÁNSITO: el `Location` es donde Hacienda va
+    # a publicar la resolución, y es lo único que la pasada que la recoja
+    # necesita para encontrarla.
+    it 'deja el documento en Enviado con el Location, en la cola y en SAP' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue)
+        .to have_received(:mark_sent).with(anything, 'https://api.test/recepcion/555')
+      expect(client).to have_received(:patch)
+        .with('Invoices(25)', body: hash_including('U_CL_FEC_Status' => 3))
+    end
+
+    # El orden exacto (firmar → archivar → enviar) lo prueba
+    # `spec/services/documents/issuer_spec.rb`; acá solo importa que la URL que
+    # devuelve `Documents::XmlArchive` termina en `U_CL_FEC_XmlSentUrl`, junto
+    # con la clave y el consecutivo que trajo SAP.
+    it 'archiva el XML firmado y guarda la URL en SAP' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(Documents::XmlArchive).to have_received(:store_sent)
+        .with(company: company, clave: '506123', xml: anything)
+      expect(client).to have_received(:patch)
+        .with(anything, body: hash_including('U_CL_FEC_XmlSentUrl' => xml_sent_url,
+                                             'U_CL_FEC_Clave' => '506123'))
+    end
+
+    # El mismo número de estado en los dos lados: así lo que ve alguien en SAP y
+    # lo que ve alguien en la cola se comparan sin traducir.
+    it 'limpia el detalle de error de SAP cuando el envío sale bien' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(client).to have_received(:patch)
+        .with(anything, body: hash_including('U_CL_FEC_ErrorDetails' => nil))
+    end
+  end
+
+  # La pregunta que separa un desenlace del otro es si reintentar sin que nadie
+  # toque nada puede funcionar.
+  describe 'desenlaces del envío' do
+    it 'marca Error con todas las reglas incumplidas cuando el documento no cuadra' do
+      queue(entry)
+      allow(Hacienda::InvoiceValidator).to receive(:new).and_return(
+        instance_double(Hacienda::InvoiceValidator, call: Hacienda::InvoiceValidator::Result.new(
+          errors: [Hacienda::InvoiceValidationError.new(message: 'Falta el CABYS.'),
+                   Hacienda::InvoiceValidationError.new(message: 'El total no cuadra.')]
+        ))
+      )
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error)
+        .with(anything, /2 regla\(s\).*Falta el CABYS.*El total no cuadra/)
+      expect(hacienda).not_to have_received(:send_document)
+    end
+
+    it 'no firma ni envía un documento que no pasó las validaciones' do
+      queue(entry)
+      allow(Hacienda::InvoiceValidator).to receive(:new).and_return(
+        instance_double(Hacienda::InvoiceValidator, call: Hacienda::InvoiceValidator::Result.new(
+          errors: [Hacienda::InvoiceValidationError.new(message: 'Falta el CABYS.')]
+        ))
+      )
+
+      described_class.perform_now
+
+      expect(signer).not_to have_received(:sign)
+    end
+
+    it 'marca Error cuando Hacienda rechaza el envío por el documento' do
+      queue(entry)
+      allow(hacienda).to receive(:send_document)
+        .and_raise(Hacienda::Client::RejectedError, 'La clave no cumple el formato')
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error)
+        .with(anything, /La clave no cumple el formato/)
+      expect(client).to have_received(:patch)
+        .with(anything, body: hash_including('U_CL_FEC_Status' => 4))
+    end
+
+    # El documento SÍ se firmó y se archivó antes de que Hacienda lo rechazara:
+    # `xml_sent_url` tiene que sobrevivir al rechazo y llegar a SAP igual, para
+    # que quede rastro de qué se le mandó exactamente.
+    it 'guarda xml_sent_url en SAP aunque Hacienda rechace el envío' do
+      queue(entry)
+      allow(hacienda).to receive(:send_document)
+        .and_raise(Hacienda::Client::RejectedError, 'La clave no cumple el formato')
+
+      described_class.perform_now
+
+      expect(client).to have_received(:patch)
+        .with(anything, body: hash_including('U_CL_FEC_XmlSentUrl' => xml_sent_url))
+    end
+
+    # Un documento que no pasa la validación nunca llega a firmarse ni a
+    # archivarse: `xml_sent_url` tiene que quedar en `nil`, no inventado.
+    it 'no manda xml_sent_url cuando el documento no pasó la validación' do
+      queue(entry)
+      allow(Hacienda::InvoiceValidator).to receive(:new).and_return(
+        instance_double(Hacienda::InvoiceValidator, call: Hacienda::InvoiceValidator::Result.new(
+          errors: [Hacienda::InvoiceValidationError.new(message: 'Falta el CABYS.')]
+        ))
+      )
+
+      described_class.perform_now
+
+      expect(Documents::XmlArchive).not_to have_received(:store_sent)
+      expect(client).to have_received(:patch)
+        .with(anything, body: hash_including('U_CL_FEC_XmlSentUrl' => nil, 'U_CL_FEC_Clave' => '506123'))
+    end
+
+    # Dejar la fila en `Processing` ES el reintento: el procedimiento la vuelve a
+    # repartir a los diez minutos. Marcarla `Error` obligaría a volver a emitir
+    # cada documento a mano desde SAP por media hora de Hacienda caída.
+    it 'no marca nada cuando la falla es de Hacienda y no del documento' do
+      queue(entry)
+      allow(hacienda).to receive(:send_document)
+        .and_raise(Hacienda::Client::TransientError, 'Hacienda no disponible')
+      allow(Rails.logger).to receive(:warn)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).not_to have_received(:mark_error)
+      expect(Documents::PendingQueue).not_to have_received(:mark_sent)
+      expect(client).not_to have_received(:patch)
+      expect(Rails.logger).to have_received(:warn).with(/se reintenta solo/)
+    end
+
+    it 'marca Error sin alertar cuando falta el certificado de la compañía' do
+      queue(entry)
+      allow(Hacienda::CompanySigner).to receive(:for)
+        .and_raise(Hacienda::CompanySigner::MissingCertificate, 'no tiene certificado digital')
+      allow(Sentry).to receive(:capture_exception)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error)
+        .with(anything, /no tiene certificado digital/)
+      expect(Sentry).not_to have_received(:capture_exception)
+    end
+
+    it 'marca Error sin alertar cuando falta un ajuste de Hacienda' do
+      queue(entry)
+      allow(hacienda).to receive(:send_document)
+        .and_raise(Hacienda::Client::MissingConfiguration, 'Falta el ajuste HACIENDA_FE_URI_SEND')
+      allow(Sentry).to receive(:capture_exception)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error)
+        .with(anything, /HACIENDA_FE_URI_SEND/)
+      expect(Sentry).not_to have_received(:capture_exception)
+    end
+
+    it 'marca Error sin alertar cuando falta un ajuste de Azure Storage' do
+      queue(entry)
+      allow(Documents::XmlArchive).to receive(:store_sent)
+        .and_raise(Azure::BlobStorage::MissingConfiguration, 'Falta el ajuste AZURE_STORAGE_ACCOUNT_KEY')
+      allow(Sentry).to receive(:capture_exception)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error)
+        .with(anything, /AZURE_STORAGE_ACCOUNT_KEY/)
+      expect(Sentry).not_to have_received(:capture_exception)
+      expect(hacienda).not_to have_received(:send_document)
+    end
+
+    it 'marca Error sin alertar cuando la compañía no tiene cédula para archivar el XML' do
+      queue(entry)
+      allow(Documents::XmlArchive).to receive(:store_sent)
+        .and_raise(Documents::XmlArchive::MissingIdNumber, 'no tiene número de identificación')
+      allow(Sentry).to receive(:capture_exception)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error)
+        .with(anything, /no tiene número de identificación/)
+      expect(Sentry).not_to have_received(:capture_exception)
+    end
+
+    # Azure caído es tan transitorio como Hacienda caída: no es culpa del
+    # documento, y reintentar sin tocar nada puede funcionar solo.
+    it 'no marca nada cuando Azure Storage no responde' do
+      queue(entry)
+      allow(Documents::XmlArchive).to receive(:store_sent)
+        .and_raise(Azure::BlobStorage::TransientError, 'Azure Storage no disponible')
+      allow(Rails.logger).to receive(:warn)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).not_to have_received(:mark_error)
+      expect(Documents::PendingQueue).not_to have_received(:mark_sent)
+      expect(hacienda).not_to have_received(:send_document)
+      expect(Rails.logger).to have_received(:warn).with(/se reintenta solo/)
     end
   end
 
@@ -141,12 +397,27 @@ RSpec.describe SyncIssuedDocumentsJob do
         .to have_received(:mark_error).with(unknown, /no es un comprobante/)
     end
 
-    it 'no marca nada cuando el documento se armó bien' do
+    it 'no marca error cuando el documento se envió bien' do
       queue(entry)
 
       described_class.perform_now
 
       expect(Documents::PendingQueue).not_to have_received(:mark_error)
+      expect(Documents::PendingQueue).to have_received(:mark_sent)
+    end
+
+    # La cola es el registro del desenlace, no una dependencia para trabajar. Y
+    # si no acepta la marca del envío, la fila se vuelve a repartir y el mismo
+    # comprobante se le manda otra vez a Hacienda — que contesta que ya lo
+    # tenía, y `Hacienda::Client` trata esa respuesta como un envío bueno.
+    it 'sigue con el resto si la cola rechaza la marca del envío' do
+      queue(entry(id: 1, doc_entry: 25), entry(id: 2, doc_entry: 26))
+      allow(Documents::PendingQueue).to receive(:mark_sent)
+        .and_raise(ExternalDb::QueryError, 'la cola no responde')
+      allow(Sentry).to receive(:capture_exception)
+
+      expect { described_class.perform_now }.not_to raise_error
+      expect(hacienda).to have_received(:send_document).twice
     end
 
     # La cola es donde se anota la falla, no una dependencia para poder seguir:

@@ -339,12 +339,12 @@
         <p data-documents-issued-target="infoFechaEmision" data-testid="info-fecha-emision"
            class="text-sm text-gray-800"></p>
       </div>
+      <%# Sin tarjeta propia acá: #formatHaciendaError arma su(s) propia(s)
+          tarjeta(s) roja(s) por cada entrada — mismo patrón que
+          infoErrorHacienda, más abajo. %>
       <div data-documents-issued-target="infoErrorSection" class="hidden">
         <p class="text-xs font-medium text-gray-500 mb-2">Error interno</p>
-        <div class="rounded-lg border border-red-200 bg-red-50 p-3">
-          <p data-documents-issued-target="infoError" data-testid="info-error"
-             class="text-sm text-red-800 leading-relaxed break-all"></p>
-        </div>
+        <div data-documents-issued-target="infoError" data-testid="info-error"></div>
       </div>
       <div data-documents-issued-target="infoErrorHaciendaSection" class="hidden">
         <p class="text-xs font-medium text-gray-500 mb-2">Respuesta Hacienda</p>

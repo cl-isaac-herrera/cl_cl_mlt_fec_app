@@ -65,6 +65,7 @@ export default class extends Controller {
     CRYSTAL:        'las credenciales de Crystal',
     DOCS_DB_ODBC:   'la conexión a la base de documentos',
     HACIENDA_XADES: 'la política de firma XAdES',
+    AZURE_STORAGE:  'las credenciales de Azure Storage',
   }
 
   // ----------------------------------------------------------------

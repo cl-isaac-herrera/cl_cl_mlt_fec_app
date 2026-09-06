@@ -656,8 +656,10 @@ controller en `app/controllers/api/companies/`. Faltan las tres restantes:
       `cert_pin` y `token_password` siguen cifrados y **no salen** en ninguna respuesta: lo
       único que se devuelve es `HasCertPin` / `HasTokenPass`. Como el campo se pinta vacío,
       la clave ausente significa "dejalo como está" y la clave vacía, "borralo" — el cliente
-      la manda solo si el usuario escribió algo. `client_id` y `grant_type` **no** están en
-      el endpoint: no tienen campo en el formulario.
+      la manda solo si el usuario escribió algo. `client_id` y `grant_type` ya no son
+      columnas de `companies`: se movieron a `settings` (grupo `HACIENDA_FE`) por
+      `20260906120000_move_hacienda_client_credentials_to_settings.rb` — eran del ambiente
+      de Hacienda, no de la compañía.
 - [x] `PATCH .../attachments` — sección "Adjuntos". Hecho. **Su cuerpo es multipart**: los
       dos campos de la sección son archivos (`Logo` y `PrintFormat`), los dos opcionales, y
       **la parte ausente significa "dejalo como está"** — si no, guardar la sección para
@@ -802,7 +804,8 @@ proxy .NET:
       viajan: el campo se pinta vacío y el placeholder dice si hay uno guardado. Del
       certificado sale el NOMBRE, no la ruta: dónde lo guardó el servidor no es asunto de
       la pantalla, y el cliente ya no puede escribirla.
-      `client_id` y `grant_type` siguen sin exponerse porque no tienen campo.
+      `client_id` y `grant_type` ya no son columnas de `companies` — se movieron a
+      `settings` (grupo `HACIENDA_FE`), ver más arriba.
 - [x] **Adjuntos** — cableada. La respuesta trae `LogoFileName` y `PrintFormatFileName`: el
       NOMBRE del archivo, no la ruta, por lo mismo que el certificado. Los dos botones de
       descarga se habilitan según su propio permiso (`…_DownloadLogo` /
@@ -941,12 +944,15 @@ están (`db/migrate/20260821120000_create_settings.rb`, `app/models/setting.rb`,
 
 ## Emisión de documentos — sincronización de emitidos (`SyncIssuedDocumentsJob`)
 
-Primera etapa del flujo de `docs/sync-documents-flow.md`: se lee la cola de documentos
-pendientes, se traen los detalles de SAP y se arma el objeto unificado. **No se envía
-nada a Hacienda ni se actualiza ningún estado** — es el corte del punto 12 del
-documento.
+El flujo de `docs/sync-documents-flow.md` de punta a punta: se lee la cola de documentos
+pendientes, se traen los detalles de SAP, se arma el objeto unificado, **se valida, se
+genera el XML 4.4, se firma y se envía a Hacienda**, y el desenlace se anota en la cola y
+en el documento de SAP.
 
-### Estado general (2026-09-05)
+Lo que NO cierra el ciclo todavía: **recoger la resolución**. Un envío aceptado deja el
+comprobante en `Sent` (3), que es de tránsito — ver el pendiente de abajo.
+
+### Estado general (2026-09-07)
 
 Los cinco pasos de `docs/sync-documents-flow.md` (sección "Flujo"), con lo que hay hoy:
 
@@ -955,37 +961,76 @@ Los cinco pasos de `docs/sync-documents-flow.md` (sección "Flujo"), con lo que 
 | 1. Post Transact inserta en la cola | Lo hace el add-on de SAP, fuera de este repo | — (no aplica) |
 | 2. Consultar la cola en "pending" | `Documents::PendingQueue.pending` | ✅ funciona, probado contra la base real |
 | 3. Consultar detalle en SAP | `Sap::DocumentDetails` + `Documents::UnifiedBuilder` | ✅ funciona, probado contra la base real |
-| 4. Enviar a Hacienda | Validar → generar XML → firmar → `POST` | 🟡 dos piezas sueltas (validador, firma); **sin generador de XML, sin cliente HTTP, sin nada que las conecte** |
-| 5. Actualizar estado en Queue y en SAP | `Documents::PendingQueue.mark_error` (solo para `Error`) + `sl_resources updateDocument*` | 🟡 el lado de la cola existe; el lado de SAP tiene el recurso pero nadie lo llama |
+| 4. Enviar a Hacienda | `Documents::Issuer`: validar → `Hacienda::XmlBuilder` → `Hacienda::XmlSigner` → `Documents::XmlArchive` → `Hacienda::Client` | ✅ implementado (FE y TE); **sin probar contra Hacienda ni Azure reales** |
+| 5. Actualizar estado en Queue y en SAP | `Documents::PendingQueue#mark` + `Sap::DocumentStatus` | ✅ los dos lados, con el mismo catálogo de estados y los SEIS campos (`Status`, `ErrorDetails`, `Clave`, `NumConsecutivo`, `XmlSentUrl`, `XmlResponseUrl`) SIEMPRE en el `PATCH`, en cualquier desenlace |
 
-**Lo que falta para que el paso 4 exista** — en orden, cada uno depende del anterior:
+**Cómo se clasifica una falla** — la pregunta es si reintentar sin que nadie toque nada
+puede funcionar:
 
-1. **Generador de XML.** No hay ninguna clase que tome el objeto unificado
-   (`Documents::UnifiedBuilder#call`) y lo serialice al XML que pide el XSD 4.4. Es el
-   hueco más grande de los cuatro: sin esto, `Hacienda::InvoiceValidator` y
-   `Hacienda::XmlSigner` no tienen qué recibir ni qué firmar respectivamente.
-2. **Cliente HTTP de Hacienda** (token, envío, consulta de estado). Los tres endpoints ya
-   tienen su lugar en `settings` (`HACIENDA_FE_URI_TOKEN`/`_SEND`/`_CHECK`, grupo
-   `HACIENDA_FE` — ver "Ambiente de Hacienda" en ## Compañías, más arriba), pero nadie
-   los lee: no existe una clase que pida el token ni que haga el `POST` del comprobante.
-3. **El paso que orquesta 1-2** dentro de `SyncIssuedDocumentsJob#build` (o un service
-   aparte que el job llame): armar objeto → validar → generar XML → firmar → enviar →
-   interpretar la respuesta (`Accepted`/`Rejected`/sin respuesta → `Sent`).
-4. **El `PATCH` a SAP** con el resultado, usando los `sl_resources updateDocument*` que
-   ya existen — bloqueado además por los cuatro schemas de UDF que faltan (ver el ítem
-   de abajo).
+| Situación | Desenlace |
+|---|---|
+| Hacienda caída, timeout, 5xx (`Hacienda::Client::TransientError`) | La fila queda en `Processing`; el procedimiento la vuelve a repartir en 10 min. **No se marca nada** |
+| El documento no cuadra, Hacienda lo rechaza, falta el certificado o un ajuste | `Error` (4) en la cola y en SAP, con el motivo |
+| Envío aceptado | `Sent` (3) en los dos lados; el `Location` queda en `Details` de la cola |
+
+- [ ] **Recoger la resolución de Hacienda** (`ind-estado` → `Accepted` 6 / `Rejected` 7).
+      Falta de los dos lados: (a) del lado de la cola, un procedimiento que devuelva lo
+      que está en `Sent` con su `Location` — `CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS` solo
+      devuelve `Pending` y el `Processing` viejo; (b) de este lado, el `GET Location` con
+      Bearer y la escritura del resultado. `Hacienda::Client` **no** trae el método de
+      consulta a propósito: sin quien lo llame sería código muerto.
+      **Nota:** el legacy esperaba (`sleepToCheck`) y consultaba en el mismo request —
+      eso NO se replicó: dormir dentro del job retiene un hilo del worker.
+- [x] **`U_CL_FEC_XmlSentUrl` — implementado (2026-09-07).** `Documents::XmlArchive` sube el
+      XML firmado a Azure Blob Storage (`Azure::BlobStorage`, Shared Key — cuenta y clave en
+      `settings`, grupo `AZURE_STORAGE`; contenedor FIJO `"clvsfe"`, igual que el legacy) y
+      `Documents::Issuer` guarda la URL ANTES de enviar a Hacienda, así que sobrevive a un
+      rechazo. Convención de nombre (indicada por el negocio): `{cédula}/{clave}.xml`.
+      `Sap::DocumentStatus` manda los SEIS campos SIEMPRE, en cualquier desenlace (error de
+      validación propia, error de XSD, envío, rechazo o aceptación) — ya no se omiten
+      condicionalmente. **Sin probar contra una cuenta de Azure real**: el algoritmo de firma
+      Shared Key está verificado línea por línea contra la documentación oficial de
+      Microsoft (`spec/services/azure/blob_storage_spec.rb`, que recalcula la firma de forma
+      INDEPENDIENTE al código de producción), pero eso no reemplaza una subida real.
+- [ ] **`U_CL_FEC_XmlResponseUrl` sigue sin escritor.** `Documents::XmlArchive.store_response`
+      ya existe con la convención `{cédula}/{clave}_respuesta.xml`, pero nadie lo llama:
+      Hacienda solo entrega ese XML al CONSULTAR la resolución (`respuesta-xml`, Base64), y
+      esa consulta es la pasada de "Recoger la resolución de Hacienda" de arriba, que
+      todavía no existe. Cuando se construya esa pasada, el paso final es
+      `XmlArchive.store_response` + `Sap::DocumentStatus#call(xml_response_url: …)`.
+- [x] **`ORIN` y `OPCH` NO necesitan schema propio — confirmado (2026-09-07).**
+      `OINV`, `ORIN` (nota de crédito) y `OPCH` (factura de compra) son las tres
+      "Marketing Documents" que usa este producto (§32): SAP B1 replica un UDF creado en
+      cualquier tabla de esa categoría a TODAS las demás automáticamente. El schema de
+      `OINV` (`config/sap_schemas/marketing_documents.json`) ya alcanza para las tres —
+      declarar `ORIN`/`OPCH` aparte sería trabajo repetido, no una migración pendiente.
+      `ORCT` (recibo de pago) SÍ necesita su propio schema (`payments.json`): es
+      "Banking", una categoría distinta que no replica con Marketing Documents.
+- [ ] **Estado de "error técnico" reintentable.** Hoy hay `Error` (4), que es terminal y
+      solo vuelve si alguien reencola el documento desde SAP. Lo transitorio se resuelve
+      dejando la fila en `Processing`, que funciona pero no queda registrado en ninguna
+      parte: desde afuera un documento reintentándose se ve igual que uno en curso.
 
 ### Estado por tipo de documento
 
-| Tipo | Cola / detalle SAP (pasos 2-3) | Objeto unificado | Validador | Firma | `sl_resource` de actualización |
-|---|---|---|---|---|---|
-| **FE** (`01`) | ✅ | ✅ | ✅ (`Hacienda::InvoiceValidator`, 87 specs) | ✅ (agnóstica al tipo) | ✅ `updateDocument01` |
-| **TE** (`04`) | ✅ (genérico, no distingue tipo) | 🟡 probablemente sí — ver nota abajo | ❌ | ✅ (agnóstica al tipo) | ✅ `updateDocument04` |
-| **ND** (`02`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument02` |
-| **NC** (`03`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument03` |
-| **FEC** (`08`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument08` |
-| **FEE** (`09`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument09` |
-| **REP** (`10`) | ✅ | ❓ sin revisar | ❌ | ✅ | ✅ `updateDocument10` |
+| Tipo | Cola / detalle SAP (pasos 2-3) | Objeto unificado | Validador | Generador de XML | Firma | `sl_resource` de actualización |
+|---|---|---|---|---|---|---|
+| **FE** (`01`) | ✅ | ✅ | ✅ (`Hacienda::InvoiceValidator`, 87 specs) | ✅ `FacturaElectronica` | ✅ (agnóstica al tipo) | ✅ `updateDocument01` |
+| **TE** (`04`) | ✅ (genérico, no distingue tipo) | 🟡 probablemente sí — ver nota abajo | ❌ **se omite a propósito** | ✅ `TiqueteElectronico` (mismo esquema que FE) | ✅ (agnóstica al tipo) | ✅ `updateDocument04` |
+| **ND** (`02`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument02` |
+| **NC** (`03`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument03` (UDF replicado a `ORIN` desde `OINV`, misma categoría Marketing Documents) |
+| **FEC** (`08`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument08` (UDF replicado a `OPCH` desde `OINV`, misma categoría Marketing Documents) |
+| **FEE** (`09`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument09` |
+| **REP** (`10`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument10` |
+
+**Los cinco tipos sin generador de XML se marcan `Error` con el motivo**, no revientan el
+job: `Hacienda::XmlBuilder::UnsupportedDocType` dice "este producto todavía no sabe armar
+el XML de …" y eso llega a `Details` de la cola y a `U_CL_FEC_ErrorDetails`.
+
+**Por qué TE se envía SIN validar:** `Documents::Issuer#validate!` corre el validador solo
+para FE, a propósito. Correrlo sobre un tiquete rechazaría documentos correctos (la regla
+del receptor, abajo), y eso es peor que no validarlo: sin validación local el comprobante
+igual pasa por el validador de Hacienda, que es la autoridad de todas formas.
 
 **Por qué TE queda en 🟡 y no en ✅:** el XSD real de Hacienda define un ÚNICO esquema
 para FE y TE (`DocumentoFETE` en `FacturaElectronica_V4.4.xsd` — el nombre mismo es
@@ -1015,9 +1060,40 @@ clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo p
       Specs con un certificado efímero (`spec/services/hacienda/xml_signer_spec.rb`).
       **No incluye la cadena de certificación** en `KeyInfo/X509Data` — solo el
       certificado hoja. Si Hacienda llega a exigir la cadena completa, se agrega con
-      `pkcs12.ca_certs`. **Todavía no tiene quién lo llame**: falta el paso que arma el
-      XML del comprobante a partir del objeto unificado (`Documents::UnifiedBuilder`) y
-      se lo pasa a esta clase — eso es el punto 11 del flujo, sin empezar.
+      `pkcs12.ca_certs`. Lo llama `Documents::Issuer`, con el firmador que arma
+      `Hacienda::CompanySigner.for` (uno por compañía: abrir el `.p12` descifra la llave
+      privada y eso no se repite por documento).
+
+- [x] **Generador de XML 4.4 — implementado para FE y TE (2026-09-06).**
+      `Hacienda::XmlBuilder` (`app/services/hacienda/xml_builder.rb`) serializa el objeto
+      unificado al XML del comprobante. El orden de los elementos se tomó del modelo C#
+      que el legacy serializaba (`CLVS_FE.Models/Consumo/FETE/FETE.cs` +
+      `CLVS_FE.Models/Hacienda/*.cs`) y se cotejó contra `FacturaElectronica_V4.4.xsd`.
+      31 ejemplos.
+      **⚠️ El XSD del legacy está incompleto:** es una copia con la raíz renombrada a
+      `DocumentoFETE`, sin `targetNamespace` y **sin el elemento `Clave`** (aunque conserva
+      su tipo `ClaveType`). El modelo C# sí lo tiene, de primero. No usar esa copia como
+      única fuente.
+      Pendiente de verificar contra un comprobante aceptado de verdad: los montos se
+      emiten con la representación más corta (`226`, no `226.00000`) porque
+      `xs:fractionDigits` es un máximo. Si Hacienda llegara a exigir los 5 decimales, el
+      cambio es una línea en `#format_decimal`.
+
+- [x] **Cliente HTTP de Hacienda — implementado (2026-09-06).** `Hacienda::Client`
+      (`app/services/hacienda/client.rb`): token (OAuth *password grant*, form-encoded) y
+      envío del comprobante. 15 ejemplos. Tres desvíos DELIBERADOS del .NET, comentados en
+      la clase: (a) **se verifica el certificado TLS** — el legacy aceptaba cualquiera
+      (`TransaccionesHacienda.cs:415`); (b) el envío declara `Content-Type:
+      application/json` — el legacy mandaba el cuerpo sin Content-Type (`:307`); (c) no
+      hay caché de `refresh_token` entre corridas, el token se memoiza por instancia
+      (una compañía por corrida).
+
+- [x] **`Documents::Issuer` — conecta las piezas sueltas (2026-09-07).**
+      (`app/services/documents/issuer.rb`) es el orquestador que faltaba: valida (solo FE),
+      genera el XML, firma, archiva en Azure y envía, en ese orden, llamado desde
+      `SyncIssuedDocumentsJob`. `xml_sent_url` se expone como atributo del `Issuer` —no del
+      acuse— para que sobreviva a un envío rechazado y el llamador pueda escribirlo en SAP
+      igual. 9 ejemplos.
 
 - [x] **Validador de reglas de negocio — implementado para Factura Electrónica (2026-09-05).**
       `Hacienda::InvoiceValidator` (`app/services/hacienda/invoice_validator.rb` +
@@ -1087,11 +1163,14 @@ clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo p
       ⚠️ **Bloqueante real antes de poder usar esto contra SAP:** los seis
       `U_CL_FEC_*` son UDFs y no tienen su schema declarado en `config/sap_schemas/`
       (`CLAUDE.md` §32) — sin eso, una instalación nueva no los tiene y el primer
-      `PATCH` fallaría con "campo inválido". Faltan cuatro schemas (uno por tabla de
-      SAP que recibe el UDF): `OINV` (Invoices), `ORIN` (CreditNotes), `OPCH`
-      (PurchaseInvoices), `ORCT` (IncomingPayments). Tamaños a decidir: `Status` (un
-      código corto, ¿alpha 20?), `ErrorDetails` (memo, puede ser largo), `Clave` (alpha
-      50), `NumConsecutivo` (alpha 20), las dos URLs (alpha 254 probablemente).
+      `PATCH` fallaría con "campo inválido". Faltan dos schemas, no cuatro: `OINV`
+      (Invoices) y `ORCT` (IncomingPayments) son categorías DISTINTAS de SAP B1
+      (Marketing Documents vs. Banking) y cada una necesita el suyo; `ORIN`
+      (CreditNotes) y `OPCH` (PurchaseInvoices) NO necesitan nada aparte — están en la
+      misma categoría Marketing Documents que `OINV` y SAP replica el UDF ahí solo.
+      **Resuelto (2026-09-06/07):** `config/sap_schemas/marketing_documents.json`
+      (`OINV`, cubre también `ORIN`/`OPCH` por la replicación) y `payments.json`
+      (`ORCT`).
 
 - [ ] **`bin/rails db:migrate RAILS_ENV=test` sembró el catálogo completo solo (2026-09-05).**
       Al migrar la base de test para esta tanda, apareció con `permissions`,
@@ -1429,6 +1508,17 @@ no para este listado — decisión del 2026-09-05). Lo que sigue sin migrar:
       una se resuelve por `DocEntry`+`DocType` contra SAP o necesita datos que hoy solo
       tiene el .NET (el PDF sale de un Crystal Report, el XML/envío a Hacienda depende del
       paso 4 de "Emisión de documentos" más arriba, que tampoco existe todavía).
+
+- [x] **"Consultar Información" — la sección "Respuesta Hacienda" NO se migra, a
+      propósito.** Esa sección dependía de `/api/Documents/issued/:id/xml-response-message`
+      (sigue sin migrar, proxy .NET). **Decidido el 2026-09-06 (Isaac):** no hace falta:
+      `U_CL_FEC_ErrorDetails` (`row.ErrDetails`) ya trae el mismo detalle —texto técnico +
+      el array de código/mensaje que devuelve Hacienda— desde la consulta inicial
+      (`getDocuments01`..`10`), sin ninguna llamada extra. Por eso la sección "Error
+      interno" del panel pasa `row.ErrDetails` por `#formatHaciendaError` (el mismo
+      parser que separaba código y mensaje), y la sección "Respuesta Hacienda" queda
+      intacta en el código —sigue detrás de su fetch sin migrar— pero no es prioridad:
+      lo que mostraría ya se ve en "Error interno".
 
 - [ ] **El gráfico "Más Información" se quedó sin datos.** Dependía de
       `DocumentQtyList` (conteo por estado que calculaba `spGetDocuments`); SAP no expone

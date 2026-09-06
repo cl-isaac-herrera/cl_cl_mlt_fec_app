@@ -10,13 +10,12 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_05_180000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_07_120000) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
     t.string "cert_path"
     t.string "cert_pin"
-    t.string "client_id"
     t.integer "connection_id"
     t.datetime "created_at", null: false
     t.string "created_by"
@@ -26,7 +25,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_05_180000) do
     t.text "email_cc"
     t.integer "email_sender_type", default: 1, null: false
     t.integer "freight_type", default: 1, null: false
-    t.string "grant_type"
     t.boolean "is_active", default: true, null: false
     t.string "issuer_id_number", limit: 20
     t.string "issuer_id_type", limit: 2

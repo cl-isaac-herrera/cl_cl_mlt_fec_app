@@ -354,14 +354,6 @@ RSpec.describe 'PATCH /api/companies/:company_id/tax_authority', type: :request 
       )
       expect(acme.uuid).not_to eq('reescrito')
     end
-
-    # Las dos columnas son de esta sección pero no tienen campo en el formulario,
-    # así que el endpoint tampoco las acepta: no hay nada que el usuario edite.
-    it 'ignora client_id y grant_type, que la pantalla no ofrece' do
-      patch_section(TokenUsr: 'atv@hacienda.go.cr', client_id: 'api', grant_type: 'password')
-
-      expect(acme.reload).to have_attributes(client_id: nil, grant_type: nil)
-    end
   end
 
   # Los dos salen del archivo. Aceptarlos del cuerpo permitía posponer la alarma

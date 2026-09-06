@@ -96,9 +96,18 @@ module Documents
         new.pending
       end
 
-      # @see #mark_error
+      # @see #mark
       def mark_error(entry, details)
-        new.mark_error(entry, details)
+        new.mark(entry, status: STATUS_ERROR, details: details)
+      end
+
+      # El comprobante quedó en poder de Hacienda y falta su resolución.
+      #
+      # `details` lleva la URL donde Hacienda la va a publicar (el `Location`
+      # del envío): es de tránsito, no un mensaje de error, y es el único dato
+      # que la pasada que recoja la resolución va a necesitar para encontrarla.
+      def mark_sent(entry, location)
+        new.mark(entry, status: STATUS_SENT, details: location)
       end
     end
 
@@ -115,26 +124,33 @@ module Documents
       rows.filter_map { |row| build_entry(row) }
     end
 
-    # Devuelve el documento a la cola como `Error`, con el motivo en `Details`.
+    # Devuelve el documento a la cola con su desenlace y el detalle.
     #
-    # Es lo que hace visible una falla. Sin esto la fila se queda en `Processing`
-    # —el estado en el que la dejó `#pending`— y desde afuera es indistinguible de
-    # un documento que se está procesando ahora mismo: no hay dónde leer qué pasó,
-    # y el procedimiento la vuelve a repartir a los diez minutos, para siempre.
+    # Es lo que hace visible cómo terminó. Sin esto la fila se queda en
+    # `Processing` —el estado en el que la dejó `#pending`— y desde afuera es
+    # indistinguible de un documento que se está procesando ahora mismo: no hay
+    # dónde leer qué pasó, y el procedimiento la vuelve a repartir a los diez
+    # minutos, para siempre.
+    #
+    # ⚠️ Dejar la fila en `Processing` A PROPÓSITO es una opción válida y es lo
+    # que se hace con una falla transitoria (Hacienda caída, un timeout): esos
+    # diez minutos son justamente el reintento, y no hay que inventarle otro.
+    # Ver `SyncIssuedDocumentsJob#transient`.
     #
     # `commit: true` por la misma razón que en `#pending`: sin confirmar, el
     # conector revierte el `UPDATE` al salir (§37) y el estado no quedaría.
     #
     # @param entry [Entry] el documento, tal como lo devolvió la cola.
-    # @param details [String] el motivo, en el idioma del operador.
-    def mark_error(entry, details)
+    # @param status [Integer] uno de los `STATUS_*`.
+    # @param details [String, nil] el motivo o el `Location`, según el estado.
+    def mark(entry, status:, details:)
       ExternalDb::Pool.with(GROUP_CODE) do |client|
         client.call(
           UPDATE_PROCEDURE,
           # Posicionales, en el orden en que el procedimiento los declara:
           # @Id, @DocEntry, @DocType, @SAPDB, @Details, @StatusCode.
           [entry.id, entry.doc_entry, entry.doc_type, entry.sap_db,
-           truncate_details(details), STATUS_ERROR],
+           truncate_details(details), status],
           commit: true
         )
       end
@@ -142,7 +158,12 @@ module Documents
 
     private
 
+    # `nil` se conserva y no se convierte en cadena vacía: la columna es
+    # anulable y `NULL` significa "no hay nada que contar", que es distinto de
+    # un detalle en blanco.
     def truncate_details(details)
+      return nil if details.nil?
+
       text = details.to_s.strip
       return text if text.length <= MAX_DETAILS
 

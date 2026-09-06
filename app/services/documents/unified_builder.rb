@@ -12,12 +12,24 @@ module Documents
   # Hacienda, para que el generador del XML sea una traducción directa y no otra
   # ronda de decisiones.
   #
-  # ── Solo factura electrónica, por ahora ──────────────────────────────────────
+  # ── Factura electrónica — y, en teoría, Tiquete Electrónico ─────────────────
   # El documento dice que este objeto unificado es **solo para factura
-  # electrónica** (punto 10, última línea). Las consultas iniciales son las mismas
-  # para todos los tipos; lo que cambia por tipo es justamente este armado
-  # (aclaración final del documento). Por eso el tipo viaja en el resultado
-  # (`DocType`) en vez de quedar implícito: el paso que elige el XML lo necesita.
+  # electrónica** (punto 10, última línea), pero el XSD real de Hacienda define
+  # un único esquema para las dos (`DocumentoFETE` en `FacturaElectronica_V4.4.xsd`
+  # — el nombre es literalmente "Factura Electrónica / Tiquete Electrónico"), y el
+  # legacy .NET las procesa con el mismo código. Este armado debería servir para
+  # TE (`DocType::TE`) sin cambios de forma.
+  #
+  # Lo que SÍ es específico de FE y no se migró para TE todavía es
+  # `Hacienda::InvoiceValidator` — al menos `HeaderValidator#validate_receptor`
+  # exige identificación del receptor incondicionalmente, y el legacy la exime
+  # para TE (además de ND y NC). Ver `TODOS.md` → Emisión de documentos → "Estado
+  # general" antes de dar TE por cubierto.
+  #
+  # Las consultas iniciales son las mismas para todos los tipos; lo que cambia
+  # por tipo es justamente este armado (aclaración final del documento). Por eso
+  # el tipo viaja en el resultado (`DocType`) en vez de quedar implícito: el paso
+  # que elige el XML lo necesita.
   #
   # ── Tipos ────────────────────────────────────────────────────────────────────
   # Los montos salen como `BigDecimal` y no como `Float` (ver `Documents::Row`):

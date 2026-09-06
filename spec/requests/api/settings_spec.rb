@@ -45,11 +45,15 @@ RSpec.describe 'Api::Settings', type: :request do
       create_setting(code: 'DOCS_DB_ODBC_SERVER', value: 'CLSQL01')
       sign_in_with('Configurations_General_Access')
 
-      get '/api/settings'
+      # Filtrado por grupo: el catálogo trae de fábrica otros grupos
+      # (`AZURE_STORAGE`, `HACIENDA_FE`, …) sembrados por sus propias
+      # migraciones, así que `.first` sin filtro no apunta de forma confiable a
+      # lo que este ejemplo acaba de crear.
+      get '/api/settings', params: { group: 'DOCS_DB_ODBC' }
 
       expect(response).to have_http_status(:ok)
       expect(body.keys).to include('Data', 'Code', 'Message')
-      expect(body_data.first).to include(
+      expect(body_data.find { |s| s['Code'] == 'DOCS_DB_ODBC_SERVER' }).to include(
         'Code' => 'DOCS_DB_ODBC_SERVER', 'GroupCode' => 'DOCS_DB_ODBC',
         'Value' => 'CLSQL01', 'HasValue' => true, 'IsVisible' => true
       )
@@ -72,19 +76,21 @@ RSpec.describe 'Api::Settings', type: :request do
       create_setting(code: 'DOCS_DB_ODBC_PASSWORD', value: 's3cr3t', is_visible: false)
       sign_in_with('Configurations_General_Access')
 
-      get '/api/settings'
+      get '/api/settings', params: { group: 'DOCS_DB_ODBC' }
 
       expect(response.body).not_to include('s3cr3t')
-      expect(body_data.first).to include('Value' => nil, 'HasValue' => true, 'IsVisible' => false)
+      expect(body_data.find { |s| s['Code'] == 'DOCS_DB_ODBC_PASSWORD' })
+        .to include('Value' => nil, 'HasValue' => true, 'IsVisible' => false)
     end
 
     it 'distingue el ajuste oculto sin configurar del que ya tiene valor' do
       create_setting(code: 'DOCS_DB_ODBC_PASSWORD', value: nil, is_visible: false)
       sign_in_with('Configurations_General_Access')
 
-      get '/api/settings'
+      get '/api/settings', params: { group: 'DOCS_DB_ODBC' }
 
-      expect(body_data.first).to include('Value' => nil, 'HasValue' => false)
+      expect(body_data.find { |s| s['Code'] == 'DOCS_DB_ODBC_PASSWORD' })
+        .to include('Value' => nil, 'HasValue' => false)
     end
   end
 

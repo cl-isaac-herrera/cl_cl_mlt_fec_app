@@ -1,0 +1,152 @@
+# frozen_string_literal: true
+
+module Azure
+  # Sube un archivo a un contenedor de Azure Blob Storage, autenticado con
+  # Shared Key (cuenta + clave), tal como lo hacía el legacy
+  # (`CLVS_FE.Common/Utils.cs#BuildAzureBlobClient`, `StorageSharedKeyCredential`).
+  #
+  #   Azure::BlobStorage.new.upload(
+  #     container: 'clvsfe', path: '3101822733/5061...xml',
+  #     content: xml_bytes, content_type: 'application/xml'
+  #   )
+  #   # => "https://miempresa.blob.core.windows.net/clvsfe/3101822733/5061...xml"
+  #
+  # No usa el SDK oficial de Azure (`azure-storage-blob`): es una gema sin
+  # mantenimiento activo. Es una sola operación REST (`Put Blob`) bien
+  # documentada, con el mismo criterio que `Hacienda::Client` — `Net::HTTP`
+  # puro, sin gemas nuevas para un solo endpoint.
+  #
+  # ── El algoritmo de firma NO es negociable ──────────────────────────────────
+  # "Shared Key for Blob, Queue, and File Services" (no "Shared Key Lite",  que
+  # es el formato viejo con otro `StringToSign`). Está verificado contra la
+  # documentación oficial de Microsoft (Authorize with Shared Key), línea por
+  # línea, no reconstruido de memoria: un canonicalizado distinto en un solo
+  # carácter invalida la firma y Azure responde 403 sin decir qué falló.
+  class BlobStorage
+    class Error < StandardError; end
+
+    # Falta la cuenta o la clave en `settings` (grupo `AZURE_STORAGE`).
+    class MissingConfiguration < Error; end
+
+    # La subida falló por algo que no es del archivo: red, timeout, un 5xx de
+    # Azure, o una firma rechazada (403) — que casi siempre es reloj
+    # desincronizado (Azure exige que la fecha esté a menos de 15 min) y no un
+    # error del llamador.
+    class TransientError < Error; end
+
+    API_VERSION = '2021-08-06'
+    BLOB_TYPE = 'BlockBlob'
+
+    OPEN_TIMEOUT = 10
+    READ_TIMEOUT = 30
+
+    def initialize
+      @account = setting('ACCOUNT_NAME')
+      @key = setting('ACCOUNT_KEY')
+    end
+
+    # @param container [String] nombre del contenedor (ya debe existir).
+    # @param path [String] ruta dentro del contenedor, sin barra inicial
+    #   (`{cédula}/{clave}.xml`).
+    # @param content [String] los bytes a subir, ya codificados (no Base64).
+    # @param content_type [String]
+    # @return [String] la URL del blob (sin SAS — es el mismo formato que el
+    #   legacy guardaba: `blobClient.Uri.AbsoluteUri`, de solo lectura para
+    #   quien no tenga la clave de la cuenta).
+    # @raise [TransientError]
+    def upload(container:, path:, content:, content_type:)
+      uri = blob_uri(container, path)
+      date = Time.now.utc.httpdate
+
+      request = Net::HTTP::Put.new(uri.request_uri)
+      request['x-ms-date'] = date
+      request['x-ms-version'] = API_VERSION
+      request['x-ms-blob-type'] = BLOB_TYPE
+      request['Content-Type'] = content_type
+      request['Authorization'] = authorization('PUT', uri, date, content.bytesize, content_type)
+      request.body = content
+
+      response = perform(uri, request)
+
+      raise TransientError, "Azure Storage rechazó la subida (#{describe(response)})." unless
+        response.is_a?(Net::HTTPSuccess)
+
+      uri.to_s
+    end
+
+    private
+
+    attr_reader :account, :key
+
+    def blob_uri(container, path)
+      encoded_path = path.split('/').map { |segment| ERB::Util.url_encode(segment) }.join('/')
+      URI("https://#{account}.blob.core.windows.net/#{container}/#{encoded_path}")
+    end
+
+    def perform(uri, request)
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = true
+      http.open_timeout = OPEN_TIMEOUT
+      http.read_timeout = READ_TIMEOUT
+
+      http.request(request)
+    rescue Timeout::Error, IOError, SystemCallError, OpenSSL::SSL::SSLError, SocketError => e
+      raise TransientError, "No se pudo contactar Azure Storage (#{uri.host}): #{e.message}"
+    end
+
+    def describe(response)
+      "HTTP #{response.code} #{response.message}".strip
+    end
+
+    # ── Firma Shared Key ─────────────────────────────────────────────────────
+    # Ver "Authorize with Shared Key" de Microsoft. El `StringToSign` de Blob
+    # Storage 2009-09-19+ es una secuencia FIJA de doce líneas de headers
+    # estándar (vacías si no aplican) más los headers `x-ms-*` canonicalizados
+    # y el recurso canonicalizado — en ESE orden exacto.
+    def authorization(verb, uri, date, content_length, content_type)
+      standard_headers = [
+        verb,
+        '', # Content-Encoding
+        '', # Content-Language
+        content_length.zero? ? '' : content_length.to_s, # Content-Length: vacío si 0
+        '', # Content-MD5
+        content_type, # Content-Type
+        '', # Date: vacío porque la fecha va en x-ms-date
+        '', # If-Modified-Since
+        '', # If-Match
+        '', # If-None-Match
+        '', # If-Unmodified-Since
+        '' # Range
+      ].join("\n")
+      string_to_sign = "#{standard_headers}\n#{canonicalized_headers(date)}#{canonicalized_resource(uri)}"
+
+      signature = Base64.strict_encode64(
+        OpenSSL::HMAC.digest('SHA256', Base64.strict_decode64(key), string_to_sign)
+      )
+
+      "SharedKey #{account}:#{signature}"
+    end
+
+    # Los headers `x-ms-*` de ESTA petición, en minúscula, ordenados
+    # lexicográficamente por nombre — `x-ms-blob-type` < `x-ms-date` <
+    # `x-ms-version`, que ya es el orden en que se escriben acá.
+    def canonicalized_headers(date)
+      "x-ms-blob-type:#{BLOB_TYPE}\nx-ms-date:#{date}\nx-ms-version:#{API_VERSION}\n"
+    end
+
+    # Formato 2009-09-19+: `/{cuenta}/{path sin query}`. Esta subida nunca lleva
+    # query string (sin SAS, sin snapshot), así que no hace falta la parte de
+    # parámetros ordenados que exige el resto del algoritmo.
+    def canonicalized_resource(uri)
+      "/#{account}#{uri.path}"
+    end
+
+    def setting(key)
+      Setting.group('AZURE_STORAGE').fetch(key)
+    rescue KeyError
+      raise MissingConfiguration,
+            "Falta el ajuste AZURE_STORAGE_#{key} en Configuraciones → Generales, " \
+            'necesario para guardar los XML de Hacienda.'
+    end
+  end
+end

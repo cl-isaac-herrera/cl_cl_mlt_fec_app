@@ -113,10 +113,10 @@ module Api
       # ignora en silencio: es lo que hace que los botones sean independientes de
       # verdad y no solo en la pantalla.
       #
-      # `client_id` y `grant_type` son columnas de esta misma sección pero no
-      # están acá a propósito: no tienen campo en el formulario, así que no hay
-      # nada que el usuario pueda editar. Un endpoint que acepta lo que la
-      # pantalla no ofrece es una puerta sin puerta.
+      # `client_id` y `grant_type` ya no son columnas de `companies`: se
+      # movieron a `settings` (grupo `HACIENDA_FE`) porque son del AMBIENTE de
+      # Hacienda, no de cada compañía — ver
+      # `20260906120000_move_hacienda_client_credentials_to_settings.rb`.
       #
       # Se copia únicamente lo que vino en la petición, para que un PATCH parcial
       # no borre lo que no mencionó — mismo criterio que `general_params`.

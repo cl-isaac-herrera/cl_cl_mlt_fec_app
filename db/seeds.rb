@@ -560,10 +560,15 @@ SL_RESOURCES_OWN = [
 #   REP             → IncomingPayments  (el recibo de pago SÍ es un objeto propio)
 #   FEC             → PurchaseInvoices  (AP Invoice — factura de compra)
 #
-# ⚠️ Los seis `U_CL_FEC_*` de arriba son UDFs y TODAVÍA no tienen su schema en
-# `config/sap_schemas/` (`CLAUDE.md` §32): sin eso, una instalación nueva no los
-# va a tener y el PATCH va a fallar con "campo inválido" la primera vez que se
-# use. Anotado en `TODOS.md` → Emisión de documentos.
+# Los seis `U_CL_FEC_*` de arriba son UDFs y su schema (`CLAUDE.md` §32) está
+# declarado para dos de las cuatro tablas: `OINV` en
+# `config/sap_schemas/marketing_documents.json` y `ORCT` en `payments.json`.
+#
+# ⚠️ FALTAN `ORIN` (AR Credit Memo, el objeto de `updateDocument03`) y `OPCH`
+# (AP Invoice, el de `updateDocument08`). En una instalación nueva el PATCH de
+# una nota de crédito o de una factura de compra va a fallar con "campo
+# inválido" la primera vez que se use, porque esos UDFs no existen en esas dos
+# tablas. Anotado en `TODOS.md` → Emisión de documentos.
 #
 # El `code` lleva el CÓDIGO NUMÉRICO de Hacienda (`DocType::FE` = '01', no la
 # mnemotecnia) — es el mismo valor que trae `Documents::PendingQueue::Entry#doc_type`
@@ -602,8 +607,12 @@ SL_RESOURCES_STATUS_UPDATES = [
 # NC, PurchaseInvoices para FEC, IncomingPayments para REP) — no son vistas, no
 # llevan prefijo, y el mismo `code` sirve en SQL Server y en HANA.
 #
-# `query_params` solo lleva el `$select`: el `$top`/`$skip` de la paginación
-# real los agrega el llamador con `Sap::ResourceQuery#merge` en cada página —no
+# `query_params` lleva el `$select` y un `$orderby=DocEntry desc` fijo —los
+# documentos más recientes primero, sea cual sea la página— para que la
+# paginación (`$top`/`$skip`) sea estable entre requests: sin un orden
+# explícito, SAP no garantiza devolver las filas siempre en el mismo orden, y
+# la página 2 podría repetir o saltarse filas de la página 1. El `$top`/`$skip`
+# en sí los agrega el llamador con `Sap::ResourceQuery#merge` en cada página —no
 # se hornean acá porque cambian en cada request, no son parte del catálogo.
 # Mismo criterio que `GetSapDocuments` (arriba, en `SL_RESOURCES`).
 #
@@ -635,32 +644,32 @@ SL_RESOURCES_STATUS_UPDATES = [
 SL_RESOURCES_DOCUMENT_QUERIES = [
   ['getDocuments01', 'Obtiene el listado paginado de facturas electrónicas desde SAP',
    'Invoices',
-   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
   ['getDocuments02', 'Obtiene el listado paginado de notas de débito electrónicas desde SAP',
    'Invoices',
-   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
   ['getDocuments03', 'Obtiene el listado paginado de notas de crédito electrónicas desde SAP',
    'CreditNotes',
-   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
   ['getDocuments04', 'Obtiene el listado paginado de tiquetes electrónicos desde SAP',
    'Invoices',
-   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
   ['getDocuments08', 'Obtiene el listado paginado de facturas electrónicas de compra desde SAP',
    'PurchaseInvoices',
-   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
   ['getDocuments09', 'Obtiene el listado paginado de facturas electrónicas de exportación desde SAP',
    'Invoices',
-   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0],
+   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
   ['getDocuments10', 'Obtiene el listado paginado de recibos electrónicos de pago desde SAP',
    'IncomingPayments',
-   '$select=DocEntry,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision', 0]
+   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0]
 ].freeze
 
 ActiveRecord::Base.transaction do
@@ -776,7 +785,20 @@ HACIENDA_FE_SETTINGS = [
   ['HACIENDA_FE_URI_SEND',          'URL de Hacienda para enviar el documento electrónico',   true],
   ['HACIENDA_FE_URI_CHECK',         'URL de Hacienda para consultar el estado del documento', true],
   ['HACIENDA_FE_RESOLUTION_NUMBER', 'Número de resolución de facturación electrónica',        true],
-  ['HACIENDA_FE_RESOLUTION_DATE',   'Fecha de la resolución de facturación electrónica',      true]
+  ['HACIENDA_FE_RESOLUTION_DATE',   'Fecha de la resolución de facturación electrónica',      true],
+  # Antes `companies.client_id` / `companies.grant_type` — sin campo en el
+  # formulario, congeladas en lo que trajera la importación. Son del AMBIENTE
+  # de Hacienda (`"api-stag"` en pruebas, `"api-prod"` en producción), no de
+  # la compañía — ver
+  # `20260906120000_move_hacienda_client_credentials_to_settings.rb`.
+  # `client_id` SÍ lo escribe el operador (varía por ambiente) y nace en
+  # blanco; `grant_type` no es una elección suya — Hacienda solo acepta la
+  # variante `"password"` del OAuth Resource Owner Password Credentials
+  # Grant— y por eso lleva `fixed_value`, igual que `HACIENDA_XADES_SETTINGS`
+  # más abajo.
+  ['HACIENDA_FE_CLIENT_ID',         'Client ID de Hacienda para el token OAuth (api-stag / api-prod)', true],
+  ['HACIENDA_FE_GRANT_TYPE',        'Grant type de Hacienda para el token OAuth (password)',           true,
+   'password']
 ].freeze
 
 # Política de firma XAdES-EPES que exige Hacienda (DGT-R-48-2016) para todo
@@ -787,7 +809,8 @@ HACIENDA_FE_SETTINGS = [
 # la UI sin esperar un deploy si Hacienda la cambia. El valor VIGENTE sigue
 # siendo el de este archivo — por eso estas dos filas llevan un cuarto elemento
 # (`fixed_value`) que el loop de abajo usa para SOBRESCRIBIR `value` en cada
-# corrida de `db:seeds`, algo que ninguna otra fila de `SETTING_GROUPS` hace.
+# corrida de `db:seeds`. Es el mismo mecanismo de `HACIENDA_FE_GRANT_TYPE`, más
+# arriba, y por la misma razón: un valor que dicta Hacienda, no el operador.
 # Si Hacienda cambia la política: actualizar el valor ACÁ y correr
 # `db:seeds` de nuevo. Un cambio manual desde la UI es solo un parche de
 # emergencia — el próximo `db:seeds` lo revierte a lo que diga este archivo.
@@ -799,6 +822,18 @@ HACIENDA_XADES_SETTINGS = [
    'Ohixl6upD6av8N7pEvDABhEL6hM=']
 ].freeze
 
+# Cuenta de Azure Storage donde `Documents::XmlArchive` guarda el XML firmado
+# que se envía a Hacienda y el XML de respuesta que Hacienda devuelve. El
+# CONTENEDOR no está acá: es fijo (`Documents::XmlArchive::CONTAINER`, "clvsfe",
+# igual que en el legacy) y no varía por instalación, así que no tiene sentido
+# como ajuste editable. Lo que SÍ varía por instalación es la cuenta —y
+# potencialmente por ambiente (dev/staging/prod usan cuentas distintas)—, por
+# eso nombre y clave van acá, con el mismo criterio que `HACIENDA_FE_CLIENT_ID`.
+AZURE_STORAGE_SETTINGS = [
+  ['AZURE_STORAGE_ACCOUNT_NAME', 'Nombre de la cuenta de Azure Storage', true],
+  ['AZURE_STORAGE_ACCOUNT_KEY',  'Clave de acceso de la cuenta de Azure Storage', false]
+].freeze
+
 # El grupo es el prefijo del `code` sin el campo, y se declara junto a las filas
 # en vez de derivarlo: `DOCS_DB_ODBC_QUERY_TIMEOUT` partido por el último `_`
 # daría el grupo equivocado (ver el encabezado de la migración).
@@ -807,7 +842,8 @@ SETTING_GROUPS = {
   'GENERAL' => LEGACY_SETTINGS.select { |code, _, _| code.start_with?('GENERAL_') },
   'CRYSTAL' => LEGACY_SETTINGS.select { |code, _, _| code.start_with?('CRYSTAL_') },
   'HACIENDA_FE' => HACIENDA_FE_SETTINGS,
-  'HACIENDA_XADES' => HACIENDA_XADES_SETTINGS
+  'HACIENDA_XADES' => HACIENDA_XADES_SETTINGS,
+  'AZURE_STORAGE' => AZURE_STORAGE_SETTINGS
 }.freeze
 
 ActiveRecord::Base.transaction do
