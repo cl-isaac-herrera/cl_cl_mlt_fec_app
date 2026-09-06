@@ -73,6 +73,9 @@ CATALOG = [
   [42, 'S_Udfs',                            'Acceso a seleccion de udfs'],
   [43, 'Configurations_MailParser_ViewConfigurations',
        'Permiso para acceder a la configuración de bandejas de correos'],
+  # Huérfano: gateaba "Aceptación documentos GT", una personalización para un
+  # cliente puntual que se eliminó (no es la vista de recepciones original). Ver
+  # `db/permission_name_map.yml` → orphaned.
   [47, 'S_AcceptDocsGT',                    'Acceso a SubMenu Aceptación de Documentos GT'],
   [49, 'S_EmailReport',                     'Acceso a SubMenu de Reporte de correos'],
   [50, 'S_CreateDocsREP',                   'Acceso a SubMenu Creación de Documentos REP'],
@@ -221,6 +224,7 @@ DEACTIVATED = %w[
   Configurations_Users_ViewGroupUsers
   Configurations_Companies_ChangeGroup
   Configurations_Groups_ViewAllApplicationGroups
+  S_AcceptDocsGT
 ].to_set.freeze
 
 ADMIN_ROLE_NAME = 'Administrador'

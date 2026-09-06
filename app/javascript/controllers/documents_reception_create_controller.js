@@ -124,7 +124,6 @@ export default class extends Controller {
   #xmlDoc2          = null   // cargos del XML
   #docCurrency      = ''
   #docTypeXML       = null
-  #returnUrlType    = null
 
   // Estado del formulario Cabecera
   #cardCodeValue    = ''
@@ -178,7 +177,6 @@ export default class extends Controller {
     // Leer parámetros de query string
     const params = new URLSearchParams(window.location.search)
     this.#docTypeXML   = params.has('xmlDocType') ? Number(params.get('xmlDocType')) : null
-    this.#returnUrlType= params.get('urlToReturnType')
     this.#shouldRecept = sessionStorage.getItem('shouldRecept') === 'true'
 
     if (this.#shouldRecept) {
@@ -2652,7 +2650,7 @@ export default class extends Controller {
 
   // ── URL de retorno ─────────────────────────────────────
   #getReturnUrl() {
-    return this.#returnUrlType ? '/documents/gt/receptions' : RETURN_URL
+    return RETURN_URL
   }
 
   // ── Formato de moneda ──────────────────────────────────

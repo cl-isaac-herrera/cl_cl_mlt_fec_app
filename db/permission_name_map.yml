@@ -97,6 +97,15 @@ orphaned:
     deactivated: true
     reason: Cambiar una compañía de grupo. No hay grupos (CLAUDE.md §31).
 
+  - name:        S_AcceptDocsGT
+    deactivated: true
+    reason: >-
+      Gateaba "Aceptación documentos GT" (menu.js), una personalización hecha
+      para un cliente puntual — no la vista de recepciones original
+      (`/configurations/receptions` / `S_ReceptDocs`), que se conserva intacta.
+      Ya no la usa nadie: se eliminó el nodo de menú y la rama de retorno que
+      dependía de ella en `documents_reception_create_controller.js`.
+
   - name:        Configurations_Groups_ViewAllApplicationGroups
     deactivated: true
     reason: Ver todos los grupos de la aplicación. No hay grupos (CLAUDE.md §31).
