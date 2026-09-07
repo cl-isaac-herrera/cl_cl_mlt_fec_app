@@ -152,8 +152,18 @@ module Documents
         'Ubicacion' => ubicacion(header, 'Rcpr'),
         'OtrasSenasExtranjero' => header.string('RcprOtrasSenasExtranjero'),
         'Telefono' => telefono(header, 'Rcpr'),
-        'CorreoElectronico' => header.string('RcprCorreoElectronico')
+        'CorreoElectronico' => primer_correo(header.string('RcprCorreoElectronico'))
       }
+    end
+
+    # Hacienda exige un único correo en `Receptor.CorreoElectronico`, pero SAP
+    # puede traer varios separados por `;` (mismo campo que usa
+    # `CheckSentDocumentsJob#recipients` para armar el correo de recepción) —
+    # se manda solo el primero.
+    def primer_correo(raw)
+      return nil if raw.nil?
+
+      raw.split(';').map(&:strip).reject(&:blank?).first
     end
 
     # Emisor y receptor traen el mismo bloque con distinto prefijo (`Emsr…` /

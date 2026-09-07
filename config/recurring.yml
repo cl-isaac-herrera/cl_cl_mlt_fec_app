@@ -21,6 +21,10 @@ default: &default
     class: CheckSentDocumentsJob
     schedule: every 2 minutes
 
+  send_electronic_receipt:
+    class: SendElectronicReceiptJob
+    schedule: every 2 minutes
+
 development:
   <<: *default
 

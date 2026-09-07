@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_07_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_07_150000) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
@@ -23,6 +23,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_07_130000) do
     t.string "default_xml_tax_code", limit: 8
     t.string "economic_activity_code", limit: 6
     t.text "email_cc"
+    t.integer "email_config_id"
     t.integer "email_sender_type", default: 1, null: false
     t.integer "freight_type", default: 1, null: false
     t.boolean "is_active", default: true, null: false
@@ -42,6 +43,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_07_130000) do
     t.boolean "use_additional_fields", default: false, null: false
     t.boolean "use_ap_invoice", default: false, null: false
     t.string "uuid"
+    t.index ["email_config_id"], name: "index_companies_on_email_config_id"
     t.index ["uuid"], name: "index_companies_on_uuid", unique: true
   end
 
@@ -56,6 +58,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_07_130000) do
     t.string "sl_url", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
+  end
+
+  create_table "email_configs", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "email", limit: 160, null: false
+    t.string "host", limit: 50, null: false
+    t.text "password"
+    t.integer "port", null: false
+    t.string "sender_address", limit: 160
+    t.boolean "ssl", default: true, null: false
+    t.datetime "updated_at", null: false
   end
 
   create_table "permissions", force: :cascade do |t|
@@ -177,6 +190,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_07_130000) do
   end
 
   add_foreign_key "companies", "connections"
+  add_foreign_key "companies", "email_configs"
   add_foreign_key "role_permissions", "permissions"
   add_foreign_key "role_permissions", "roles"
   add_foreign_key "user_permissions", "permissions"

@@ -200,6 +200,81 @@ RSpec.describe CheckSentDocumentsJob do
     end
   end
 
+  describe 'correo de recepción' do
+    let(:mail_queue) { instance_double(Sap::MailQueue, create: '5') }
+
+    before do
+      allow(client).to receive(:get)
+        .and_return([{ 'Clave' => '506123', 'RcprCorreoElectronico' => 'cliente@test.com;otro@test.com' }])
+      allow(Sap::MailQueue).to receive(:new).and_return(mail_queue)
+      allow(Documents::MailQueue).to receive(:create)
+    end
+
+    it 'encola en la UDT la posición 0 como destinatario y el resto en copia, cuando Hacienda acepta' do
+      queue(entry)
+      allow(hacienda).to receive(:check_status)
+        .and_return(check_result(status: 'aceptado', xml_base64: Base64.strict_encode64('<Mensaje/>')))
+
+      described_class.perform_now
+
+      expect(mail_queue).to have_received(:create).with(
+        doc_entry: 25, doc_type: DocType::FE,
+        output_to: 'cliente@test.com', output_cc: 'otro@test.com', output_bcc: nil
+      )
+      expect(Documents::MailQueue).to have_received(:create)
+        .with(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: DocType::FE)
+    end
+
+    it 'también encola cuando Hacienda rechaza' do
+      xml = '<MensajeHacienda><DetalleMensaje>La clave ya existe</DetalleMensaje></MensajeHacienda>'
+      queue(entry)
+      allow(hacienda).to receive(:check_status)
+        .and_return(check_result(status: 'rechazado', xml_base64: Base64.strict_encode64(xml)))
+
+      described_class.perform_now
+
+      expect(mail_queue).to have_received(:create)
+      expect(Documents::MailQueue).to have_received(:create)
+    end
+
+    it 'agrega los correos en copia de la compañía después de los de SAP' do
+      company.update!(email_cc: 'cc1@test.com;cc2@test.com')
+      queue(entry)
+      allow(hacienda).to receive(:check_status)
+        .and_return(check_result(status: 'aceptado', xml_base64: Base64.strict_encode64('<Mensaje/>')))
+
+      described_class.perform_now
+
+      expect(mail_queue).to have_received(:create)
+        .with(hash_including(output_cc: 'otro@test.com;cc1@test.com;cc2@test.com'))
+    end
+
+    it 'no encola nada sin destinatario en la cabecera' do
+      allow(client).to receive(:get).and_return([{ 'Clave' => '506123' }])
+      queue(entry)
+      allow(hacienda).to receive(:check_status)
+        .and_return(check_result(status: 'aceptado', xml_base64: Base64.strict_encode64('<Mensaje/>')))
+
+      described_class.perform_now
+
+      expect(Sap::MailQueue).not_to have_received(:new)
+      expect(Documents::MailQueue).not_to have_received(:create)
+    end
+
+    it 'no tumba la verificación si falla el encolado del correo' do
+      queue(entry)
+      allow(hacienda).to receive(:check_status)
+        .and_return(check_result(status: 'aceptado', xml_base64: Base64.strict_encode64('<Mensaje/>')))
+      allow(Sap::MailQueue).to receive(:new).and_raise('SAP no responde')
+      allow(Sentry).to receive(:capture_exception)
+
+      expect { described_class.perform_now }.not_to raise_error
+      expect(Documents::PendingQueue).to have_received(:mark)
+        .with(anything, status: Documents::PendingQueue::STATUS_ACCEPTED, details: nil)
+      expect(Sentry).to have_received(:capture_exception)
+    end
+  end
+
   describe 'sin compañía configurada' do
     it 'deja el documento en Sent en la cola, sin tocar SAP' do
       queue(entry(sap_db: 'SBO_FANTASMA'))

@@ -413,6 +413,7 @@ DEPENDENCIES
   httparty
   importmap-rails
   jwt
+  mail (~> 2.8)
   openid_connect (~> 2.5)
   propshaft
   puma (>= 5.0)

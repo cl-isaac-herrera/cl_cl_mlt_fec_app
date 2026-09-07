@@ -291,3 +291,142 @@ BEGIN
 	SELECT Id FROM @Reprocessed;
 END
 GO
+
+/****** Object:  Table [dbo].[OutgoingMailsQueue] ******/
+-- Cola de correos de recepción electrónica pendientes de envío
+-- (`Documents::MailQueue` / `SendElectronicReceiptJob`). Analogía de
+-- `DocumentsQueue` para el correo, pero deliberadamente más chica: sin tabla
+-- de historial de intentos (`DocumentAttemptDetails`) — el detalle de cada
+-- intento vive en la UDT de SAP (`U_Details`, `@CL_FEC_MAILSQUEUE`), no acá.
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[OutgoingMailsQueue](
+	[Id] [bigint] IDENTITY(1,1) NOT NULL,
+	[DocEntry] [int] NOT NULL,
+	[DocType] [nvarchar](2) NOT NULL,
+	[SAPDB] [nvarchar](30) NOT NULL,
+	[Status] [tinyint] NOT NULL,
+	[Attempts] [tinyint] NOT NULL,
+	[CreatedAt] [datetime2](3) NOT NULL,
+	[UpdatedAt] [datetime2](3) NOT NULL,
+ CONSTRAINT [PK_OutgoingMailsQueue] PRIMARY KEY CLUSTERED
+(
+	[Id] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_Status] DEFAULT ((1)) FOR [Status]
+GO
+ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_Attempts] DEFAULT ((0)) FOR [Attempts]
+GO
+ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_CreatedAt] DEFAULT (sysdatetime()) FOR [CreatedAt]
+GO
+ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_UpdatedAt] DEFAULT (sysdatetime()) FOR [UpdatedAt]
+GO
+-- Catálogo (1 Pendiente, 2 Enviando, 3 Error, 4 Enviado) — el mismo que
+-- `U_Status` de la UDT (`config/sap_schemas/outgoing_mails_udt.json`).
+ALTER TABLE [dbo].[OutgoingMailsQueue] WITH CHECK ADD CONSTRAINT [CK_OutgoingMailsQueue_Status] CHECK ([Status] IN (1,2,3,4))
+GO
+ALTER TABLE [dbo].[OutgoingMailsQueue] CHECK CONSTRAINT [CK_OutgoingMailsQueue_Status]
+GO
+ALTER TABLE [dbo].[OutgoingMailsQueue]  WITH CHECK ADD  CONSTRAINT [FK_OutgoingMailsQueue_DocTypes] FOREIGN KEY([DocType])
+REFERENCES [dbo].[DocTypes] ([Code])
+GO
+ALTER TABLE [dbo].[OutgoingMailsQueue] CHECK CONSTRAINT [FK_OutgoingMailsQueue_DocTypes]
+GO
+-- Optimiza la lectura de correos pendientes por `CL_D_CL_MLT_FEC_SLT_PENDINGMAILS`.
+CREATE NONCLUSTERED INDEX [IX_OutgoingMailsQueue_Polling] ON [dbo].[OutgoingMailsQueue]
+(
+	[SAPDB] ASC,
+	[Status] ASC,
+	[Id] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+GO
+-- Optimiza el dedupe de `CL_D_CL_MLT_FEC_CRT_MAILTOQUEUE` (¿ya hay una fila
+-- sin terminar para este documento?).
+CREATE NONCLUSTERED INDEX [IX_OutgoingMailsQueue_DocLookup] ON [dbo].[OutgoingMailsQueue]
+(
+	[SAPDB] ASC,
+	[DocType] ASC,
+	[DocEntry] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, SORT_IN_TEMPDB = OFF, DROP_EXISTING = OFF, ONLINE = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+GO
+/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_CRT_MAILTOQUEUE] ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- Encola el envío del correo de recepción, DESPUÉS de registrar la fila en la
+-- UDT (`Sap::MailQueue#create`, ver `CheckSentDocumentsJob#queue_receipt_mail`).
+-- No duplica mientras exista una fila sin terminar (Status <> 4) para el mismo
+-- documento — un documento solo se resuelve una vez, pero la validación queda
+-- acá igual que `CL_D_CL_MLT_FEC_CRT_DOCUMENTTOQUEUE` se protege por su cuenta.
+CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_CRT_MAILTOQUEUE]
+	@SAPDB NVARCHAR(30),
+	@DocEntry INT,
+	@DocType NVARCHAR(2)
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	IF NOT EXISTS (
+		SELECT 1 FROM dbo.OutgoingMailsQueue
+		WHERE SAPDB = @SAPDB AND DocEntry = @DocEntry AND DocType = @DocType AND Status <> 4
+	)
+	BEGIN
+		INSERT dbo.OutgoingMailsQueue (DocEntry, DocType, SAPDB, Status, Attempts, CreatedAt, UpdatedAt)
+		VALUES (@DocEntry, @DocType, @SAPDB, 1, 0, GETDATE(), GETDATE());
+	END
+END
+GO
+/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_SLT_PENDINGMAILS] ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- Reclama los correos pendientes (1), los que quedaron colgados en Enviando
+-- (2) por más de diez minutos, o los que fallaron (3) y ya cumplieron su
+-- backoff exponencial — MISMO criterio que
+-- `CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS`.
+CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_SLT_PENDINGMAILS]
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	UPDATE dbo.OutgoingMailsQueue SET
+		Status = 2,
+		UpdatedAt = GETDATE()
+	OUTPUT
+		inserted.Id,
+		inserted.DocEntry,
+		inserted.DocType,
+		inserted.SAPDB
+	WHERE Status = 1
+		OR (Status = 2 AND UpdatedAt <= DATEADD(MINUTE, -10, GETDATE()))
+		OR (Status = 3 AND DATEDIFF(MINUTE, UpdatedAt, GETDATE()) >= POWER(2, Attempts))
+END
+GO
+/****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_UPT_MAIL] ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- Actualiza el desenlace de un intento de envío: estado, intentos y fecha del
+-- último intento. Sin historial de intentos (a diferencia de DocumentsQueue):
+-- el detalle de cada intento vive en la UDT (U_Details), no acá.
+CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_UPT_MAIL]
+	@Id BIGINT,
+	@StatusCode TINYINT
+AS
+BEGIN
+	SET NOCOUNT ON;
+
+	UPDATE dbo.OutgoingMailsQueue SET
+		Status = @StatusCode,
+		Attempts = Attempts + 1,
+		UpdatedAt = GETDATE()
+	WHERE Id = @Id;
+END
+GO

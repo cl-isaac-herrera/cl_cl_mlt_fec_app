@@ -1,0 +1,52 @@
+{
+  "table_name": "@CL_FEC_MAILSQUEUE",
+  "IsUDT": true,
+  "table_description": "Cola envío de comprobantes",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "DocEntry", "Description": "FEC · DocEntry del comprobante asociado al correo",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES" },
+
+    { "Name": "DocType", "Description": "FEC · Tipo de documento (ObjType) del comprobante",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES" },
+
+    { "Name": "Status", "Description": "FEC · Estado del envío del correo",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES", "DefaultValue": "1",
+      "ValidValues": [
+        { "Value": "1", "Description": "Pendiente" },
+        { "Value": "2", "Description": "Enviando" },
+        { "Value": "3", "Description": "Error" },
+        { "Value": "4", "Description": "Enviado" }
+      ]
+    },
+
+    { "Name": "LastAttempt", "Description": "FEC · Fecha ISO 8601 del último intento de envío",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "CreatedAt", "Description": "FEC · Fecha ISO 8601 de creación del registro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tYES" },
+
+    { "Name": "OutputTo", "Description": "FEC · Destinatarios (Para) del correo",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "OutputCC", "Description": "FEC · Destinatarios en copia (CC) del correo",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "OutputBCC", "Description": "FEC · Destinatarios en copia oculta (BCC) del correo",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "Type", "Description": "FEC · Tipo de envío: Envío o Reenvío",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES", "DefaultValue": "1",
+      "ValidValues": [
+        { "Value": "1", "Description": "Envío" },
+        { "Value": "2", "Description": "Reenvío" }
+      ]
+    },
+
+    { "Name": "Details", "Description": "FEC · Detalle del envío o del error",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "Email", "Description": "FEC · Cuerpo o contenido del correo enviado",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" }
+  ]
+}

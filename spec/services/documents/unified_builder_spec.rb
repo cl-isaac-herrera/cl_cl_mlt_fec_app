@@ -189,6 +189,22 @@ RSpec.describe Documents::UnifiedBuilder do
         'IdentificacionExtranjero' => 'X123', 'OtrasSenasExtranjero' => 'Miami'
       )
     end
+
+    # Hacienda exige un único correo en `Receptor.CorreoElectronico`; SAP puede
+    # traer varios separados por `;` (mismo campo que arma el correo de
+    # recepción en `CheckSentDocumentsJob#recipients`) — se manda solo el
+    # primero.
+    it 'manda solo el primer correo del receptor a Hacienda, aunque la cabecera traiga varios' do
+      payload = build(header: { 'RcprCorreoElectronico' => 'cliente@test.com;copia@test.com' })
+
+      expect(payload['Document']['Receptor']['CorreoElectronico']).to eq('cliente@test.com')
+    end
+
+    it 'deja el correo del receptor en nil cuando la cabecera no trae ninguno' do
+      payload = build(header: {})
+
+      expect(payload['Document']['Receptor']['CorreoElectronico']).to be_nil
+    end
   end
 
   describe 'líneas' do

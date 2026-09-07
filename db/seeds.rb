@@ -672,6 +672,35 @@ SL_RESOURCES_DOCUMENT_QUERIES = [
    'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0]
 ].freeze
 
+# ── Cola de correos de recepción electrónica (UDT `@CL_FEC_MAILSQUEUE`) ──────
+# Las tres consultas que `Sap::MailQueue` necesita para leer/crear/actualizar
+# filas de la UDT declarada en `config/sap_schemas/outgoing_mails_udt.json`
+# (ver `CheckSentDocumentsJob#queue_receipt_mail` y `SendElectronicReceiptJob`).
+#
+# `resource` es literalmente `@CL_FEC_MAILSQUEUE` — es una UDT, no una vista
+# (`_B1SLQuery`), así que `SlResourceSeed.qualify` NO le agrega prefijo: el
+# mismo `code` sirve en SQL Server y en HANA (mismo criterio que
+# `SL_RESOURCES_STATUS_UPDATES`).
+#
+# El `$filter` de la consulta excluye `U_Status = 4` (Enviado): en el caso
+# normal hay a lo sumo una fila no terminada por documento, así que filtrar en
+# SAP evita traer filas ya resueltas y decidir acá cuál es "la vigente".
+#
+# `page_size: 0` en las tres: la de lectura filtra a lo sumo una fila y las
+# otras dos son escrituras — mismo criterio que `SL_RESOURCES_STATUS_UPDATES`.
+SL_RESOURCES_MAIL_QUEUE = [
+  ['qsGetMailQueueByDocument',
+   'Detalle pendiente de envío en la cola de correos de recepción electrónica (UDT)',
+   '@CL_FEC_MAILSQUEUE',
+   '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and U_Status ne 4)', 0],
+  ['createMailQueue',
+   'Crea una fila en la cola de correos de recepción electrónica (UDT)',
+   '@CL_FEC_MAILSQUEUE', nil, 0],
+  ['updateMailQueue',
+   'Actualiza el estado de una fila de la cola de correos de recepción electrónica (UDT)',
+   '@CL_FEC_MAILSQUEUE(#Code#)', nil, 0]
+].freeze
+
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
   # sin haber escrito ninguna fila.
@@ -680,7 +709,7 @@ ActiveRecord::Base.transaction do
   preserved = 0
 
   all_sl_resources = SL_RESOURCES + SL_RESOURCES_OWN + SL_RESOURCES_STATUS_UPDATES +
-                     SL_RESOURCES_DOCUMENT_QUERIES
+                     SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el

@@ -81,6 +81,9 @@ es:
       setting:
         one: Ajuste
         other: Ajustes
+      email_config:
+        one: Bandeja de correo
+        other: Bandejas de correo
 
     attributes:
       connection:
@@ -148,3 +151,8 @@ es:
         resource: "El recurso"
         query_params: "Los parámetros de la consulta"
         page_size: "El tamaño de página"
+      email_config:
+        email: "El correo"
+        host: "El servidor"
+        port: "El puerto"
+        sender_address: "El nombre del remitente"

@@ -50,6 +50,14 @@ gem 'solid_cable'
 # Proxy HTTP hacia API externo
 gem 'faraday', '~> 2.0'
 
+# Envío de correo por SMTP (`Documents::ReceiptMailer`). Esta app carga Rails a
+# la carta (`config/application.rb` no requiere `action_mailer/railtie`), así
+# que no hay ActionMailer — un mensaje puntual con credenciales SMTP DISTINTAS
+# por compañía no necesita esa capa completa (vistas, layouts, config global de
+# entrega). Ya estaba instalada como dependencia transitiva, pero se declara
+# acá porque la app la usa directo — mismo criterio que `connection_pool`.
+gem 'mail', '~> 2.8'
+
 # Submodules de plataforma (auth OIDC, structures, common, data_access)
 gem 'bcrypt', '~> 3.1.7'
 gem 'httparty'
