@@ -172,8 +172,13 @@ Rails.application.routes.draw do
     # Layer), pero sigue siendo información DE ESTE documento, así que cuelga
     # del mismo recurso en vez de uno aparte. `:id` es el `DocEntry` (ver
     # `#mapDocument` en `documents_issued_controller.js`).
+    #
+    # `reprocess` reemplaza `PATCH /api/Documents/:id/Reprocess` del servidor de
+    # sincronización .NET (`ApiFEUrl`): ya no se cae al proxy, la reencola
+    # `Documents::PendingQueue#reprocess` (§37) contra la cola propia.
     resources :documents, only: [:index] do
-      get :attempts, on: :member
+      get   :attempts,  on: :member
+      patch :reprocess, on: :member
     end
   end
 

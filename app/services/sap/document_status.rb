@@ -75,6 +75,26 @@ module Sap
                    })
     end
 
+    # Cambia SOLO `U_CL_FEC_Status`, sin los otros seis campos.
+    #
+    # Es la excepción deliberada a la regla de arriba ("los SIETE campos van
+    # SIEMPRE"): esa regla describe un DESENLACE (`#call`, el envío/rechazo/
+    # aceptación que arma `SyncIssuedDocumentsJob`), y esto no es un desenlace
+    # — es un cambio de bandera de tránsito. Lo usa
+    # `Api::DocumentsController#reprocess` para que SAP deje de mostrar
+    # `Rejected` mientras el documento espera a que la cola lo vuelva a tomar
+    # (`Documents::PendingQueue::STATUS_REPROCESS`). Machacar `Clave`/
+    # `ErrorDetails`/etc. con `nil` acá borraría la información del intento
+    # anterior que el operador puede seguir necesitando mientras el reproceso
+    # no ha terminado — y el próximo `#call` de la sincronización va a
+    # sobrescribir los siete campos de cualquier forma en cuanto haya un
+    # desenlace nuevo.
+    #
+    # @param status [Integer] uno de los `Documents::PendingQueue::STATUS_*`.
+    def update_status_only(status)
+      client.patch(path, body: { 'U_CL_FEC_Status' => status })
+    end
+
     private
 
     attr_reader :client, :doc_type, :doc_entry

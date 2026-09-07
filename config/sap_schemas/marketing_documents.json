@@ -22,7 +22,8 @@
         { "Value": "3", "Description": "Sent" },
         { "Value": "4", "Description": "Error" },
         { "Value": "6", "Description": "Accepted" },
-        { "Value": "7", "Description": "Rejected" }
+        { "Value": "7", "Description": "Rejected" },
+        { "Value": "8", "Description": "Reprocess" }
       ]
     },
     {

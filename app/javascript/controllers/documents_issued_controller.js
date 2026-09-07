@@ -23,8 +23,12 @@ import { relativeDate } from 'vendor/clavisco/format/dates';
  * `Id` de fila que ya no existe en un resultado que viene de SAP — anotado en
  * `TODOS.md` → Emisión de documentos): Ver/Descargar PDF, Ver/Descargar XML
  * Hacienda, Descargar Doc XML, Correos, Omitir Validaciones, Anulación Interna,
- * Reprocesar, Descarga Masiva, y el gráfico "Más Información" (dependía de
+ * Descarga Masiva, y el gráfico "Más Información" (dependía de
  * `DocumentQtyList`, que el .NET calculaba y SAP no).
+ *
+ * "Reprocesar" SÍ está migrado: `PATCH /api/documents/:id/reprocess` reencola
+ * el documento en la cola propia (§37, `Documents::PendingQueue#reprocess`),
+ * ya no pega al servidor de sincronización .NET (`ApiFEUrl`).
  */
 export default class extends TabulatorController {
   static targets = [
@@ -325,11 +329,14 @@ export default class extends TabulatorController {
   // (que numeraba 1=Aceptado..7=Anulado): esos dos catálogos no coinciden.
   #statusLabel(status) {
     const map = {
-      0: { label: 'Pendiente', bg: '#fffbeb', color: '#b45309' },
-      3: { label: 'Enviado',   bg: '#e8f0fe', color: '#1a56db' },
-      4: { label: 'Error',     bg: '#fdecea', color: '#c0392b' },
-      6: { label: 'Aceptado',  bg: '#e8f5ee', color: '#3a7d52' },
-      7: { label: 'Rechazado', bg: '#fef2f2', color: '#991b1b' },
+      0: { label: 'Pendiente',    bg: '#fffbeb', color: '#b45309' },
+      3: { label: 'Enviado',      bg: '#e8f0fe', color: '#1a56db' },
+      4: { label: 'Error',        bg: '#fdecea', color: '#c0392b' },
+      6: { label: 'Aceptado',     bg: '#e8f5ee', color: '#3a7d52' },
+      7: { label: 'Rechazado',    bg: '#fef2f2', color: '#991b1b' },
+      // Reencolado a pedido del usuario (§37, `Documents::PendingQueue::STATUS_REPROCESS`);
+      // vuelve a `Enviado`/`Error`/etc. en cuanto `SyncIssuedDocumentsJob` lo retoma.
+      8: { label: 'Reprocesando', bg: '#fff7ed', color: '#c2410c' },
     };
     return map[status] ? { ...map[status], status } : { label: 'N/A', bg: '#f3f4f6', color: '#6b7280', status };
   }
@@ -478,7 +485,7 @@ export default class extends TabulatorController {
       case 'info':             this.#openInfoModal(row);        break;
       case 'skip-validations': this.#skipValidations(row.Id);  break;
       case 'internal-cancel':  this.#internalCancel(row);      break;
-      case 'reprocess':        this.#reprocess(row.Id);        break;
+      case 'reprocess':        this.#reprocess(row);           break;
     }
   }
 
@@ -559,7 +566,9 @@ export default class extends TabulatorController {
 
   async #internalCancel(row) {
     // Códigos de `U_CL_FEC_Status` — ver #statusLabel.
-    const statusLabels = { 0: 'Pendiente', 3: 'Enviado', 4: 'Error', 6: 'Aceptado', 7: 'Rechazado' };
+    const statusLabels = {
+      0: 'Pendiente', 3: 'Enviado', 4: 'Error', 6: 'Aceptado', 7: 'Rechazado', 8: 'Reprocesando',
+    };
     const statusText = statusLabels[row.Status] || 'Desconocido';
 
     const confirmed = await confirm('¿Está seguro que desea continuar?', `Esta acción anulará de manera interna la FEC bajo su propia responsabilidad, la cuál se encuentra en estado: ${statusText}`);
@@ -576,20 +585,21 @@ export default class extends TabulatorController {
     }
   }
 
-  async #reprocess(docId) {
+  async #reprocess(row) {
     if (!this.#hasPerm('Documents_Emission_Reprocess')) {
       showToast('No tiene permiso para realizar esta acción', 'info');
       return;
     }
+    const docId = row.Id;
     // Loader a nivel de fila: marca la celda Estado como "Enviando" durante la solicitud
     const currentPage = this.table?.getPage() || 1;
     const rowComp = this.table?.getRows().find(r => r.getData().Id === docId);
     rowComp?.update({ StatusForTable: { loading: true } });
     try {
-      // ApiFEUrl: este endpoint vive en el servidor de sincronización FE, no en el App server
+      // Endpoint nativo (Rails, sesión propia) — ya no el servidor de sincronización .NET.
       await this.#apiFetch(
-        `/api/Documents/${docId}/Reprocess?isReceptionDocument=false&companyId=${this.#companyId}`,
-        { method: 'PATCH', body: JSON.stringify({}), headers: { 'API': 'ApiFEUrl' } }
+        `/api/documents/${docId}/reprocess?doc_type=${encodeURIComponent(row.DocType)}`,
+        { method: 'PATCH' }
       );
       showToast('Solicitud de reprocesamiento enviada', 'success');
     } catch (err) {
@@ -1103,12 +1113,13 @@ export default class extends TabulatorController {
   // el estado intermedio "Procesando" (2).
   #attemptStatusLabel(code) {
     const map = {
-      0: { label: 'Pendiente',  bg: '#fffbeb', color: '#b45309' },
-      2: { label: 'Procesando', bg: '#f5f3ff', color: '#6d28d9' },
-      3: { label: 'Enviado',    bg: '#e8f0fe', color: '#1a56db' },
-      4: { label: 'Error',      bg: '#fdecea', color: '#c0392b' },
-      6: { label: 'Aceptado',   bg: '#e8f5ee', color: '#3a7d52' },
-      7: { label: 'Rechazado',  bg: '#fef2f2', color: '#991b1b' },
+      0: { label: 'Pendiente',    bg: '#fffbeb', color: '#b45309' },
+      2: { label: 'Procesando',   bg: '#f5f3ff', color: '#6d28d9' },
+      3: { label: 'Enviado',      bg: '#e8f0fe', color: '#1a56db' },
+      4: { label: 'Error',        bg: '#fdecea', color: '#c0392b' },
+      6: { label: 'Aceptado',     bg: '#e8f5ee', color: '#3a7d52' },
+      7: { label: 'Rechazado',    bg: '#fef2f2', color: '#991b1b' },
+      8: { label: 'Reprocesando', bg: '#fff7ed', color: '#c2410c' },
     };
     return map[code] || { label: 'N/A', bg: '#f3f4f6', color: '#6b7280' };
   }

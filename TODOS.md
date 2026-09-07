@@ -1224,6 +1224,11 @@ clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo p
       versión vieja completa (`OnHold`/`Cancelled`, sin `Attempts`/`DocumentAttemptDetails`);
       y `PendingQueue` todavía no consume el historial de intentos ni
       `SLT_PENDINGCHECKDOCUMENTS` (sin llamador todavía en Ruby).
+      **Se sumó más deuda del mismo tipo (2026-09-06):** el estado `Reprocess` (8) y el SP
+      `CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT` (acción "Reprocesar" de
+      `documents_issued_controller.js`, ver "Documentos emitidos" más abajo) tampoco están
+      en `db/external/hana/schema.sql` — agregarlos junto con el resto cuando se ponga al
+      día ese archivo.
 
 - [ ] **`bin/rails db:migrate RAILS_ENV=test` sembró el catálogo completo solo (2026-09-05).**
       Al migrar la base de test para esta tanda, apareció con `permissions`,
@@ -1551,8 +1556,7 @@ no para este listado — decisión del 2026-09-05). Lo que sigue sin migrar:
 - [ ] **Las acciones por fila siguen pegándole al proxy .NET con un `Id` que ya no
       existe.** Ver/Descargar PDF (`/api/Report/*InvoicePDF`), Ver/Descargar XML Hacienda
       y Descargar Doc XML (`/api/Documents/*XML*`), Correos (`/api/Email/*`), Omitir
-      Validaciones y Anulación Interna (`/api/Documents` PATCH), Reprocesar
-      (`/api/Documents/:id/Reprocess`, servidor `ApiFEUrl`) y Descarga Masiva
+      Validaciones y Anulación Interna (`/api/Documents` PATCH) y Descarga Masiva
       (`/api/Report/BulkDownloadOfDocuments`). Todas asumían un `Id` de la base local del
       .NET (`spGetDocuments`); el listado nuevo viene de SAP y solo puede ofrecer
       `DocEntry` (`documents_issued_controller.js#mapDocument` lo estampa como `Id` de
@@ -1562,6 +1566,45 @@ no para este listado — decisión del 2026-09-05). Lo que sigue sin migrar:
       una se resuelve por `DocEntry`+`DocType` contra SAP o necesita datos que hoy solo
       tiene el .NET (el PDF sale de un Crystal Report, el XML/envío a Hacienda depende del
       paso 4 de "Emisión de documentos" más arriba, que tampoco existe todavía).
+
+- [x] **Reprocesar — migrado a Rails (2026-09-06), ya no pega al servidor de
+      sincronización .NET (`ApiFEUrl`).** `PATCH /api/documents/:id/reprocess?doc_type=`
+      (`Api::DocumentsController#reprocess`) reencola el documento en la cola propia
+      llamando a `Documents::PendingQueue.reprocess` (§37), que a su vez invoca el SP
+      nuevo `CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT` (`db/external/sql_server/schema.sql`)
+      con `@DocEntry, @SAPDB, @DocType, @Details`. Sí se pudo migrar sin esperar al resto
+      de las acciones de fila porque solo necesita lo que ya da SAP (`DocEntry`+`DocType`)
+      más la compañía activa — no depende del `Id` local del .NET.
+      **La validación vive en el SP, no en Ruby:** solo reencola (`StatusCode` → `Reprocess`,
+      8) si la fila sigue en `Rejected` (7) en el momento del `UPDATE`, y registra el
+      intento en `DocumentAttemptDetails` con el `@Details` que arma el controller
+      (`"Reprocesamiento solicitado por <usuario>"`). Devuelve el `Id` reencolado cuando
+      aplicó, o ninguna fila cuando el documento no existía en la cola o ya no estaba
+      Rechazado — el controller reporta los dos casos igual (422), porque no puede
+      distinguirlos ni actuar distinto.
+      **También se marca en SAP**, igual que hace `SyncIssuedDocumentsJob#mark_sap` con
+      cada desenlace, pero SOLO `U_CL_FEC_Status` (`Sap::DocumentStatus#update_status_only`,
+      nuevo método — a propósito NO manda los otros seis campos de `#call`, que seguirían
+      describiendo el intento anterior). **Con las credenciales del USUARIO en sesión**
+      (`Sap::UserClient.for(company, user: Current.user)`, clase nueva) y no con las de
+      licencia de `Sap::CompanyClient`: acá SÍ hay una persona detrás del click —a
+      diferencia de `SyncIssuedDocumentsJob`, que corre sin `Current.user`— y la acción en
+      SAP debe poder atribuírsele a ella. Es best-effort: si `Sap::UserClient.for` levanta
+      `MissingConfiguration` (la compañía sin conexión, o el usuario sin sus credenciales
+      propias de SAP en el perfil) o el Service Layer responde mal, se loguea y la
+      respuesta sigue en 200 — la cola ya quedó reencolada, que es lo que de verdad decide
+      si se reprocesa. `8`/`Reprocess` se agregó como `ValidValues` del UDF `CL_FEC_Status`
+      en `config/sap_schemas/marketing_documents.json` y `payments.json`.
+      **Pendiente:** correr `rake sap:schema:sync` contra las instalaciones vivas para que
+      el UDF acepte el valor nuevo (§32) — el JSON del schema no se aplica solo.
+      **`CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS` actualizado** para tomar también
+      `StatusCode = 8` (sin el backoff que sí aplica a `Error`: es un reintento explícito
+      del usuario, no automático).
+      **Pendiente:** `db/external/hana/schema.sql` sigue sin el estado `Reprocess` ni el
+      SP nuevo — es el mismo atraso ya anotado más arriba (§ "Emisión de documentos" →
+      `db/external/hana/schema.sql` desactualizado) para el resto del rediseño de la cola
+      (`OnHold`/`Cancelled` vs. `Attempts`/`DocumentAttemptDetails`); agregar los tres
+      juntos cuando se ponga al día ese archivo.
 
 - [x] **"Consultar Información" — la sección "Respuesta Hacienda" NO se migra, a
       propósito.** Esa sección dependía de `/api/Documents/issued/:id/xml-response-message`

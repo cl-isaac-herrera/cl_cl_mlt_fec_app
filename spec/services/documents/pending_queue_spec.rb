@@ -188,6 +188,65 @@ RSpec.describe Documents::PendingQueue do
     end
   end
 
+  describe '.reprocess' do
+    def stub_update(rows)
+      allow(ExternalDb::Pool).to receive(:with).with(described_class::GROUP_CODE).and_yield(client)
+      allow(client).to receive(:call).and_return(rows)
+    end
+
+    # Los cuatro parámetros van posicionales y en el orden que declara el
+    # procedimiento: @DocEntry, @SAPDB, @DocType, @Details. La validación de
+    # que el documento esté Rejected vive en el SP, no acá.
+    it 'manda los cuatro parámetros en orden' do
+      stub_update([{ 'Id' => 7 }])
+
+      described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'motivo')
+
+      expect(client).to have_received(:call).with(
+        'CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT',
+        [25, 'SBO_ACME', '01', 'motivo'],
+        commit: true
+      )
+    end
+
+    it 'confirma la transacción, porque el procedimiento escribe' do
+      stub_update([{ 'Id' => 7 }])
+
+      described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'motivo')
+
+      expect(client).to have_received(:call).with(anything, anything, commit: true)
+    end
+
+    it 'devuelve true cuando el procedimiento reencoló una fila' do
+      stub_update([{ 'Id' => 7 }])
+
+      expect(
+        described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'motivo')
+      ).to be(true)
+    end
+
+    # El SP no devuelve fila cuando el documento no existe en la cola o ya no
+    # estaba Rejected — las dos se reportan igual, sin adivinar cuál pasó.
+    it 'devuelve false cuando el procedimiento no reencoló nada' do
+      stub_update([])
+
+      expect(
+        described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'motivo')
+      ).to be(false)
+    end
+
+    it 'recorta un motivo desmedido' do
+      stub_update([{ 'Id' => 7 }])
+
+      described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'x' * 5_000)
+
+      expect(client).to have_received(:call) do |_proc, binds, **|
+        expect(binds[3].length).to eq(described_class::MAX_DETAILS)
+        expect(binds[3]).to end_with('…')
+      end
+    end
+  end
+
   describe 'Entry' do
     # El tipo desconocido NO se descarta: la fila está bien formada y el documento
     # existe. Lo que falta es saber cómo armarlo, y eso lo reporta el job.

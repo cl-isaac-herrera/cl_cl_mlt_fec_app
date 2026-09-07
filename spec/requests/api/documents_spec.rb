@@ -208,3 +208,135 @@ RSpec.describe 'GET /api/documents/:id/attempts', type: :request do
     end
   end
 end
+
+RSpec.describe 'PATCH /api/documents/:id/reprocess', type: :request do
+  let(:user)    { User.create!(email: 'documentos-reprocess@example.com', name: 'Ana Pérez') }
+  let(:role)    { Role.create!(name: 'Configurador') }
+  let(:company) { Company.create!(name: 'ACME S.A.', sap_db: 'SBO_ACME') }
+  let(:odbc_client) { instance_double(ExternalDb::Client) }
+
+  def sign_in_with(*permission_names)
+    UsersByCompany.create!(user: user, company: company)
+    UserRole.create!(user: user, role: role, company: company)
+    permission_names.each do |name|
+      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
+    end
+    sign_in(user, company: company)
+  end
+
+  def body = JSON.parse(response.body)
+
+  def reprocess(id, params = {})
+    patch "/api/documents/#{id}/reprocess", params: params
+  end
+
+  def stub_procedure(rows)
+    allow(ExternalDb::Pool).to receive(:with).with(Documents::PendingQueue::GROUP_CODE).and_yield(odbc_client)
+    allow(odbc_client).to receive(:call).and_return(rows)
+  end
+
+  describe 'autorización' do
+    it 'responde 401 sin sesión' do
+      reprocess(25, doc_type: '01')
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'exige Documents_Emission_Reprocess' do
+      sign_in_with('Documents_Emission_Reprocess_Otro')
+      reprocess(25, doc_type: '01')
+
+      expect(response).to have_http_status(:forbidden)
+    end
+  end
+
+  describe 'con permiso' do
+    before { sign_in_with('Documents_Emission_Reprocess') }
+
+    it 'reencola el documento con el SAPDB de la compañía activa, el DocEntry del path y el DocType' do
+      stub_procedure([{ 'Id' => 7 }])
+
+      reprocess(25, doc_type: '01')
+
+      expect(response).to have_http_status(:ok)
+      expect(odbc_client).to have_received(:call).with(
+        'CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT', [25, 'SBO_ACME', '01', anything], commit: true
+      )
+    end
+
+    it 'arma el detalle con el nombre del usuario en sesión' do
+      stub_procedure([{ 'Id' => 7 }])
+
+      reprocess(25, doc_type: '01')
+
+      expect(odbc_client).to have_received(:call).with(
+        anything, [anything, anything, anything, 'Reprocesamiento solicitado por Ana Pérez'], commit: true
+      )
+    end
+
+    it 'responde con error cuando el documento no está Rechazado (el SP no devolvió fila)' do
+      stub_procedure([])
+
+      reprocess(25, doc_type: '01')
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to match(/Rechazado/)
+    end
+
+    it 'rechaza un tipo de documento inválido' do
+      reprocess(25, doc_type: 'XX')
+
+      expect(response).to have_http_status(:unprocessable_content)
+    end
+
+    it 'responde 502 si la base de documentos no responde' do
+      allow(ExternalDb::Pool).to receive(:with).with(Documents::PendingQueue::GROUP_CODE)
+                                               .and_raise(ExternalDb::ConnectionError, 'no se pudo conectar')
+
+      reprocess(25, doc_type: '01')
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(body['Message']).to eq('no se pudo conectar')
+    end
+
+    # `company` (sin `sap_connection` en este spec) hace que
+    # `Sap::UserClient.for` levante `MissingConfiguration` — el mismo criterio
+    # tolerante de `SyncIssuedDocumentsJob#mark_sap`: la cola es la fuente de
+    # verdad y ya quedó reencolada, así que la respuesta sigue en 200.
+    it 'no falla la respuesta si la compañía no tiene SAP configurado (best-effort)' do
+      stub_procedure([{ 'Id' => 7 }])
+
+      reprocess(25, doc_type: '01')
+
+      expect(response).to have_http_status(:ok)
+    end
+
+    # Sin credenciales personales de SAP, `Sap::UserClient.for` también levanta
+    # `MissingConfiguration` — mismo criterio tolerante, aunque la compañía SÍ
+    # tenga conexión: falta la mitad de "usuario en sesión + compañía".
+    it 'no falla la respuesta si el usuario no tiene credenciales propias de SAP (best-effort)' do
+      stub_procedure([{ 'Id' => 7 }])
+      Connection.create!(name: 'SAP QA', sl_url: 'https://sap.test:50000/b1s/v1/').tap do |c|
+        company.update!(connection_id: c.id)
+      end
+
+      reprocess(25, doc_type: '01')
+
+      expect(response).to have_http_status(:ok)
+    end
+
+    it 'marca SOLO U_CL_FEC_Status en SAP con las credenciales del usuario en sesión' do
+      stub_procedure([{ 'Id' => 7 }])
+      SlResource.create!(code: 'updateDocument01', resource: 'Invoices(#DocumentEntry#)', page_size: 0)
+      sl_client = instance_double(Clavisco::ServiceLayer::Client, patch: nil)
+      allow(Sap::UserClient).to receive(:for).with(company, user: user).and_return(sl_client)
+
+      reprocess(25, doc_type: '01')
+
+      expect(response).to have_http_status(:ok)
+      expect(sl_client).to have_received(:patch).with(
+        'Invoices(25)', body: { 'U_CL_FEC_Status' => Documents::PendingQueue::STATUS_REPROCESS }
+      )
+    end
+  end
+end

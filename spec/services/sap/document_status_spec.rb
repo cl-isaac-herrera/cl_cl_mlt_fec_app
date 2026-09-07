@@ -75,4 +75,23 @@ RSpec.describe Sap::DocumentStatus do
       })
     end
   end
+
+  # A diferencia de `#call`, esto NO es un desenlace: es el marcador de
+  # tránsito que usa `Api::DocumentsController#reprocess`, y por eso rompe a
+  # propósito la regla de los siete campos.
+  describe '#update_status_only' do
+    it 'manda ÚNICAMENTE U_CL_FEC_Status, sin los otros seis campos' do
+      status.update_status_only(Documents::PendingQueue::STATUS_REPROCESS)
+
+      expect(client).to have_received(:patch).with(
+        'Invoices(25)', body: { 'U_CL_FEC_Status' => Documents::PendingQueue::STATUS_REPROCESS }
+      )
+    end
+
+    it 'elige la entidad de SAP según el tipo de documento, igual que #call' do
+      status(doc_type: DocType::NC).update_status_only(Documents::PendingQueue::STATUS_REPROCESS)
+
+      expect(client).to have_received(:patch).with('CreditNotes(25)', anything)
+    end
+  end
 end

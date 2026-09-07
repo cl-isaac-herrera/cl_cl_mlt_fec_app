@@ -88,6 +88,17 @@ module Documents
     # `Accepted`/`Rejected`.
     CHECK_PROCEDURE = 'CL_D_CL_MLT_FEC_SLT_PENDINGCHECKDOCUMENTS'
 
+    # Procedimiento que reencola un documento `Rejected` a pedido del usuario
+    # (botón "Reprocesar" de `documents_issued_controller.js`).
+    #
+    #   EXEC …UPT_REPROCESSDOCUMENT @DocEntry, @SAPDB, @DocType, @Details
+    #
+    # La validación de que el documento esté en `Rejected` vive DENTRO del SP,
+    # no acá: es lo que evita la carrera de dos pestañas reprocesando el mismo
+    # documento a la vez. Devuelve el `Id` de la fila cuando sí aplicó, o
+    # ningún registro cuando no había nada que reprocesar (ver `#reprocess`).
+    REPROCESS_PROCEDURE = 'CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT'
+
     # Estados de la cola. Son el catálogo `dbo.StatusCodes` de la base externa
     # (ver `db/external/sql_server/schema.sql`), no una invención de este lado:
     # la columna tiene una llave foránea contra esa tabla.
@@ -99,6 +110,10 @@ module Documents
     STATUS_ERROR      = 4 # fallo de validación o error técnico
     STATUS_ACCEPTED   = 6 # Hacienda aceptó el comprobante — final
     STATUS_REJECTED   = 7 # Hacienda rechazó el comprobante — final
+    # Reencolado a pedido del usuario sobre un documento `Rejected`. `PROCEDURE`
+    # lo toma igual que `Pending` (sin el backoff de `Error`, ver su `WHERE`):
+    # es un reintento explícito, no automático.
+    STATUS_REPROCESS  = 8
 
     # `Details` es `NVARCHAR(MAX)`, así que el tope no lo pide la columna: lo pide
     # el sentido común. Un backtrace entero o el cuerpo de una respuesta de SAP
@@ -158,6 +173,11 @@ module Documents
       def mark(entry, status:, details: nil)
         new.mark(entry, status: status, details: details)
       end
+
+      # @see #reprocess
+      def reprocess(sap_db:, doc_entry:, doc_type:, details:)
+        new.reprocess(sap_db: sap_db, doc_entry: doc_entry, doc_type: doc_type, details: details)
+      end
     end
 
     # @return [Array<Entry>] en el orden en que los devolvió el procedimiento.
@@ -213,6 +233,29 @@ module Documents
           commit: true
         )
       end
+    end
+
+    # Reencola un documento `Rejected` a pedido del usuario (botón "Reprocesar"
+    # de `documents_issued_controller.js` → `Api::DocumentsController#reprocess`).
+    #
+    # A diferencia de `#mark`, no recibe un `Entry`: quien llama solo tiene lo
+    # que trae el listado de SAP (`DocEntry`/`DocType`/`SAPDB`), no el `Id`
+    # interno de la cola — la fila se identifica por esos tres campos, igual que
+    # `Documents::AttemptDetails`.
+    #
+    # `commit: true` por la misma razón que `#mark`/`#pending`: el procedimiento
+    # SÍ escribe (reencola la fila y registra el intento) y el conector revierte
+    # por defecto (§37).
+    #
+    # @return [Boolean] `true` si había un `Rejected` para reencolar, `false` si
+    #   no existía en la cola o ya no estaba en ese estado — la validación real
+    #   la hace el SP, esto solo lee si devolvió una fila.
+    def reprocess(sap_db:, doc_entry:, doc_type:, details:)
+      rows = ExternalDb::Pool.with(GROUP_CODE) do |client|
+        client.call(REPROCESS_PROCEDURE, [doc_entry, sap_db, doc_type, truncate_details(details)], commit: true)
+      end
+
+      rows.any?
     end
 
     private
