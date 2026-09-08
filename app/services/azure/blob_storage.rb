@@ -65,12 +65,12 @@ module Azure
       uri = blob_uri(container, path)
       date = Time.now.utc.httpdate
 
+      ms_headers = { 'x-ms-blob-type' => BLOB_TYPE, 'x-ms-date' => date, 'x-ms-version' => API_VERSION }
+
       request = Net::HTTP::Put.new(uri.request_uri)
-      request['x-ms-date'] = date
-      request['x-ms-version'] = API_VERSION
-      request['x-ms-blob-type'] = BLOB_TYPE
+      ms_headers.each { |name, value| request[name] = value }
       request['Content-Type'] = content_type
-      request['Authorization'] = authorization('PUT', uri, date, content.bytesize, content_type)
+      request['Authorization'] = authorization('PUT', uri, ms_headers, content.bytesize, content_type)
       request.body = content
 
       response = perform(uri, request)
@@ -78,6 +78,37 @@ module Azure
       return uri.to_s if response.is_a?(Net::HTTPSuccess)
 
       message = "Azure Storage rechazó la subida (#{describe(response)})."
+      raise TransientError, message if transient?(response)
+
+      raise RejectedError, message
+    end
+
+    # @param container [String] nombre del contenedor.
+    # @param path [String] ruta dentro del contenedor, sin barra inicial.
+    # @return [String] los bytes del blob.
+    # @raise [TransientError, RejectedError]
+    def download(container:, path:)
+      uri = blob_uri(container, path)
+      date = Time.now.utc.httpdate
+
+      # Sin `x-ms-blob-type`: ese header es propio de `Put Blob`, no de `Get
+      # Blob`. Incluirlo igual en el `StringToSign` (como si `#upload`
+      # reutilizara `canonicalized_headers` a ciegas) firmaría un header que
+      # esta petición nunca manda, y Azure respondería 403 sin decir por qué.
+      ms_headers = { 'x-ms-date' => date, 'x-ms-version' => API_VERSION }
+
+      request = Net::HTTP::Get.new(uri.request_uri)
+      ms_headers.each { |name, value| request[name] = value }
+      # Un GET no lleva body: `Content-Length`/`Content-Type` van vacíos —
+      # misma rama del `StringToSign` que ya cubre `#upload` cuando
+      # `content_length` es cero.
+      request['Authorization'] = authorization('GET', uri, ms_headers, 0, '')
+
+      response = perform(uri, request)
+
+      return response.body if response.is_a?(Net::HTTPSuccess)
+
+      message = "Azure Storage rechazó la descarga (#{describe(response)})."
       raise TransientError, message if transient?(response)
 
       raise RejectedError, message
@@ -120,7 +151,7 @@ module Azure
     # Storage 2009-09-19+ es una secuencia FIJA de doce líneas de headers
     # estándar (vacías si no aplican) más los headers `x-ms-*` canonicalizados
     # y el recurso canonicalizado — en ESE orden exacto.
-    def authorization(verb, uri, date, content_length, content_type)
+    def authorization(verb, uri, ms_headers, content_length, content_type)
       standard_headers = [
         verb,
         '', # Content-Encoding
@@ -135,7 +166,7 @@ module Azure
         '', # If-Unmodified-Since
         '' # Range
       ].join("\n")
-      string_to_sign = "#{standard_headers}\n#{canonicalized_headers(date)}#{canonicalized_resource(uri)}"
+      string_to_sign = "#{standard_headers}\n#{canonicalized_headers(ms_headers)}#{canonicalized_resource(uri)}"
 
       signature = Base64.strict_encode64(
         OpenSSL::HMAC.digest('SHA256', Base64.strict_decode64(key), string_to_sign)
@@ -145,10 +176,12 @@ module Azure
     end
 
     # Los headers `x-ms-*` de ESTA petición, en minúscula, ordenados
-    # lexicográficamente por nombre — `x-ms-blob-type` < `x-ms-date` <
-    # `x-ms-version`, que ya es el orden en que se escriben acá.
-    def canonicalized_headers(date)
-      "x-ms-blob-type:#{BLOB_TYPE}\nx-ms-date:#{date}\nx-ms-version:#{API_VERSION}\n"
+    # lexicográficamente por nombre (`x-ms-blob-type` < `x-ms-date` <
+    # `x-ms-version`) — SOLO los que la petición manda de verdad: firmar un
+    # header que no se envía (o al revés) invalida la firma y Azure responde
+    # 403 sin decir qué falló.
+    def canonicalized_headers(ms_headers)
+      ms_headers.sort.map { |name, value| "#{name}:#{value}\n" }.join
     end
 
     # Formato 2009-09-19+: `/{cuenta}/{path sin query}`. Esta subida nunca lleva

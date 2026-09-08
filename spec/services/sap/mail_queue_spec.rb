@@ -6,8 +6,9 @@ RSpec.describe Sap::MailQueue do
   let(:client) { instance_double(Clavisco::ServiceLayer::Client) }
 
   before do
-    SlResource.create!(code: 'qsGetMailQueueByDocument', resource: '@CL_FEC_MAILSQUEUE',
-                       query_params: '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and U_Status ne 4)',
+    SlResource.create!(code: 'getMailInformation', resource: '@CL_FEC_MAILSQUEUE',
+                       query_params: '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and ' \
+                                     'U_Status ne 4 and U_Status ne 5)',
                        page_size: 0)
     SlResource.create!(code: 'createMailQueue', resource: '@CL_FEC_MAILSQUEUE', page_size: 0)
     SlResource.create!(code: 'updateMailQueue', resource: '@CL_FEC_MAILSQUEUE(#Code#)', page_size: 0)
@@ -22,7 +23,7 @@ RSpec.describe Sap::MailQueue do
       mail_queue.find(doc_entry: 25, doc_type: '01')
 
       expect(client).to have_received(:get).with(
-        "@CL_FEC_MAILSQUEUE?$filter=(U_DocEntry eq 25 and U_DocType eq '01' and U_Status ne 4)"
+        "@CL_FEC_MAILSQUEUE?$filter=(U_DocEntry eq 25 and U_DocType eq '01' and U_Status ne 4 and U_Status ne 5)"
       )
     end
 

@@ -59,6 +59,27 @@ module Documents
     end
     private_class_method :store
 
+    # Baja de Azure un XML ya archivado, a partir de la URL que guardó
+    # `store_sent`/`store_response` (`U_CL_FEC_XmlSentUrl`/`U_CL_FEC_XmlResponseUrl`).
+    # Es la única clase que conoce la forma de esas URLs
+    # (`https://{cuenta}.blob.core.windows.net/{contenedor}/{cédula}/{archivo}`),
+    # así que es la que sabe partirlas de vuelta en `container`/`path` para
+    # `Azure::BlobStorage#download`.
+    #
+    # @param url [String]
+    # @return [String] los bytes del XML.
+    # @raise [Azure::BlobStorage::MissingConfiguration, Azure::BlobStorage::TransientError,
+    #   Azure::BlobStorage::RejectedError]
+    def fetch(url)
+      # `#path` viene con los segmentos codificados (`blob_uri` los codificó al
+      # subir); se decodifican acá porque `Azure::BlobStorage#download` los
+      # vuelve a codificar — sin esto, un segmento con caracteres especiales
+      # quedaría codificado dos veces.
+      container, *segments = URI.parse(url).path.delete_prefix('/').split('/').map { |s| CGI.unescape(s) }
+
+      Azure::BlobStorage.new.download(container: container, path: segments.join('/'))
+    end
+
     # "clvsfe", el mismo contenedor que usaba el legacy — es un ajuste (no una
     # constante) para poder corregirlo desde la UI sin deploy si Hacienda
     # alguna vez pidiera otro (`db/seeds.rb` lo reafirma en cada corrida).

@@ -65,13 +65,57 @@ RSpec.describe Documents::ReceiptMailer do
     expect(message.bcc).to be_nil
   end
 
-  it 'usa el cuerpo HTML recibido, sin adjuntos' do
+  it 'usa el cuerpo HTML recibido, sin adjuntos ni logo (la compañía no tiene uno)' do
     message = capture_delivery do
       described_class.new(company: company, to: 'a@test.com', body_html: '<p>contenido</p>').call
     end
 
     expect(message.html_part.body.to_s).to eq('<p>contenido</p>')
     expect(message.attachments).to be_empty
+  end
+
+  describe 'adjuntos' do
+    it 'agrega los archivos de attachments: con su mime_type' do
+      message = capture_delivery do
+        described_class.new(
+          company: company, to: 'a@test.com', body_html: '<p>hola</p>',
+          attachments: [{ filename: 'comprobante-506.xml', mime_type: 'application/xml', content: '<Factura/>' }]
+        ).call
+      end
+
+      attachment = message.attachments.find { |a| a.filename == 'comprobante-506.xml' }
+      expect(attachment).not_to be_nil
+      expect(attachment.content_type).to include('application/xml')
+      expect(attachment.body.to_s).to eq('<Factura/>')
+    end
+  end
+
+  describe 'logo' do
+    it 'lo embebe inline cuando la compañía tiene uno legible' do
+      logo_path = Rails.root.join('tmp/receipt_mailer_spec_logo.png')
+      logo_path.write('contenido-del-logo')
+      allow_any_instance_of(Attachments::LogoStore).to receive(:readable_path).and_return(logo_path.to_s)
+
+      message = capture_delivery do
+        described_class.new(company: company, to: 'a@test.com', body_html: '<p>hola</p>').call
+      end
+
+      inline = message.attachments.find { |a| a.inline? }
+      expect(inline).not_to be_nil
+      expect(inline.body.to_s).to eq('contenido-del-logo')
+    ensure
+      logo_path.delete if logo_path.exist?
+    end
+
+    it 'no agrega nada sin un logo legible' do
+      allow_any_instance_of(Attachments::LogoStore).to receive(:readable_path).and_return(nil)
+
+      message = capture_delivery do
+        described_class.new(company: company, to: 'a@test.com', body_html: '<p>hola</p>').call
+      end
+
+      expect(message.attachments).to be_empty
+    end
   end
 
   it 'entrega por SMTP con las credenciales de la bandeja de la compañía' do

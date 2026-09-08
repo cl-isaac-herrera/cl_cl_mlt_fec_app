@@ -675,30 +675,92 @@ SL_RESOURCES_DOCUMENT_QUERIES = [
 # ── Cola de correos de recepción electrónica (UDT `@CL_FEC_MAILSQUEUE`) ──────
 # Las tres consultas que `Sap::MailQueue` necesita para leer/crear/actualizar
 # filas de la UDT declarada en `config/sap_schemas/outgoing_mails_udt.json`
-# (ver `CheckSentDocumentsJob#queue_receipt_mail` y `SendElectronicReceiptJob`).
+# (ver `SyncIssuedDocumentsJob#queue_receipt_mail` y `SendElectronicReceiptJob`).
 #
 # `resource` es literalmente `@CL_FEC_MAILSQUEUE` — es una UDT, no una vista
 # (`_B1SLQuery`), así que `SlResourceSeed.qualify` NO le agrega prefijo: el
 # mismo `code` sirve en SQL Server y en HANA (mismo criterio que
 # `SL_RESOURCES_STATUS_UPDATES`).
 #
-# El `$filter` de la consulta excluye `U_Status = 4` (Enviado): en el caso
-# normal hay a lo sumo una fila no terminada por documento, así que filtrar en
-# SAP evita traer filas ya resueltas y decidir acá cuál es "la vigente".
+# El `$filter` de la consulta excluye `U_Status = 4` (Enviado) y `= 5`
+# (Omitido, ver `Documents::MailQueue::STATUS_SKIPPED`): en el caso normal hay
+# a lo sumo una fila no terminada por documento, así que filtrar en SAP evita
+# traer filas ya resueltas y decidir acá cuál es "la vigente".
 #
 # `page_size: 0` en las tres: la de lectura filtra a lo sumo una fila y las
 # otras dos son escrituras — mismo criterio que `SL_RESOURCES_STATUS_UPDATES`.
+#
+# ── El nombre `getMailInformation` (y no `qsGetMailQueueByDocument`) ─────────
+# Es un rename, no una fila nueva: una instalación ya migrada la trae con el
+# `code` viejo, y `db/migrate/20260907162000_rename_mail_queue_sl_resource.rb`
+# la renombra EN EL LUGAR (mismo `id`) para no perder una personalización de
+# `query_params` hecha desde la pantalla de mantenimiento.
 SL_RESOURCES_MAIL_QUEUE = [
-  ['qsGetMailQueueByDocument',
+  ['getMailInformation',
    'Detalle pendiente de envío en la cola de correos de recepción electrónica (UDT)',
    '@CL_FEC_MAILSQUEUE',
-   '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and U_Status ne 4)', 0],
+   '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and U_Status ne 4 and U_Status ne 5)', 0],
   ['createMailQueue',
    'Crea una fila en la cola de correos de recepción electrónica (UDT)',
    '@CL_FEC_MAILSQUEUE', nil, 0],
   ['updateMailQueue',
    'Actualiza el estado de una fila de la cola de correos de recepción electrónica (UDT)',
    '@CL_FEC_MAILSQUEUE(#Code#)', nil, 0]
+].freeze
+
+# ── Datos del comprobante para el correo de recepción electrónica ───────────
+# Una fila por tipo de documento (mismo universo y mismo mapeo tipo→entidad que
+# `SL_RESOURCES_DOCUMENT_QUERIES`/`SL_RESOURCES_STATUS_UPDATES`: `Invoices`
+# para FE/ND/TE/FEE, `CreditNotes` para NC, `PurchaseInvoices` para FEC,
+# `IncomingPayments` para REP). La consume `Sap::MailDocumentInfo`
+# (`SendElectronicReceiptJob`) para armar el cuerpo del correo: consecutivo,
+# receptor, clave, fecha de emisión, monto, moneda, estado y las URLs de Azure
+# de los XML a adjuntar.
+#
+# ── Por qué es una consulta de COLECCIÓN (`$filter=DocEntry eq @DocEntry`) y
+# no una entidad puntual (`Invoices(#DocumentEntry#)`) ──────────────────────
+# `Sap::MailDocumentInfo` le suma al `$filter` `U_CL_FEC_Status eq 6` cuando
+# `company.send_rejected_documents?` es `false` (mismo patrón que
+# `Sap::IssuedDocumentsSearch#extra_filter`, combinando con `Sap::ResourceQuery
+# #merge`) — una entidad puntual no admite esa composición, y un documento
+# Rechazado con la compañía en `false` tiene que devolver CERO filas (la señal
+# que el job usa para marcar `Omitido` en vez de enviar el correo).
+SL_RESOURCES_MAIL_DOCUMENT_INFO = [
+  ['getMailDocumentInfo01', 'Datos del comprobante para el correo de recepción (factura electrónica)',
+   'Invoices',
+   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
+   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
+   'U_CL_FEC_XmlResponseUrl', 0],
+  ['getMailDocumentInfo02', 'Datos del comprobante para el correo de recepción (nota de débito electrónica)',
+   'Invoices',
+   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
+   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
+   'U_CL_FEC_XmlResponseUrl', 0],
+  ['getMailDocumentInfo03', 'Datos del comprobante para el correo de recepción (nota de crédito electrónica)',
+   'CreditNotes',
+   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
+   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
+   'U_CL_FEC_XmlResponseUrl', 0],
+  ['getMailDocumentInfo04', 'Datos del comprobante para el correo de recepción (tiquete electrónico)',
+   'Invoices',
+   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
+   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
+   'U_CL_FEC_XmlResponseUrl', 0],
+  ['getMailDocumentInfo08', 'Datos del comprobante para el correo de recepción (factura electrónica de compra)',
+   'PurchaseInvoices',
+   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
+   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
+   'U_CL_FEC_XmlResponseUrl', 0],
+  ['getMailDocumentInfo09', 'Datos del comprobante para el correo de recepción (factura electrónica de exportación)',
+   'Invoices',
+   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
+   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
+   'U_CL_FEC_XmlResponseUrl', 0],
+  ['getMailDocumentInfo10', 'Datos del comprobante para el correo de recepción (recibo electrónico de pago)',
+   'IncomingPayments',
+   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
+   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
+   'U_CL_FEC_XmlResponseUrl', 0]
 ].freeze
 
 ActiveRecord::Base.transaction do
@@ -709,7 +771,8 @@ ActiveRecord::Base.transaction do
   preserved = 0
 
   all_sl_resources = SL_RESOURCES + SL_RESOURCES_OWN + SL_RESOURCES_STATUS_UPDATES +
-                     SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE
+                     SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE +
+                     SL_RESOURCES_MAIL_DOCUMENT_INFO
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el

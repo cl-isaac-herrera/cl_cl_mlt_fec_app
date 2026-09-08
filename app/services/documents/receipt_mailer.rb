@@ -12,27 +12,36 @@ module Documents
   # completa de ActionMailer (vistas, layouts, previews, config global de
   # entrega), que no aplica a un solo mensaje por fila de la cola.
   #
-  # ⚠️ Sin adjuntos: la generación de PDF del comprobante (el legacy
+  # ⚠️ Sin PDF: la generación del PDF del comprobante (el legacy
   # `CLVS_FE.Mails/Common.cs#SendMail` la adjunta) queda pendiente — ver el
-  # comentario de `SendElectronicReceiptJob`.
+  # comentario de `SendElectronicReceiptJob`. Los XML (enviado y respuesta) SÍ
+  # se adjuntan, vía `attachments:`.
   class ReceiptMailer
     # La compañía no tiene bandeja de correo asignada (`Company#email_config`).
     class MissingConfiguration < StandardError; end
 
     SUBJECT = 'Mensaje de recepción de documento electrónico'
 
-    # @param company [Company] de acá sale la bandeja SMTP (`email_config`).
+    # El `cid` con el que el logo queda embebido — `body_html` lo referencia
+    # como `<img src="cid:logo">`, sin conocer la ruta del archivo en disco.
+    LOGO_CID = 'logo'
+
+    # @param company [Company] de acá sale la bandeja SMTP (`email_config`) y,
+    #   si existe (`Attachments::LogoStore#readable_path`), el logo embebido.
     # @param to [String] destinatario. Un solo correo (ver `Sap::MailQueue`,
     #   `U_OutputTo` ya trae solo la posición 0 del receptor).
     # @param cc [String, nil] direcciones separadas por `;`.
     # @param bcc [String, nil] direcciones separadas por `;`.
     # @param body_html [String] cuerpo del mensaje.
-    def initialize(company:, to:, body_html:, cc: nil, bcc: nil)
-      @company   = company
-      @to        = to
-      @cc        = cc
-      @bcc       = bcc
-      @body_html = body_html
+    # @param attachments [Array<Hash>] `{ filename:, content:, mime_type: }` —
+    #   los XML del comprobante, ver `SendElectronicReceiptJob`.
+    def initialize(company:, to:, body_html:, cc: nil, bcc: nil, attachments: [])
+      @company     = company
+      @to          = to
+      @cc          = cc
+      @bcc         = bcc
+      @body_html   = body_html
+      @attachments = attachments
     end
 
     # @raise [MissingConfiguration] sin bandeja de correo asignada.
@@ -48,6 +57,14 @@ module Documents
       message.bcc     = addresses(bcc) if bcc.present?
       message.subject = SUBJECT
 
+      # Adjuntos y logo ANTES del `html_part`: la gema `mail` arma
+      # `multipart/mixed` (adjuntos) envolviendo `multipart/related` (inline)
+      # envolviendo `multipart/alternative` (el cuerpo) solo si las partes se
+      # agregan en ese orden — agregarlas después del `html_part` las deja
+      # fuera de esa estructura y el cliente de correo no las muestra bien.
+      attach_files(message)
+      embed_logo(message)
+
       message.html_part = Mail::Part.new
       message.html_part.content_type = 'text/html; charset=UTF-8'
       message.html_part.body = body_html
@@ -58,7 +75,25 @@ module Documents
 
     private
 
-    attr_reader :company, :to, :cc, :bcc, :body_html
+    attr_reader :company, :to, :cc, :bcc, :body_html, :attachments
+
+    def attach_files(message)
+      attachments.each do |attachment|
+        message.attachments[attachment.fetch(:filename)] = {
+          mime_type: attachment.fetch(:mime_type),
+          content: attachment.fetch(:content)
+        }
+      end
+    end
+
+    # Sin logo legible (compañía importada sin archivo local, o sin logo
+    # cargado): no se agrega nada, y `body_html` no debe traer el `<img>`.
+    def embed_logo(message)
+      path = Attachments::LogoStore.new(company).readable_path
+      return if path.nil?
+
+      message.attachments.inline[LOGO_CID] = File.binread(path)
+    end
 
     def email_config
       company.email_config || raise(MissingConfiguration, "#{company.name} no tiene una bandeja de correo asignada.")

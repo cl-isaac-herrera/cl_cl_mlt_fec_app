@@ -13,11 +13,21 @@ RSpec.describe SendElectronicReceiptJob do
   let(:client) { instance_double(Clavisco::ServiceLayer::Client) }
   let(:mail_row) { Documents::Row.new('Code' => '7', 'U_OutputTo' => 'cliente@test.com', 'U_OutputCC' => nil) }
   let(:mail_queue) { instance_double(Sap::MailQueue, find: mail_row, update_status: nil) }
+  let(:document_info) do
+    Documents::Row.new(
+      'U_CL_FEC_NumConsecutivo' => '00100001010000000001', 'CardName' => 'Cliente Test',
+      'U_CL_FEC_Clave' => '50601012600310182273300100001010000000001100000001',
+      'U_CL_FEC_FechaEmision' => '2026-09-06T09:06:00Z', 'DocTotal' => '1000.00', 'DocTotalFc' => '1000.00',
+      'DocCurrency' => 'CRC', 'U_CL_FEC_Status' => 6, 'U_CL_FEC_XmlSentUrl' => nil, 'U_CL_FEC_XmlResponseUrl' => nil
+    )
+  end
+  let(:mail_document_info) { instance_double(Sap::MailDocumentInfo, call: document_info) }
   let(:mailer) { instance_double(Documents::ReceiptMailer, call: nil) }
 
   before do
     allow(Sap::CompanyClient).to receive(:for).and_return(client)
     allow(Sap::MailQueue).to receive(:new).and_return(mail_queue)
+    allow(Sap::MailDocumentInfo).to receive(:new).and_return(mail_document_info)
     allow(Documents::ReceiptMailer).to receive(:new).and_return(mailer)
     allow(Documents::MailQueue).to receive(:mark)
   end
@@ -49,14 +59,60 @@ RSpec.describe SendElectronicReceiptJob do
       expect(mail_queue).to have_received(:find).with(doc_entry: 25, doc_type: DocType::FE)
     end
 
+    it 'consulta los datos del comprobante por DocEntry y DocType' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(Sap::MailDocumentInfo).to have_received(:new)
+        .with(company: company, doc_entry: 25, doc_type: DocType::FE, client: client)
+      expect(mail_document_info).to have_received(:call)
+    end
+
     it 'envía el correo con los destinatarios de la UDT' do
       queue(entry)
 
       described_class.perform_now
 
       expect(Documents::ReceiptMailer).to have_received(:new)
-        .with(company: company, to: 'cliente@test.com', cc: nil, bcc: nil, body_html: anything)
+        .with(company: company, to: 'cliente@test.com', cc: nil, bcc: nil, body_html: anything, attachments: [])
       expect(mailer).to have_received(:call)
+    end
+
+    it 'el cuerpo trae los datos del comprobante y el nombre de la compañía' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(Documents::ReceiptMailer).to have_received(:new) do |**kwargs|
+        expect(kwargs[:body_html]).to include('Cliente Test', '00100001010000000001', 'ACME S.A.', 'Aceptado')
+      end
+    end
+
+    it 'adjunta el XML enviado y el de respuesta cuando SAP trae las URLs' do
+      document_info_with_urls = Documents::Row.new(
+        document_info.to_h.merge(
+          'U_CL_FEC_XmlSentUrl' => 'https://azure.test/clvsfe/310/506.xml',
+          'U_CL_FEC_XmlResponseUrl' => 'https://azure.test/clvsfe/310/506_respuesta.xml'
+        )
+      )
+      allow(mail_document_info).to receive(:call).and_return(document_info_with_urls)
+      allow(Documents::XmlArchive).to receive(:fetch)
+        .with('https://azure.test/clvsfe/310/506.xml').and_return('<Factura/>')
+      allow(Documents::XmlArchive).to receive(:fetch)
+        .with('https://azure.test/clvsfe/310/506_respuesta.xml').and_return('<MensajeHacienda/>')
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(Documents::ReceiptMailer).to have_received(:new) do |**kwargs|
+        expect(kwargs[:attachments]).to contain_exactly(
+          { filename: "comprobante-#{document_info.string('U_CL_FEC_Clave')}.xml",
+            mime_type: 'application/xml', content: '<Factura/>' },
+          { filename: "respuesta-#{document_info.string('U_CL_FEC_Clave')}.xml",
+            mime_type: 'application/xml', content: '<MensajeHacienda/>' }
+        )
+      end
     end
 
     it 'marca Enviado en la UDT y en la cola externa' do
@@ -95,6 +151,25 @@ RSpec.describe SendElectronicReceiptJob do
       expect(mailer).not_to have_received(:call)
       expect(Documents::MailQueue).to have_received(:mark)
         .with(entry, status: Documents::MailQueue::STATUS_ERROR)
+    end
+  end
+
+  # Rechazado + `company.send_rejected_documents?` en `false` (default): NO es
+  # un error, la compañía decidió no notificar rechazados —
+  # `Sap::MailDocumentInfo` devuelve `nil` y el job lo marca `Omitido`.
+  describe 'documento excluido por send_rejected_documents' do
+    let(:mail_document_info) { instance_double(Sap::MailDocumentInfo, call: nil) }
+
+    it 'marca Omitido en la UDT y en la cola externa, sin enviar correo' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(mailer).not_to have_received(:call)
+      expect(mail_queue).to have_received(:update_status)
+        .with(code: '7', status: Documents::MailQueue::STATUS_SKIPPED, details: /no envía correo/, email: nil)
+      expect(Documents::MailQueue).to have_received(:mark)
+        .with(entry, status: Documents::MailQueue::STATUS_SKIPPED)
     end
   end
 

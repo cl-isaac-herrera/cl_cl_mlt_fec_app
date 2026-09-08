@@ -1042,6 +1042,26 @@ puede funcionar:
       solo vuelve si alguien reencola el documento desde SAP. Lo transitorio se resuelve
       dejando la fila en `Processing`, que funciona pero no queda registrado en ninguna
       parte: desde afuera un documento reintentándose se ve igual que uno en curso.
+- [ ] **`companies.send_rejected_documents` sin toggle en la UI.** La migración y la
+      columna (default `false`) ya existen y `Sap::MailDocumentInfo` ya la consulta, pero
+      el formulario de Compañías (`configurations/companies`) no tiene un control para
+      prenderla — decisión explícita de esta tanda, backend solamente. Falta el checkbox
+      en la sección correspondiente (§1/§12 de `CLAUDE.md`) más el endpoint que lo guarde.
+- [ ] **Estado `Omitido` (5) de la cola de correos — pendiente de desplegar en instalaciones
+      vivas.** `config/sap_schemas/outgoing_mails_udt.json` y
+      `db/external/{sql_server,hana}/schema.sql` ya declaran el valor nuevo (fuente de
+      verdad para una instalación NUEVA), pero eso no lo aplica solo en una que ya existe:
+      falta correr `rake "sap:schema:diff/sync[...]"` contra la UDT de cada compañía, y el
+      `ALTER TABLE ... DROP/ADD CONSTRAINT CK_OutgoingMailsQueue_Status CHECK (... IN
+      (1,2,3,4,5))` a mano en la base externa de cada instalación (SQL Server confirmado;
+      la sintaxis de HANA no se probó contra una base real).
+- [ ] **`Azure::BlobStorage#download`/`Documents::XmlArchive.fetch` sin probar contra una
+      cuenta de Azure real.** Mismo aviso que ya existe para `#upload` (más arriba,
+      "`U_CL_FEC_XmlSentUrl`"): el algoritmo de firma Shared Key para `Get Blob` está
+      verificado línea por línea contra la documentación de Microsoft
+      (`spec/services/azure/blob_storage_spec.rb`), pero eso no reemplaza una descarga real.
+      Los usa `SendElectronicReceiptJob` para adjuntar el XML enviado y el de respuesta al
+      correo de recepción.
 
 ### Estado por tipo de documento
 

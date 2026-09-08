@@ -16,7 +16,8 @@
         { "Value": "1", "Description": "Pendiente" },
         { "Value": "2", "Description": "Enviando" },
         { "Value": "3", "Description": "Error" },
-        { "Value": "4", "Description": "Enviado" }
+        { "Value": "4", "Description": "Enviado" },
+        { "Value": "5", "Description": "Omitido" }
       ]
     },
 

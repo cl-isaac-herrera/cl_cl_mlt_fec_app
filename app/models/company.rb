@@ -122,6 +122,14 @@ class Company < ApplicationRecord
 
   def token_password_stored? = read_attribute_before_type_cast(:token_password).present?
 
+  # Con qué nombre se identifica la compañía en el correo de recepción
+  # electrónica, según `email_sender_type` (1 legal, 2 comercial). El legal es
+  # opcional (`issuer_legal_name` admite `nil`); si no está cargado, cae al
+  # comercial (`name`, `NOT NULL`) en vez de mandar un correo sin nombre.
+  def email_sender_name
+    email_sender_type == 1 ? issuer_legal_name.presence || name : name
+  end
+
   def certificate_alarm(days: CERT_EXPIRATION_ALARM_DAYS)
     return { ShowAlarm: false, SmsAlert: nil } if cert_expires_at.blank?
 

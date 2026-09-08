@@ -14,8 +14,10 @@
 #   4. `Hacienda::Client#check_status`          → `GET` a la URL de VERIFICACIÓN
 #      (`HACIENDA_FE_URI_CHECK`), no la de envío
 #   5. la cola y SAP                            → el desenlace
-#   6. `Sap::MailQueue`/`Documents::MailQueue`   → encola el correo de recepción
-#      (`#queue_receipt_mail`), solo en un desenlace final
+#   6. `Documents::MailQueue`                   → encola en la cola EXTERNA el
+#      correo de recepción (`#queue_receipt_mail`), solo en un desenlace final
+#      — la fila de la UDT (`Sap::MailQueue`) ya la creó `SyncIssuedDocumentsJob`
+#      antes, tan pronto Hacienda recibió el documento
 #
 # ── Los dos desenlaces y su regla ───────────────────────────────────────────
 #   · Hacienda contesta "aceptado"/"rechazado" (`CheckResult#resolved?`) → es
@@ -87,7 +89,7 @@ class CheckSentDocumentsJob < ApplicationJob
       return :sin_clave
     end
 
-    check(entry, company, clave, header)
+    check(entry, company, clave)
   rescue Hacienda::Client::TransientError, Hacienda::Client::InvalidCredentials => e
     Rails.logger.warn("[CheckSentDocuments] #{entry}: #{e.message}")
     stay_sent(entry, company, e.message)
@@ -105,7 +107,7 @@ class CheckSentDocumentsJob < ApplicationJob
     :error
   end
 
-  def check(entry, company, clave, header)
+  def check(entry, company, clave)
     result = hacienda_for(company).check_status(clave)
 
     unless result.resolved?
@@ -117,11 +119,11 @@ class CheckSentDocumentsJob < ApplicationJob
       return :en_proceso
     end
 
-    resolved(entry, company, clave, header, result)
+    resolved(entry, company, clave, result)
   end
 
   # El comprobante ya tiene un desenlace final.
-  def resolved(entry, company, clave, header, result)
+  def resolved(entry, company, clave, result)
     status = result.accepted? ? Documents::PendingQueue::STATUS_ACCEPTED : Documents::PendingQueue::STATUS_REJECTED
     xml = result.xml_base64.present? ? Base64.decode64(result.xml_base64) : nil
 
@@ -134,55 +136,27 @@ class CheckSentDocumentsJob < ApplicationJob
 
     mark_queue(entry, status: status, details: details)
     mark_sap(entry, company, status: status, details: details, xml_response_url: xml_response_url)
-    queue_receipt_mail(entry, company, header)
+    queue_receipt_mail(entry)
 
     result.accepted? ? :aceptado : :rechazado
   end
 
-  # Encola el correo de recepción para el receptor del comprobante, ahora que
-  # Hacienda ya se pronunció (aceptado o rechazado). Se encola en los DOS
-  # lados, EN ESTE ORDEN: primero la UDT (`Sap::MailQueue`, el detalle que
-  # `SendElectronicReceiptJob` va a leer y el estado visible en SAP) y solo si
-  # esa escritura funcionó, la cola externa (`Documents::MailQueue`) que decide
-  # CUÁNDO reintentar el envío — encolar la cola externa antes dejaría una fila
-  # sin nada que enviar si el registro en SAP fallara.
+  # Encola en la cola EXTERNA (`Documents::MailQueue`) el correo de recepción,
+  # ahora que Hacienda ya se pronunció (aceptado o rechazado) — es esta fila la
+  # que `SendElectronicReceiptJob` usa como disparador real de envío.
   #
-  # Sin destinatario (`RcprCorreoElectronico` vacío en la cabecera) no hay nada
-  # que encolar: no es un error, es un documento sin correo configurado en SAP.
+  # La fila de la UDT (`Sap::MailQueue`, destinatarios y estado visible en
+  # SAP) ya la creó `SyncIssuedDocumentsJob#queue_receipt_mail` tan pronto
+  # Hacienda RECIBIÓ el documento (`Sent`), antes de esta resolución — acá no
+  # hace falta volver a leer la cabecera para eso.
   #
-  # Ni la UDT ni la cola externa pueden tumbar la verificación del documento:
-  # es una notificación aparte, no el desenlace que `#resolved` ya registró.
-  def queue_receipt_mail(entry, company, header)
-    to, cc = recipients(header, company)
-    return if to.nil?
-
-    Sap::MailQueue.new(client: client_for(company)).create(
-      doc_entry: entry.doc_entry, doc_type: entry.doc_type,
-      output_to: to, output_cc: cc, output_bcc: nil
-    )
+  # Ni la cola externa puede tumbar la verificación del documento: es una
+  # notificación aparte, no el desenlace que `#resolved` ya registró.
+  def queue_receipt_mail(entry)
     Documents::MailQueue.create(sap_db: entry.sap_db, doc_entry: entry.doc_entry, doc_type: entry.doc_type)
   rescue StandardError => e
     Rails.logger.error("[CheckSentDocuments] #{entry}: no se pudo encolar el correo de recepción — #{e.message}")
     Sentry.capture_exception(e)
-  end
-
-  # `To` es la posición 0 de `RcprCorreoElectronico` (partido por `;`); el
-  # resto de esa lista, más `company.email_cc` (partido por el mismo
-  # caracter), va en `Cc`.
-  def recipients(header, company)
-    addresses = split_emails(header.string('RcprCorreoElectronico'))
-    return [nil, nil] if addresses.empty?
-
-    to = addresses[0]
-    cc = (addresses[1..] + split_emails(company.email_cc)).join(';').presence
-
-    [to, cc]
-  end
-
-  def split_emails(raw)
-    return [] if raw.blank?
-
-    raw.split(';').map(&:strip).reject(&:blank?)
   end
 
   # El documento se queda en `Sent`: no es un desenlace, es que todavía no hay
@@ -202,9 +176,6 @@ class CheckSentDocumentsJob < ApplicationJob
   # comportamiento confirmado a mano contra SAP real, no una suposición. La
   # consulta sin `$select` es la MISMA que ya usa `Sap::DocumentDetails` y está
   # probada en producción, así que es la que se reutiliza acá.
-  #
-  # Se conserva la fila completa (no solo `Clave`): `#queue_receipt_mail` la
-  # reutiliza para leer `RcprCorreoElectronico` sin una segunda vuelta a SAP.
   def header_for(entry, company)
     query = Sap::ResourceQuery.new(Sap::DocumentDetails::HEADER,
                                     bindings: { DocEntry: entry.doc_entry, DocType: entry.doc_type })

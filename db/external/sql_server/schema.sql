@@ -325,9 +325,12 @@ ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_Cr
 GO
 ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_UpdatedAt] DEFAULT (sysdatetime()) FOR [UpdatedAt]
 GO
--- Catálogo (1 Pendiente, 2 Enviando, 3 Error, 4 Enviado) — el mismo que
--- `U_Status` de la UDT (`config/sap_schemas/outgoing_mails_udt.json`).
-ALTER TABLE [dbo].[OutgoingMailsQueue] WITH CHECK ADD CONSTRAINT [CK_OutgoingMailsQueue_Status] CHECK ([Status] IN (1,2,3,4))
+-- Catálogo (1 Pendiente, 2 Enviando, 3 Error, 4 Enviado, 5 Omitido) — el mismo
+-- que `U_Status` de la UDT (`config/sap_schemas/outgoing_mails_udt.json`).
+-- ⚠️ Una instalación YA viva necesita un ALTER manual para pasar de (1,2,3,4)
+-- a (1,2,3,4,5) — este script es la referencia para una base nueva, no se
+-- aplica solo (ver `TODOS.md` → Emisión de documentos).
+ALTER TABLE [dbo].[OutgoingMailsQueue] WITH CHECK ADD CONSTRAINT [CK_OutgoingMailsQueue_Status] CHECK ([Status] IN (1,2,3,4,5))
 GO
 ALTER TABLE [dbo].[OutgoingMailsQueue] CHECK CONSTRAINT [CK_OutgoingMailsQueue_Status]
 GO

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_07_150000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_07_162000) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
@@ -35,6 +35,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_07_150000) do
     t.string "print_format_path"
     t.integer "purchase_invoice_series"
     t.string "sap_db"
+    t.boolean "send_rejected_documents", default: false, null: false
     t.string "tax_registry_8707", limit: 12
     t.string "token_password"
     t.string "token_user"

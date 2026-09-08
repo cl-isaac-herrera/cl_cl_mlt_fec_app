@@ -184,6 +184,75 @@ RSpec.describe SyncIssuedDocumentsJob do
     end
   end
 
+  # La UDT (destinatarios, `Sap::MailQueue`) se crea acá, tan pronto Hacienda
+  # RECIBE el documento (`Sent`) — sin esperar la resolución de
+  # `CheckSentDocumentsJob`, que es quien encola la cola EXTERNA.
+  describe 'correo de recepción' do
+    let(:mail_queue) { instance_double(Sap::MailQueue, create: '5') }
+
+    before { allow(Sap::MailQueue).to receive(:new).and_return(mail_queue) }
+
+    it 'encola en la UDT la posición 0 como destinatario y el resto en copia, cuando el envío queda Sent' do
+      allow(client).to receive(:get) do |path|
+        if path.match?(/HEADER/)
+          [{ 'Clave' => '506123', 'RcprCorreoElectronico' => 'cliente@test.com;otro@test.com' }]
+        else
+          []
+        end
+      end
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(mail_queue).to have_received(:create).with(
+        doc_entry: 25, doc_type: DocType::FE,
+        output_to: 'cliente@test.com', output_cc: 'otro@test.com', output_bcc: nil
+      )
+    end
+
+    it 'agrega los correos en copia de la compañía después de los de SAP' do
+      company.update!(email_cc: 'cc1@test.com;cc2@test.com')
+      allow(client).to receive(:get) do |path|
+        if path.match?(/HEADER/)
+          [{ 'Clave' => '506123', 'RcprCorreoElectronico' => 'cliente@test.com;otro@test.com' }]
+        else
+          []
+        end
+      end
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(mail_queue).to have_received(:create)
+        .with(hash_including(output_cc: 'otro@test.com;cc1@test.com;cc2@test.com'))
+    end
+
+    it 'no encola nada sin destinatario en la cabecera' do
+      queue(entry) # la cabecera del `before` general no trae `RcprCorreoElectronico`
+
+      described_class.perform_now
+
+      expect(Sap::MailQueue).not_to have_received(:new)
+    end
+
+    it 'no tumba el envío si falla el encolado del correo' do
+      allow(client).to receive(:get) do |path|
+        if path.match?(/HEADER/)
+          [{ 'Clave' => '506123', 'RcprCorreoElectronico' => 'cliente@test.com' }]
+        else
+          []
+        end
+      end
+      queue(entry)
+      allow(Sap::MailQueue).to receive(:new).and_raise('SAP no responde')
+      allow(Sentry).to receive(:capture_exception)
+
+      expect { described_class.perform_now }.not_to raise_error
+      expect(Documents::PendingQueue).to have_received(:mark_sent)
+      expect(Sentry).to have_received(:capture_exception)
+    end
+  end
+
   # La pregunta que separa un desenlace del otro es si reintentar sin que nadie
   # toque nada puede funcionar.
   describe 'desenlaces del envío' do

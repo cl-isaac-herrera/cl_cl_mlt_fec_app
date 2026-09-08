@@ -10,10 +10,12 @@ module Documents
   # coordina CUÁNDO reintentar el envío, con el mismo backoff exponencial que
   # `PendingQueue` usa para los documentos (`CL_D_CL_MLT_FEC_SLT_PENDINGMAILS`).
   #
-  # La fila se crea DESPUÉS de la fila en la UDT (ver
-  # `CheckSentDocumentsJob#queue_receipt_mail`): sin la UDT no hay nada que
-  # enviar, así que encolar acá primero dejaría una fila huérfana si el
-  # registro en SAP fallara.
+  # La fila UDT (`Sap::MailQueue`) se crea antes, en `SyncIssuedDocumentsJob`,
+  # tan pronto Hacienda RECIBE el documento (`Sent`) — ahí ya se conocen los
+  # destinatarios. Esta fila (la externa, el disparador real de envío) se crea
+  # DESPUÉS, en `CheckSentDocumentsJob#queue_receipt_mail`, solo cuando Hacienda
+  # se pronuncia (Aceptado o Rechazado): antes de eso no hay nada que enviar
+  # todavía.
   #
   # Sin historial de intentos (a diferencia de `PendingQueue`/
   # `DocumentAttemptDetails`): el detalle de cada intento vive en la UDT
@@ -34,6 +36,11 @@ module Documents
     STATUS_SENDING = 2
     STATUS_ERROR   = 3
     STATUS_SENT    = 4
+    # El documento se resolvió (Rechazado) pero la compañía tiene
+    # `send_rejected_documents = false`: no se manda correo A PROPÓSITO, no es
+    # un fallo. Distinto de `STATUS_ERROR` para que no ensucie el monitoreo de
+    # errores con algo esperado (`SendElectronicReceiptJob#skip`).
+    STATUS_SKIPPED = 5
 
     # Una fila de la cola. Mismo shape que `PendingQueue::Entry`: `id` identifica
     # el intento de envío dentro de esta cola; `doc_entry` + `doc_type` +

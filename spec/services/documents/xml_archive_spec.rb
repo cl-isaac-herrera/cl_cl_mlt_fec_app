@@ -64,6 +64,23 @@ RSpec.describe Documents::XmlArchive do
     end
   end
 
+  describe '.fetch' do
+    before { allow(blob_storage).to receive(:download).and_return('<Factura/>') }
+
+    it 'parte la URL guardada en container/path y descarga el blob' do
+      result = described_class.fetch('https://miempresa.blob.core.windows.net/clvsfe/3101822733/506123.xml')
+
+      expect(blob_storage).to have_received(:download).with(container: 'clvsfe', path: '3101822733/506123.xml')
+      expect(result).to eq('<Factura/>')
+    end
+
+    it 'decodifica los segmentos codificados en la URL antes de volver a pasarlos' do
+      described_class.fetch('https://miempresa.blob.core.windows.net/clvsfe/carpeta%20con%20espacio/x.xml')
+
+      expect(blob_storage).to have_received(:download).with(container: 'clvsfe', path: 'carpeta con espacio/x.xml')
+    end
+  end
+
   describe 'sin el ajuste del contenedor' do
     it 'nombra el ajuste que falta' do
       Setting.find_by!(code: 'AZURE_STORAGE_CONTAINER').update!(value: nil)

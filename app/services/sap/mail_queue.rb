@@ -6,7 +6,7 @@ module Sap
   # recepción electrónica de un documento: destinatarios, estado visible en
   # SAP y el cuerpo que se envió.
   #
-  # Es a `SendElectronicReceiptJob`/`CheckSentDocumentsJob` lo que
+  # Es a `SendElectronicReceiptJob`/`SyncIssuedDocumentsJob` lo que
   # `Sap::DocumentStatus` es a `SyncIssuedDocumentsJob`: el detalle vive en SAP
   # (para que el operador lo vea desde ahí), pero CUÁNDO reintentar el envío lo
   # decide la cola externa (`Documents::MailQueue`, `CLAUDE.md` §37) — las dos
@@ -17,7 +17,7 @@ module Sap
   # son las únicas que saben el path real de la UDT; acá solo se atan los
   # marcadores con `Sap::ResourceQuery`.
   class MailQueue
-    QUERY_CODE  = 'qsGetMailQueueByDocument'
+    QUERY_CODE  = 'getMailInformation'
     CREATE_CODE = 'createMailQueue'
     UPDATE_CODE = 'updateMailQueue'
 

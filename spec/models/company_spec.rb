@@ -85,6 +85,26 @@ RSpec.describe Company, type: :model do
     end
   end
 
+  describe '#email_sender_name' do
+    it 'usa el nombre legal cuando email_sender_type es 1 (legal)' do
+      company = Company.new(name: 'ACME', issuer_legal_name: 'ACME Sociedad Anónima', email_sender_type: 1)
+
+      expect(company.email_sender_name).to eq('ACME Sociedad Anónima')
+    end
+
+    it 'usa el nombre comercial cuando email_sender_type es 2 (comercial)' do
+      company = Company.new(name: 'ACME', issuer_legal_name: 'ACME Sociedad Anónima', email_sender_type: 2)
+
+      expect(company.email_sender_name).to eq('ACME')
+    end
+
+    it 'cae al comercial si el legal está en 1 pero no está cargado' do
+      company = Company.new(name: 'ACME', issuer_legal_name: nil, email_sender_type: 1)
+
+      expect(company.email_sender_name).to eq('ACME')
+    end
+  end
+
   it 'soft_delete! la desactiva sin borrarla' do
     company = create(:company)
 

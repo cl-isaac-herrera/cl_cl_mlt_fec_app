@@ -186,7 +186,7 @@ class SyncIssuedDocumentsJob < ApplicationJob
     )
     receipt = @issuer.call
 
-    sent(entry, company, receipt)
+    sent(entry, company, receipt, details.header)
   end
 
   # ── Registro del desenlace ──────────────────────────────────────────────────
@@ -199,7 +199,7 @@ class SyncIssuedDocumentsJob < ApplicationJob
   # recibido y `Hacienda::Client` trata esa respuesta como un envío bueno, con
   # el `Location` armado a partir de la clave. Por eso ese caso está manejado y
   # no es una curiosidad del protocolo.
-  def sent(entry, company, receipt)
+  def sent(entry, company, receipt, header)
     clave = document_field('Clave')
 
     Rails.logger.info(
@@ -219,8 +219,33 @@ class SyncIssuedDocumentsJob < ApplicationJob
              # payload ya lo tenga —a diferencia de `clave`/`consecutivo`—, porque
              # escribirlo en un rechazo mentiría sobre si llegó a Hacienda.
              fecha_emision: document_field('FechaEmision'))
+    queue_receipt_mail(entry, company, header)
 
     :enviado
+  end
+
+  # Registra en la UDT (`Sap::MailQueue`) que este documento va a necesitar
+  # correo de recepción, tan pronto Hacienda lo RECIBE (`Sent`) — sin esperar
+  # la resolución (Aceptado/Rechazado), que es cosa de `CheckSentDocumentsJob`.
+  # Acá ya se conocen los destinatarios (la MISMA cabecera que se usó para
+  # armar el XML), así que no hace falta una segunda vuelta a SAP para leerlos.
+  #
+  # Ni un fallo acá tumba el desenlace del documento: es una notificación
+  # aparte, no el envío a Hacienda que `#sent` ya registró. La cola EXTERNA
+  # (`Documents::MailQueue`, el disparador real de `SendElectronicReceiptJob`)
+  # NO se crea acá — la crea `CheckSentDocumentsJob#queue_receipt_mail` solo al
+  # resolverse el documento.
+  def queue_receipt_mail(entry, company, header)
+    to, cc = Documents::MailRecipients.for(header: header, company: company)
+    return if to.nil?
+
+    Sap::MailQueue.new(client: client_for(company)).create(
+      doc_entry: entry.doc_entry, doc_type: entry.doc_type,
+      output_to: to, output_cc: cc, output_bcc: nil
+    )
+  rescue StandardError => e
+    Rails.logger.error("[SyncIssuedDocuments] #{entry}: no se pudo encolar el correo de recepción — #{e.message}")
+    Sentry.capture_exception(e)
   end
 
   # Registra la falla en el log, en la cola Y en SAP.
