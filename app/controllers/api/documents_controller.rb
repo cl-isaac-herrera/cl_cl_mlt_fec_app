@@ -6,8 +6,9 @@ module Api
   # Reemplaza `GET /api/documents` del .NET (`DocumentsController#GetDocuments`),
   # que en realidad consultaba la base propia de la app (`spGetDocuments`), no
   # SAP. Acá se decidió lo contrario a propósito: SAP es la fuente de verdad del
-  # documento emitido, y la tabla de la app (`DocumentsQueue`, §37) queda para el
-  # historial de reintentos, no para este listado.
+  # documento emitido, y la tabla de la app (`DocumentsQueue`, §37) queda para
+  # decidir cuándo reintentar, no para este listado. El historial de intentos
+  # también vive en SAP, en la UDT `@CL_FEC_DOCSYNCATTMP` (ver `#attempts`).
   #
   # ── Alcance de esta migración ────────────────────────────────────────────────
   # La BÚSQUEDA/listado, la consulta puntual de un documento (`show`, para
@@ -132,8 +133,10 @@ module Api
     # GET /api/documents/:id/attempts?doc_type=01
     #
     # `:id` es el `DocEntry` de SAP (ver la nota de la ruta). El historial vive
-    # en la cola propia (§37), no en SAP, así que la fuente es
-    # `Documents::AttemptDetails` — ODBC, no Service Layer.
+    # en la UDT `@CL_FEC_DOCSYNCATTMP` de la compañía (`Sap::DocSyncAttempts`),
+    # no en la cola propia: ahí quedó solo el estado y el contador de intentos.
+    # Antes lo leía `Documents::AttemptDetails` por ODBC, contra una tabla que
+    # ya no existe.
     def attempts
       unless company
         render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
@@ -148,13 +151,15 @@ module Api
         return
       end
 
-      items = Documents::AttemptDetails.for(sap_db: company.sap_db, doc_entry: params[:id].to_i, doc_type: doc_type)
+      items = Sap::DocSyncAttempts
+              .new(client: Sap::CompanyClient.for(company))
+              .list(doc_entry: params[:id].to_i, doc_type: doc_type)
 
       render json: ApiResponse.success({ Items: items.map { |a| serialize_attempt(a) } }).to_h
-    rescue ExternalDb::ConfigurationError => e
+    rescue Sap::CompanyClient::MissingConfiguration, Sap::ResourceQuery::UnknownResource => e
       render json: ApiResponse.error(e.message).to_h, status: :unprocessable_content
-    rescue ExternalDb::Error => e
-      render json: ApiResponse.error(e.message).to_h, status: :bad_gateway
+    rescue Clavisco::ServiceLayer::Client::ServiceLayerError => e
+      render json: ApiResponse.error(e.sap_message || e.message).to_h, status: :bad_gateway
     end
 
     # PATCH /api/documents/:id/reprocess?doc_type=01
@@ -170,14 +175,13 @@ module Api
     # estaba rechazado, y las dos se reportan igual — el llamador no puede
     # actuar distinto en ninguno de los dos casos.
     #
-    # Reencolada la fila, se marca lo mismo en SAP (igual que hace
-    # `SyncIssuedDocumentsJob#mark_sap` con cada desenlace, ver
-    # `docs/sync-documents-flow.md`), pero SOLO `U_CL_FEC_Status`
-    # (`Sap::DocumentStatus#update_status_only`) — no los otros seis campos,
-    # que siguen describiendo el intento anterior. Es best-effort: si SAP no
-    # responde, la cola —la fuente de verdad— ya quedó reencolada, y el
-    # próximo desenlace de la sincronización va a corregir el campo de todas
-    # formas.
+    # Reencolada la fila, el pedido se asienta en SAP (`#record_reprocess_in_sap`):
+    # el intento en la UDT del historial y el estado del comprobante. Del estado
+    # se manda SOLO `U_CL_FEC_Status` (`Sap::DocumentStatus#update_status_only`)
+    # — no los otros seis campos, que siguen describiendo el intento anterior.
+    # Es best-effort: si SAP no responde, la cola —la fuente de verdad— ya quedó
+    # reencolada, y el próximo desenlace de la sincronización va a corregir el
+    # campo de todas formas.
     #
     # ⚠️ Acá SÍ hay una persona detrás del click: el `Client` se arma con
     # `Sap::UserClient` (credenciales de `Current.user`), no con
@@ -202,8 +206,7 @@ module Api
       reprocessed = Documents::PendingQueue.reprocess(
         sap_db: company.sap_db,
         doc_entry: doc_entry,
-        doc_type: doc_type,
-        details: reprocess_details
+        doc_type: doc_type
       )
 
       unless reprocessed
@@ -213,7 +216,7 @@ module Api
         return
       end
 
-      mark_sap_reprocessing(doc_type: doc_type, doc_entry: doc_entry)
+      record_reprocess_in_sap(doc_type: doc_type, doc_entry: doc_entry)
 
       render json: ApiResponse.success({ Message: 'Solicitud de reprocesamiento registrada.' }).to_h
     rescue ExternalDb::ConfigurationError => e
@@ -228,23 +231,39 @@ module Api
       "Reprocesamiento solicitado por #{Current.user.name.presence || Current.user.email}"
     end
 
+    # Deja el pedido asentado en SAP: el intento en la UDT del historial
+    # (`Sap::DocSyncAttempts`, con quién lo pidió) y el estado del comprobante
+    # (`U_CL_FEC_Status` → `Reprocess`).
+    #
     # No puede tumbar la respuesta: la cola ya quedó reencolada (lo que de
     # verdad decide si el documento se reprocesa) y esto es solo lo que ve el
     # operador al mirar SAP directamente. Mismo criterio de tolerancia que
     # `SyncIssuedDocumentsJob#mark_sap`.
     #
-    # `Sap::UserClient` (no `Sap::CompanyClient`) porque acá SÍ hay una persona
-    # en sesión ejecutando la acción — ver la nota de `#reprocess`.
-    def mark_sap_reprocessing(doc_type:, doc_entry:)
-      Sap::DocumentStatus.new(
-        client: Sap::UserClient.for(company, user: Current.user),
+    # El intento va PRIMERO porque es el que nadie más va a escribir: el estado
+    # lo corrige el próximo desenlace de la sincronización, pero "lo pidió tal
+    # usuario a tal hora" se pierde para siempre si esta llamada no ocurre.
+    #
+    # Un solo cliente para las dos escrituras, y `Sap::UserClient` (no
+    # `Sap::CompanyClient`) porque acá SÍ hay una persona en sesión ejecutando
+    # la acción — ver la nota de `#reprocess`.
+    def record_reprocess_in_sap(doc_type:, doc_entry:)
+      client = Sap::UserClient.for(company, user: Current.user)
+
+      Sap::DocSyncAttempts.new(client: client).create(
+        doc_entry: doc_entry,
         doc_type: doc_type,
-        doc_entry: doc_entry
-      ).update_status_only(Documents::PendingQueue::STATUS_REPROCESS)
-    rescue Sap::UserClient::MissingConfiguration, Clavisco::ServiceLayer::Client::ServiceLayerError => e
+        status: Documents::PendingQueue::STATUS_REPROCESS,
+        details: reprocess_details
+      )
+
+      Sap::DocumentStatus.new(client: client, doc_type: doc_type, doc_entry: doc_entry)
+                         .update_status_only(Documents::PendingQueue::STATUS_REPROCESS)
+    rescue Sap::UserClient::MissingConfiguration, Sap::ResourceQuery::UnknownResource,
+           Clavisco::ServiceLayer::Client::ServiceLayerError => e
       Rails.logger.error(
         "[Api::DocumentsController#reprocess] DocEntry #{doc_entry} DocType #{doc_type.inspect}: " \
-        "no se pudo actualizar el estado en SAP — #{e.message}"
+        "no se pudo registrar el reprocesamiento en SAP — #{e.message}"
       )
     end
 

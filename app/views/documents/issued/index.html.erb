@@ -370,8 +370,9 @@
         </div>
       </div>
 
-      <%# "Detalles de intentos" — historial de la cola de reintentos
-          (`CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS`, ver CLAUDE.md §37). Siempre
+      <%# "Detalles de intentos" — historial de intentos de sincronización, que
+          vive en la UDT `@CL_FEC_DOCSYNCATTMP` de SAP (`Sap::DocSyncAttempts`,
+          `GET /api/documents/:id/attempts`). Siempre
           visible (no depende de si el documento tiene error) y colapsada por
           defecto. La consulta arranca en segundo plano al abrir el panel
           (`#loadAttempts`), así que si el usuario la expande antes de que

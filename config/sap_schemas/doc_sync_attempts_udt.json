@@ -1,0 +1,32 @@
+{
+  "table_name": "@CL_FEC_DOCSYNCATTMP",
+  "IsUDT": true,
+  "table_description": "FEC · Intentos por documento",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "DocEntry", "Description": "FEC · DocEntry del comprobante del intento",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES" },
+
+    { "Name": "DocType", "Description": "FEC · Tipo de documento (ObjType) del comprobante",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES" },
+
+    { "Name": "Status", "Description": "FEC · Estado con el que terminó el intento",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES", "DefaultValue": "0",
+      "ValidValues": [
+        { "Value": "0", "Description": "Pending" },
+        { "Value": "2", "Description": "Processing" },
+        { "Value": "3", "Description": "Sent" },
+        { "Value": "4", "Description": "Error" },
+        { "Value": "6", "Description": "Accepted" },
+        { "Value": "7", "Description": "Rejected" },
+        { "Value": "8", "Description": "Reprocess" }
+      ]
+    },
+
+    { "Name": "Details", "Description": "FEC · Motivo con el que terminó el intento",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "CreatedAt", "Description": "FEC · Fecha ISO 8601 en que se registró el intento",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tYES" }
+  ]
+}

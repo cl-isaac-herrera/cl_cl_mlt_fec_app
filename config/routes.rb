@@ -167,11 +167,12 @@ Rails.application.routes.draw do
     # Reemplaza GET /api/documents del .NET — que en realidad consultaba la base
     # propia de la app, no SAP (ver `Api::DocumentsController`).
     #
-    # `attempts` es el historial de reintentos de la cola propia (§37,
-    # `Documents::AttemptDetails`) — una fuente distinta (ODBC, no Service
-    # Layer), pero sigue siendo información DE ESTE documento, así que cuelga
-    # del mismo recurso en vez de uno aparte. `:id` es el `DocEntry` (ver
-    # `#mapDocument` en `documents_issued_controller.js`).
+    # `attempts` es el historial de intentos de sincronización del documento,
+    # que vive en la UDT `@CL_FEC_DOCSYNCATTMP` de la compañía
+    # (`Sap::DocSyncAttempts`) — otra consulta del catálogo, pero información DE
+    # ESTE documento, así que cuelga del mismo recurso en vez de uno aparte.
+    # `:id` es el `DocEntry` (ver `#mapDocument` en
+    # `documents_issued_controller.js`).
     #
     # `reprocess` reemplaza `PATCH /api/Documents/:id/Reprocess` del servidor de
     # sincronización .NET (`ApiFEUrl`): ya no se cae al proxy, la reencola

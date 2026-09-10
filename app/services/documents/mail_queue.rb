@@ -17,9 +17,12 @@ module Documents
   # se pronuncia (Aceptado o Rechazado): antes de eso no hay nada que enviar
   # todavía.
   #
-  # Sin historial de intentos (a diferencia de `PendingQueue`/
-  # `DocumentAttemptDetails`): el detalle de cada intento vive en la UDT
-  # (`U_Details`), no en esta cola — es deliberadamente más chica.
+  # Sin historial de intentos, igual que `PendingQueue`: el detalle de cada
+  # intento vive en la UDT (`U_Details`), no en esta cola. La diferencia con la
+  # de documentos es que acá el detalle se sobrescribe en la MISMA fila
+  # (`Sap::MailQueue#update_status`) en vez de sumar una por intento
+  # (`Sap::DocSyncAttempts`) — un correo se reintenta al mismo destinatario, y
+  # lo que importa es por qué no salió la última vez.
   class MailQueue
     GROUP_CODE = 'DOCS_DB_ODBC'
 

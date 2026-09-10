@@ -208,7 +208,11 @@ class SyncIssuedDocumentsJob < ApplicationJob
       "resolución en #{receipt.location.inspect}"
     )
 
-    mark_queue(entry) { Documents::PendingQueue.mark_sent(entry, receipt.location) }
+    mark_queue(entry) { Documents::PendingQueue.mark_sent(entry) }
+    # El `Location` es el detalle de ESTE intento —dónde va a publicar Hacienda
+    # la resolución—, y va a la UDT, que es donde vive el historial desde que
+    # la cola dejó de guardarlo (ver `#record_attempt`).
+    record_attempt(entry, company, status: Documents::PendingQueue::STATUS_SENT, details: receipt.location)
     mark_sap(entry, company,
              status: Documents::PendingQueue::STATUS_SENT,
              clave: clave,
@@ -282,7 +286,8 @@ class SyncIssuedDocumentsJob < ApplicationJob
   def failed(entry, outcome, details, level: :warn, company: nil)
     Rails.logger.public_send(level, "[SyncIssuedDocuments] #{entry}: #{details}")
 
-    mark_queue(entry) { Documents::PendingQueue.mark_error(entry, details) }
+    mark_queue(entry) { Documents::PendingQueue.mark_error(entry) }
+    record_attempt(entry, company, status: Documents::PendingQueue::STATUS_ERROR, details: details)
     if company
       mark_sap(entry, company,
                status: Documents::PendingQueue::STATUS_ERROR,
@@ -319,6 +324,36 @@ class SyncIssuedDocumentsJob < ApplicationJob
     Rails.logger.error(
       "[SyncIssuedDocuments] #{entry}: no se pudo marcar el estado en la cola — #{e.message}"
     )
+    Sentry.capture_exception(e)
+  end
+
+  # Registra el intento en la UDT de SAP (`@CL_FEC_DOCSYNCATTMP`), que es donde
+  # vive el historial desde que la cola dejó de guardarlo (ver
+  # `Sap::DocSyncAttempts`): una fila por intento, con su estado y su motivo.
+  #
+  # ⚠️ Sin compañía resuelta no hay a qué SAP escribirle, así que ese intento no
+  # queda registrado en ningún lado más que el log —es el caso de `#failed` con
+  # `company: nil` (`tipo_desconocido`, `sin_compania`)—. Es la contracara de
+  # mover el historial a SAP: antes caía en la tabla de la cola, que no
+  # dependía de ninguna credencial.
+  #
+  # Ni un fallo acá tumba la tanda: el desenlace del documento ya quedó
+  # registrado en la cola y en SAP, esto es la trazabilidad de cómo se llegó.
+  def record_attempt(entry, company, status:, details: nil)
+    if company.nil?
+      Rails.logger.debug { "[SyncIssuedDocuments] #{entry}: sin compañía, el intento no se registra en SAP." }
+      return
+    end
+
+    Sap::DocSyncAttempts.new(client: client_for(company)).create(
+      doc_entry: entry.doc_entry, doc_type: entry.doc_type, status: status, details: details
+    )
+  rescue Sap::CompanyClient::MissingConfiguration => e
+    # Mismo criterio que `#mark_sap`: es el problema que el desenlace ya
+    # reportó, y la tarea corre cada dos minutos.
+    Rails.logger.debug { "[SyncIssuedDocuments] #{entry}: tampoco se pudo registrar el intento — #{e.message}" }
+  rescue StandardError => e
+    Rails.logger.error("[SyncIssuedDocuments] #{entry}: no se pudo registrar el intento en SAP — #{e.message}")
     Sentry.capture_exception(e)
   end
 

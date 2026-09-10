@@ -18,12 +18,19 @@ RSpec.describe CheckSentDocumentsJob do
     SlResource.create!(code: Sap::DocumentDetails::HEADER, resource: 'view.svc/HEADER_B1SLQuery',
                        query_params: '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', page_size: 0)
     SlResource.create!(code: 'updateDocument01', resource: 'Invoices(#DocumentEntry#)', page_size: 0)
+    # El historial de intentos (`Sap::DocSyncAttempts`): la fila ya viene en el
+    # esquema de test por su migración, así que se hace upsert.
+    SlResource.unscoped.find_or_initialize_by(code: 'createDocSyncAttempt').tap do |r|
+      r.update!(resource: 'U_CL_FEC_DOCSYNCATTMP', query_params: nil, page_size: 0, is_active: true)
+    end
 
     allow(Sap::CompanyClient).to receive(:for).and_return(client)
     # La verificación SOLO pide la `Clave`: el resto del documento ya se armó y
     # se envió, no hace falta volver a traer las seis consultas de detalle.
     allow(client).to receive(:get).and_return([{ 'Clave' => '506123' }])
     allow(client).to receive(:patch)
+    # Cada desenlace registra su intento en la UDT (`#record_attempt`).
+    allow(client).to receive(:post).and_return({ 'Code' => '9' })
 
     allow(Hacienda::Client).to receive(:new).and_return(hacienda)
     allow(Documents::XmlArchive).to receive(:store_response).and_return(xml_response_url)
@@ -42,6 +49,15 @@ RSpec.describe CheckSentDocumentsJob do
 
   def check_result(status:, xml_base64: nil)
     Hacienda::Client::CheckResult.new(status: status, xml_base64: xml_base64)
+  end
+
+  # El MOTIVO de cada intento ya no va a la cola —que solo guarda el estado—
+  # sino a la UDT de SAP (`Sap::DocSyncAttempts`), una fila por intento.
+  # `details` acepta un texto o una expresión regular.
+  def expect_attempt(status:, details:)
+    expect(client).to have_received(:post).with('U_CL_FEC_DOCSYNCATTMP', body: hash_including(
+      'U_DocEntry' => 25, 'U_DocType' => '01', 'U_Status' => status, 'U_Details' => details
+    ))
   end
 
   describe 'cola vacía' do
@@ -76,9 +92,20 @@ RSpec.describe CheckSentDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark)
-        .with(anything, status: Documents::PendingQueue::STATUS_SENT, details: nil)
+        .with(anything, status: Documents::PendingQueue::STATUS_SENT)
       expect(client).to have_received(:patch)
         .with(anything, body: hash_including('U_CL_FEC_Status' => Documents::PendingQueue::STATUS_SENT))
+    end
+
+    # Paridad con la tabla que reemplazó: cada pasada sin resolución registra su
+    # intento, casi siempre sin motivo (ver `CheckSentDocumentsJob#stay_sent`).
+    it 'registra el intento en la UDT aunque no haya novedad' do
+      queue(entry)
+      allow(hacienda).to receive(:check_status).and_return(check_result(status: 'procesando'))
+
+      described_class.perform_now
+
+      expect_attempt(status: Documents::PendingQueue::STATUS_SENT, details: nil)
     end
 
     it 'no archiva nada mientras Hacienda no resuelva' do
@@ -103,12 +130,13 @@ RSpec.describe CheckSentDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark)
-        .with(anything, status: Documents::PendingQueue::STATUS_ACCEPTED, details: nil)
+        .with(anything, status: Documents::PendingQueue::STATUS_ACCEPTED)
       expect(client).to have_received(:patch).with(anything, body: {
                                                      'U_CL_FEC_Status' => Documents::PendingQueue::STATUS_ACCEPTED,
                                                      'U_CL_FEC_ErrorDetails' => nil,
                                                      'U_CL_FEC_XmlResponseUrl' => xml_response_url
                                                    })
+      expect_attempt(status: Documents::PendingQueue::STATUS_ACCEPTED, details: nil)
     end
 
     it 'archiva el XML ya decodificado, con la clave que trajo SAP' do
@@ -135,15 +163,13 @@ RSpec.describe CheckSentDocumentsJob do
         .and_return(check_result(status: 'aceptado', xml_base64: Base64.strict_encode64(xml)))
     end
 
-    it 'guarda el detalle en la cola y en SAP, no solo en el rechazo' do
+    it 'guarda el detalle en el historial de intentos y en SAP, no solo en el rechazo' do
       queue(entry)
 
       described_class.perform_now
 
-      expect(Documents::PendingQueue).to have_received(:mark).with(
-        anything, status: Documents::PendingQueue::STATUS_ACCEPTED,
-                  details: 'Comprobante aceptado con observaciones'
-      )
+      expect_attempt(status: Documents::PendingQueue::STATUS_ACCEPTED,
+                     details: 'Comprobante aceptado con observaciones')
       expect(client).to have_received(:patch).with(anything, body: hash_including(
         'U_CL_FEC_Status' => Documents::PendingQueue::STATUS_ACCEPTED,
         'U_CL_FEC_ErrorDetails' => 'Comprobante aceptado con observaciones'
@@ -165,7 +191,8 @@ RSpec.describe CheckSentDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark)
-        .with(anything, status: Documents::PendingQueue::STATUS_REJECTED, details: 'La clave ya existe')
+        .with(anything, status: Documents::PendingQueue::STATUS_REJECTED)
+      expect_attempt(status: Documents::PendingQueue::STATUS_REJECTED, details: 'La clave ya existe')
       expect(client).to have_received(:patch).with(anything, body: hash_including(
         'U_CL_FEC_Status' => Documents::PendingQueue::STATUS_REJECTED,
         'U_CL_FEC_ErrorDetails' => 'La clave ya existe'
@@ -186,7 +213,8 @@ RSpec.describe CheckSentDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark)
-        .with(anything, status: Documents::PendingQueue::STATUS_SENT, details: /Hacienda no disponible/)
+        .with(anything, status: Documents::PendingQueue::STATUS_SENT)
+      expect_attempt(status: Documents::PendingQueue::STATUS_SENT, details: /Hacienda no disponible/)
       expect(client).to have_received(:patch)
         .with(anything, body: hash_including('U_CL_FEC_Status' => Documents::PendingQueue::STATUS_SENT))
     end
@@ -198,8 +226,7 @@ RSpec.describe CheckSentDocumentsJob do
 
       described_class.perform_now
 
-      expect(Documents::PendingQueue).to have_received(:mark)
-        .with(anything, status: Documents::PendingQueue::STATUS_SENT, details: /credenciales inválidas/)
+      expect_attempt(status: Documents::PendingQueue::STATUS_SENT, details: /credenciales inválidas/)
     end
 
     it 'no escala a Error cuando SAP no devuelve la clave' do
@@ -209,8 +236,7 @@ RSpec.describe CheckSentDocumentsJob do
 
       described_class.perform_now
 
-      expect(Documents::PendingQueue).to have_received(:mark)
-        .with(anything, status: Documents::PendingQueue::STATUS_SENT, details: /no devolvió la clave/)
+      expect_attempt(status: Documents::PendingQueue::STATUS_SENT, details: /no devolvió la clave/)
       expect(hacienda).not_to have_received(:check_status)
     end
 
@@ -269,12 +295,15 @@ RSpec.describe CheckSentDocumentsJob do
 
       expect { described_class.perform_now }.not_to raise_error
       expect(Documents::PendingQueue).to have_received(:mark)
-        .with(anything, status: Documents::PendingQueue::STATUS_ACCEPTED, details: nil)
+        .with(anything, status: Documents::PendingQueue::STATUS_ACCEPTED)
       expect(Sentry).to have_received(:capture_exception)
     end
   end
 
   describe 'sin compañía configurada' do
+    # Sin compañía no hay a qué SAP escribirle, así que el intento NO queda
+    # registrado en ningún lado más que el log — la contracara de haber movido
+    # el historial a SAP (ver `CheckSentDocumentsJob#record_attempt`).
     it 'deja el documento en Sent en la cola, sin tocar SAP' do
       queue(entry(sap_db: 'SBO_FANTASMA'))
       allow(Rails.logger).to receive(:warn)
@@ -282,7 +311,8 @@ RSpec.describe CheckSentDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark)
-        .with(anything, status: Documents::PendingQueue::STATUS_SENT, details: /No hay una compañía activa/)
+        .with(anything, status: Documents::PendingQueue::STATUS_SENT)
+      expect(Rails.logger).to have_received(:warn).with(/No hay una compañía activa/)
       expect(Sap::CompanyClient).not_to have_received(:for)
     end
   end

@@ -250,7 +250,7 @@ RSpec.describe 'GET /api/documents/:id/attempts', type: :request do
   let(:user)    { User.create!(email: 'documentos-intentos@example.com') }
   let(:role)    { Role.create!(name: 'Configurador') }
   let(:company) { Company.create!(name: 'ACME S.A.', sap_db: 'SBO_ACME') }
-  let(:odbc_client) { instance_double(ExternalDb::Client) }
+  let(:client)  { instance_double(Clavisco::ServiceLayer::Client) }
 
   def sign_in_with(*permission_names)
     UsersByCompany.create!(user: user, company: company)
@@ -268,9 +268,17 @@ RSpec.describe 'GET /api/documents/:id/attempts', type: :request do
     get "/api/documents/#{id}/attempts", params: params
   end
 
-  def stub_procedure(rows)
-    allow(ExternalDb::Pool).to receive(:with).with(Documents::AttemptDetails::GROUP_CODE).and_yield(odbc_client)
-    allow(odbc_client).to receive(:call).and_return(rows)
+  # El historial vive en la UDT de SAP, no en la cola propia: la fuente es el
+  # Service Layer (`Sap::DocSyncAttempts`), con la consulta del catálogo — que
+  # ya viene en el esquema de test por su migración, así que se hace upsert.
+  before do
+    SlResource.unscoped.find_or_initialize_by(code: 'getDocSyncAttempts').tap do |r|
+      r.update!(resource: 'U_CL_FEC_DOCSYNCATTMP',
+                query_params: '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType)' \
+                              '&$orderby=U_CreatedAt desc',
+                page_size: 0, is_active: true)
+    end
+    allow(Sap::CompanyClient).to receive(:for).and_return(client)
   end
 
   describe 'autorización' do
@@ -291,25 +299,29 @@ RSpec.describe 'GET /api/documents/:id/attempts', type: :request do
   describe 'con permiso' do
     before { sign_in_with('Documents_Issued_ViewDocuments') }
 
-    it 'consulta la cola con el SAPDB de la compañía activa, el DocEntry del path y el DocType' do
-      stub_procedure([])
+    # `SAPDB` no viaja: la compañía ya la determina el cliente de SAP con el que
+    # se consulta. Sí el par `DocEntry` + `DocType`, que es la llave del
+    # documento dentro de la base.
+    it 'consulta la UDT con el DocEntry del path y el DocType' do
+      allow(client).to receive(:get).and_return([])
 
       get_attempts(25, doc_type: '01')
 
       expect(response).to have_http_status(:ok)
-      expect(odbc_client).to have_received(:call).with(
-        'CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS', ['SBO_ACME', 25, '01']
+      expect(client).to have_received(:get).with(
+        "U_CL_FEC_DOCSYNCATTMP?$filter=(U_DocEntry eq 25 and U_DocType eq '01')&$orderby=U_CreatedAt desc"
       )
     end
 
     it 'devuelve los intentos con las llaves en PascalCase' do
-      stub_procedure([{ 'CreatedAt' => Time.new(2026, 9, 5, 10, 3, 12), 'StatusCode' => 4,
-                        'Details' => 'SAP no respondió' }])
+      allow(client).to receive(:get).and_return(
+        [{ 'U_CreatedAt' => '2026-09-05T10:03:12-06:00', 'U_Status' => 4, 'U_Details' => 'SAP no respondió' }]
+      )
 
       get_attempts(25, doc_type: '01')
 
       expect(body_data['Items']).to eq(
-        [{ 'CreatedAt' => '2026-09-05 10:03:12', 'StatusCode' => 4, 'Details' => 'SAP no respondió' }]
+        [{ 'CreatedAt' => '2026-09-05T10:03:12-06:00', 'StatusCode' => 4, 'Details' => 'SAP no respondió' }]
       )
     end
 
@@ -319,14 +331,25 @@ RSpec.describe 'GET /api/documents/:id/attempts', type: :request do
       expect(response).to have_http_status(:unprocessable_content)
     end
 
-    it 'responde 502 si la base de documentos no responde' do
-      allow(ExternalDb::Pool).to receive(:with).with(Documents::AttemptDetails::GROUP_CODE)
-                                               .and_raise(ExternalDb::ConnectionError, 'no se pudo conectar')
+    it 'responde con un error claro si la compañía no tiene SAP configurado' do
+      allow(Sap::CompanyClient).to receive(:for)
+        .and_raise(Sap::CompanyClient::MissingConfiguration, 'ACME no tiene una conexión de SAP asignada.')
+
+      get_attempts(25, doc_type: '01')
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('ACME no tiene una conexión de SAP asignada.')
+    end
+
+    it 'responde 502 traduciendo el error del Service Layer' do
+      allow(client).to receive(:get).and_raise(
+        Clavisco::ServiceLayer::Client::ServiceLayerError.new('SL error: boom', sap_message: 'Sesión inválida')
+      )
 
       get_attempts(25, doc_type: '01')
 
       expect(response).to have_http_status(:bad_gateway)
-      expect(body['Message']).to eq('no se pudo conectar')
+      expect(body['Message']).to eq('Sesión inválida')
     end
   end
 end
@@ -357,6 +380,16 @@ RSpec.describe 'PATCH /api/documents/:id/reprocess', type: :request do
     allow(odbc_client).to receive(:call).and_return(rows)
   end
 
+  # Las dos consultas del catálogo que usa `#record_reprocess_in_sap`: el POST
+  # del intento a la UDT y el PATCH del estado del comprobante. La primera ya
+  # viene en el esquema de test por su migración, así que se hace upsert.
+  def stub_sap_resources
+    SlResource.unscoped.find_or_initialize_by(code: 'createDocSyncAttempt').tap do |r|
+      r.update!(resource: 'U_CL_FEC_DOCSYNCATTMP', query_params: nil, page_size: 0, is_active: true)
+    end
+    SlResource.create!(code: 'updateDocument01', resource: 'Invoices(#DocumentEntry#)', page_size: 0)
+  end
+
   describe 'autorización' do
     it 'responde 401 sin sesión' do
       reprocess(25, doc_type: '01')
@@ -375,25 +408,35 @@ RSpec.describe 'PATCH /api/documents/:id/reprocess', type: :request do
   describe 'con permiso' do
     before { sign_in_with('Documents_Emission_Reprocess') }
 
-    it 'reencola el documento con el SAPDB de la compañía activa, el DocEntry del path y el DocType' do
+    # Tres parámetros, no cuatro: el SP dejó de recibir `@Details` cuando el
+    # historial de intentos pasó a la UDT de SAP.
+    it 'reencola el documento con el DocEntry del path, el SAPDB de la compañía activa y el DocType' do
       stub_procedure([{ 'Id' => 7 }])
 
       reprocess(25, doc_type: '01')
 
       expect(response).to have_http_status(:ok)
       expect(odbc_client).to have_received(:call).with(
-        'CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT', [25, 'SBO_ACME', '01', anything], commit: true
+        'CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT', [25, 'SBO_ACME', '01'], commit: true
       )
     end
 
-    it 'arma el detalle con el nombre del usuario en sesión' do
+    # Quién pidió el reprocesamiento es el detalle del intento, y vive en la UDT
+    # (`Sap::DocSyncAttempts`) — la cola solo guarda el estado.
+    it 'registra el intento en la UDT con el nombre del usuario en sesión' do
       stub_procedure([{ 'Id' => 7 }])
+      stub_sap_resources
+      sl_client = instance_double(Clavisco::ServiceLayer::Client, post: { 'Code' => '9' }, patch: nil)
+      allow(Sap::UserClient).to receive(:for).with(company, user: user).and_return(sl_client)
 
       reprocess(25, doc_type: '01')
 
-      expect(odbc_client).to have_received(:call).with(
-        anything, [anything, anything, anything, 'Reprocesamiento solicitado por Ana Pérez'], commit: true
-      )
+      expect(sl_client).to have_received(:post).with('U_CL_FEC_DOCSYNCATTMP', body: hash_including(
+        'U_DocEntry' => 25,
+        'U_DocType' => '01',
+        'U_Status' => Documents::PendingQueue::STATUS_REPROCESS,
+        'U_Details' => 'Reprocesamiento solicitado por Ana Pérez'
+      ))
     end
 
     it 'responde con error cuando el documento no está Rechazado (el SP no devolvió fila)' do
@@ -449,8 +492,8 @@ RSpec.describe 'PATCH /api/documents/:id/reprocess', type: :request do
 
     it 'marca SOLO U_CL_FEC_Status en SAP con las credenciales del usuario en sesión' do
       stub_procedure([{ 'Id' => 7 }])
-      SlResource.create!(code: 'updateDocument01', resource: 'Invoices(#DocumentEntry#)', page_size: 0)
-      sl_client = instance_double(Clavisco::ServiceLayer::Client, patch: nil)
+      stub_sap_resources
+      sl_client = instance_double(Clavisco::ServiceLayer::Client, post: { 'Code' => '9' }, patch: nil)
       allow(Sap::UserClient).to receive(:for).with(company, user: user).and_return(sl_client)
 
       reprocess(25, doc_type: '01')

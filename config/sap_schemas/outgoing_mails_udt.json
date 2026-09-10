@@ -33,7 +33,7 @@
     { "Name": "OutputCC", "Description": "FEC · Destinatarios en copia (CC) del correo",
       "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
 
-    { "Name": "OutputBCC", "Description": "FEC · Destinatarios en copia oculta (BCC) del correo",
+    { "Name": "OutputBCC", "Description": "FEC · Destinatarios en copia oculta (BCC)",
       "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
 
     { "Name": "Type", "Description": "FEC · Tipo de envío: Envío o Reenvío",

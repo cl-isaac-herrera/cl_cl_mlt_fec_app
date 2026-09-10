@@ -13,23 +13,25 @@ CREATE TABLE [dbo].[DocTypes](
 )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
 ) ON [PRIMARY]
 GO
-/****** Object:  Table [dbo].[DocumentAttemptDetails]    Script Date: 6/9/2026 13:32:32 ******/
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
-CREATE TABLE [dbo].[DocumentAttemptDetails](
-	[Id] [bigint] IDENTITY(1,1) NOT NULL,
-	[DocumentQueueId] [bigint] NOT NULL,
-	[StatusCode] [tinyint] NOT NULL,
-	[Details] [nvarchar](max) NULL,
-	[CreatedAt] [datetime2](3) NOT NULL,
- CONSTRAINT [PK_DocumentAttemptDetails] PRIMARY KEY CLUSTERED 
-(
-	[Id] ASC
-)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
-) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
-GO
+/****** Historial de intentos — YA NO VIVE EN ESTA BASE ******/
+-- La tabla `DocumentAttemptDetails` se eliminó de este script: el historial de
+-- cada intento de sincronización de un documento pasó a la UDT de SAP
+-- `@CL_FEC_DOCSYNCATTMP` (`config/sap_schemas/doc_sync_attempts_udt.json`),
+-- igual que el detalle del correo de recepción vive en `@CL_FEC_MAILSQUEUE` y
+-- no acá. Así el operador ve la trazabilidad desde SAP, donde está el
+-- documento, sin depender de esta base.
+--
+-- Lo que SÍ se queda acá es CUÁNDO reintentar: `DocumentsQueue.StatusCode` +
+-- `Attempts`, que es lo que lee el backoff de
+-- `CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS`. La UDT no decide nada del ciclo.
+--
+-- ⚠️ El `U_Status` de esa UDT usa el MISMO catálogo `dbo.StatusCodes` de más
+-- abajo. Agregar o quitar un estado obliga a actualizar sus `ValidValues` —
+-- ver `config/sap_schemas/README.md`.
+--
+-- ⚠️ Una instalación YA viva necesita el `DROP TABLE dbo.DocumentAttemptDetails`
+-- a mano (y su FK): este script es la referencia de una base nueva, no se
+-- aplica solo. Ver `TODOS.md` → Emisión de documentos.
 /****** Object:  Table [dbo].[DocumentsQueue]    Script Date: 6/9/2026 13:32:32 ******/
 SET ANSI_NULLS ON
 GO
@@ -93,10 +95,6 @@ INSERT [dbo].[StatusCodes] ([Code], [Name], [Description]) VALUES (7, N'Rejected
 GO
 INSERT [dbo].[StatusCodes] ([Code], [Name], [Description]) VALUES (8, N'Reprocess', N'Reprocesamiento solicitado por el usuario sobre un documento rechazado.')
 GO
-ALTER TABLE [dbo].[DocumentAttemptDetails] ADD  DEFAULT ((0)) FOR [StatusCode]
-GO
-ALTER TABLE [dbo].[DocumentAttemptDetails] ADD  DEFAULT (sysdatetime()) FOR [CreatedAt]
-GO
 ALTER TABLE [dbo].[DocumentsQueue] ADD  DEFAULT ((0)) FOR [StatusCode]
 GO
 ALTER TABLE [dbo].[DocumentsQueue] ADD  DEFAULT (sysdatetime()) FOR [CreatedAt]
@@ -104,11 +102,6 @@ GO
 ALTER TABLE [dbo].[DocumentsQueue] ADD  DEFAULT (sysdatetime()) FOR [UpdatedAt]
 GO
 ALTER TABLE [dbo].[DocumentsQueue] ADD  CONSTRAINT [DF_DocumentsQueue_Attempts]  DEFAULT ((0)) FOR [Attempts]
-GO
-ALTER TABLE [dbo].[DocumentAttemptDetails]  WITH CHECK ADD  CONSTRAINT [FK_DocumentAttemptDetails_DocumentsQueue] FOREIGN KEY([DocumentQueueId])
-REFERENCES [dbo].[DocumentsQueue] ([Id])
-GO
-ALTER TABLE [dbo].[DocumentAttemptDetails] CHECK CONSTRAINT [FK_DocumentAttemptDetails_DocumentsQueue]
 GO
 ALTER TABLE [dbo].[DocumentsQueue]  WITH CHECK ADD  CONSTRAINT [FK_DocumentsQueue_DocTypes] FOREIGN KEY([DocType])
 REFERENCES [dbo].[DocTypes] ([Code])
@@ -195,12 +188,22 @@ SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
 GO
+-- Devuelve el documento a la cola con su desenlace: estado, fecha del intento y
+-- un intento más para el backoff exponencial de
+-- `CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS`.
+--
+-- Ya NO recibe `@Details` ni registra el historial: el detalle de cada intento
+-- se guarda en la UDT `@CL_FEC_DOCSYNCATTMP` (lo escribe Rails por Service
+-- Layer), igual que `CL_D_CL_MLT_FEC_UPT_MAIL` deja el suyo en
+-- `@CL_FEC_MAILSQUEUE`. Esta base solo decide cuándo reintentar.
+--
+-- `@DocEntry`/`@DocType`/`@SAPDB` quedan en la firma aunque `@Id` ya identifique
+-- la fila, por compatibilidad con la firma existente.
 CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_UPT_DOCUMENT]
 	@Id INT,
 	@DocEntry INT,
 	@DocType NVARCHAR(2),
 	@SAPDB NVARCHAR(30),
-	@Details NVARCHAR(MAX),
 	@StatusCode TINYINT
 AS
 BEGIN
@@ -213,37 +216,17 @@ BEGIN
 		UpdatedAt = GETDATE(),
 		Attempts = Attempts + 1
 	WHERE Id = @Id;
-
-	INSERT INTO dbo.DocumentAttemptDetails (DocumentQueueId, CreatedAt, Details, StatusCode)
-	VALUES (@Id, GETDATE(), @Details, @StatusCode);
 END
 GO
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
-CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS]
-	@SAPDB NVARCHAR(30),
-	@DocEntry INT,
-	@DocType NVARCHAR(2)
-AS
-BEGIN
-	-- SET NOCOUNT ON added to prevent extra result sets from
-	-- interfering with SELECT statements.
-	SET NOCOUNT ON;
-
-	SELECT
-		docAttemps.CreatedAt,
-		docAttemps.Details,
-		docAttemps.StatusCode
-	FROM dbo.DocumentsQueue doc
-	JOIN dbo.DocumentAttemptDetails docAttemps ON doc.Id = docAttemps.DocumentQueueId
-	WHERE doc.SAPDB = @SAPDB
-	AND doc.DocEntry = @DocEntry
-	AND doc.DocType = @DocType
-	ORDER BY docAttemps.CreatedAt DESC;
-END
-GO
+/****** CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS — ELIMINADO ******/
+-- El procedimiento leía el historial de intentos de un documento
+-- (`SAPDB`+`DocEntry`+`DocType`) uniendo `DocumentsQueue` con
+-- `DocumentAttemptDetails`. Se fue con la tabla: ese historial ahora se
+-- consulta en la UDT `@CL_FEC_DOCSYNCATTMP`, por Service Layer y filtrando
+-- por `U_DocEntry`+`U_DocType` — la compañía ya la determina la base de SAP
+-- contra la que se consulta, así que `SAPDB` no hace falta.
+--
+-- ⚠️ Una instalación YA viva necesita el `DROP PROCEDURE` a mano.
 /****** Object:  StoredProcedure [dbo].[CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT] ******/
 SET ANSI_NULLS ON
 GO
@@ -256,8 +239,10 @@ GO
 -- que un documento que ya cambió de estado (lo tomó otra corrida, o Hacienda ya
 -- contestó distinto) se reencole igual.
 --
--- @Details llega ya armado desde Rails ("Reprocesamiento solicitado por <usuario>")
--- y se guarda tal cual en DocumentAttemptDetails, igual que cualquier otro intento.
+-- Ya NO recibe `@Details` ("Reprocesamiento solicitado por <usuario>") ni lo
+-- registra: ese texto es un intento más y va a la UDT `@CL_FEC_DOCSYNCATTMP`,
+-- que escribe Rails cuando el reencolado sí aplicó — o sea, cuando este
+-- procedimiento devolvió una fila.
 --
 -- Devuelve el Id de la fila reencolada cuando sí aplicó, o ningún registro cuando
 -- el documento no existe en la cola o no estaba Rechazado — así el llamador
@@ -265,8 +250,7 @@ GO
 CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT]
 	@DocEntry INT,
 	@SAPDB NVARCHAR(30),
-	@DocType NVARCHAR(2),
-	@Details NVARCHAR(MAX)
+	@DocType NVARCHAR(2)
 AS
 BEGIN
 	SET NOCOUNT ON;
@@ -282,12 +266,6 @@ BEGIN
 		AND DocType = @DocType
 		AND StatusCode = 7;
 
-	IF EXISTS (SELECT 1 FROM @Reprocessed)
-	BEGIN
-		INSERT INTO dbo.DocumentAttemptDetails (DocumentQueueId, CreatedAt, Details, StatusCode)
-		SELECT Id, GETDATE(), @Details, 8 FROM @Reprocessed;
-	END
-
 	SELECT Id FROM @Reprocessed;
 END
 GO
@@ -295,9 +273,10 @@ GO
 /****** Object:  Table [dbo].[OutgoingMailsQueue] ******/
 -- Cola de correos de recepción electrónica pendientes de envío
 -- (`Documents::MailQueue` / `SendElectronicReceiptJob`). Analogía de
--- `DocumentsQueue` para el correo, pero deliberadamente más chica: sin tabla
--- de historial de intentos (`DocumentAttemptDetails`) — el detalle de cada
--- intento vive en la UDT de SAP (`U_Details`, `@CL_FEC_MAILSQUEUE`), no acá.
+-- `DocumentsQueue` para el correo, con el mismo reparto que esa: acá vive
+-- CUÁNDO reintentar (`Status` + `Attempts`) y el detalle de cada intento vive
+-- en la UDT de SAP (`U_Details`, `@CL_FEC_MAILSQUEUE`) — la de documentos usa
+-- `@CL_FEC_DOCSYNCATTMP` para lo mismo.
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
@@ -417,8 +396,9 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 -- Actualiza el desenlace de un intento de envío: estado, intentos y fecha del
--- último intento. Sin historial de intentos (a diferencia de DocumentsQueue):
--- el detalle de cada intento vive en la UDT (U_Details), no acá.
+-- último intento. Sin historial de intentos, igual que
+-- `CL_D_CL_MLT_FEC_UPT_DOCUMENT`: el detalle de cada intento vive en la UDT
+-- (`U_Details`), no acá.
 CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_UPT_MAIL]
 	@Id BIGINT,
 	@StatusCode TINYINT

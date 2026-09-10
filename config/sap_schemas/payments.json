@@ -4,7 +4,7 @@
   "columns": [
     {
       "Name": "CL_FEC_FechaEmision",
-      "Description": "FEC · Fecha y hora ISO 8601 de emisión ante Hacienda",
+      "Description": "FEC · Fecha ISO 8601 de emisión ante Hacienda",
       "Type": "db_Alpha",
       "SubType": "st_None",
       "Size": 25,
@@ -12,7 +12,7 @@
     },
     {
       "Name": "CL_FEC_Status",
-      "Description": "FEC · Estado del comprobante en la cola de envío a Hacienda",
+      "Description": "FEC · Estado del envío del comprobante a Hacienda",
       "Type": "db_Numeric",
       "SubType": "st_None",
       "Mandatory": "tNO",
@@ -28,7 +28,7 @@
     },
     {
       "Name": "CL_FEC_ErrorDetails",
-      "Description": "FEC · Detalle del error de validación o envío a Hacienda",
+      "Description": "FEC · Detalle del error de validación o envío",
       "Type": "db_Memo",
       "SubType": "st_None",
       "Mandatory": "tNO"
@@ -43,7 +43,7 @@
     },
     {
       "Name": "CL_FEC_NumConsecutivo",
-      "Description": "FEC · Número consecutivo del comprobante electrónico",
+      "Description": "FEC · Número consecutivo del comprobante",
       "Type": "db_Alpha",
       "SubType": "st_None",
       "Size": 20,

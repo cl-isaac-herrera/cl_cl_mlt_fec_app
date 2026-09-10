@@ -31,12 +31,19 @@ RSpec.describe SyncIssuedDocumentsJob do
     end
     # El recurso con el que se le escribe el desenlace al documento de SAP.
     SlResource.create!(code: 'updateDocument01', resource: 'Invoices(#DocumentEntry#)', page_size: 0)
+    # El historial de intentos (`Sap::DocSyncAttempts`): la fila ya viene en el
+    # esquema de test por su migración, así que se hace upsert.
+    SlResource.unscoped.find_or_initialize_by(code: 'createDocSyncAttempt').tap do |r|
+      r.update!(resource: 'U_CL_FEC_DOCSYNCATTMP', query_params: nil, page_size: 0, is_active: true)
+    end
 
     allow(Sap::CompanyClient).to receive(:for).and_return(client)
     allow(client).to receive(:get) do |path|
       path.match?(/HEADER/) ? [{ 'Clave' => '506123', 'FechaEmision' => '2026-09-06T09:06:00Z' }] : []
     end
     allow(client).to receive(:patch)
+    # Cada desenlace registra su intento en la UDT (`#record_attempt`).
+    allow(client).to receive(:post).and_return({ 'Code' => '9' })
 
     allow(Hacienda::CompanySigner).to receive(:for).and_return(signer)
     allow(Hacienda::Client).to receive(:new).and_return(hacienda)
@@ -65,6 +72,19 @@ RSpec.describe SyncIssuedDocumentsJob do
 
   def entry(id: 1, doc_entry: 25, doc_type: DocType::FE, sap_db: 'SBO_ACME')
     Documents::PendingQueue::Entry.new(id: id, doc_entry: doc_entry, doc_type: doc_type, sap_db: sap_db)
+  end
+
+  # El MOTIVO de cada intento ya no va a la cola —que solo guarda el estado y el
+  # contador— sino a la UDT de SAP (`Sap::DocSyncAttempts`), una fila por
+  # intento. `details` acepta un texto o una expresión regular.
+  def expect_attempt(status:, details:, doc_entry: 25)
+    expect(client).to have_received(:post).with('U_CL_FEC_DOCSYNCATTMP', body: hash_including(
+      'U_DocEntry' => doc_entry, 'U_Status' => status, 'U_Details' => details
+    ))
+  end
+
+  def expect_error_attempt(details, doc_entry: 25)
+    expect_attempt(status: Documents::PendingQueue::STATUS_ERROR, details: details, doc_entry: doc_entry)
   end
 
   describe 'cola vacía' do
@@ -120,15 +140,16 @@ RSpec.describe SyncIssuedDocumentsJob do
     end
 
     # Enviar deja el comprobante EN TRÁNSITO: el `Location` es donde Hacienda va
-    # a publicar la resolución, y es lo único que la pasada que la recoja
-    # necesita para encontrarla.
-    it 'deja el documento en Enviado con el Location, en la cola y en SAP' do
+    # a publicar la resolución, y queda como el motivo de ESTE intento en la UDT
+    # —la cola solo guarda el estado.
+    it 'deja el documento en Enviado con el Location, en el historial y en SAP' do
       queue(entry)
 
       described_class.perform_now
 
-      expect(Documents::PendingQueue)
-        .to have_received(:mark_sent).with(anything, 'https://api.test/recepcion/555')
+      expect(Documents::PendingQueue).to have_received(:mark_sent).with(anything)
+      expect_attempt(status: Documents::PendingQueue::STATUS_SENT,
+                     details: 'https://api.test/recepcion/555')
       expect(client).to have_received(:patch)
         .with('Invoices(25)', body: hash_including('U_CL_FEC_Status' => 3))
     end
@@ -268,7 +289,8 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark_error)
-        .with(anything, /2 regla\(s\).*Falta el CABYS.*El total no cuadra/)
+        .with(anything)
+      expect_error_attempt(/2 regla\(s\).*Falta el CABYS.*El total no cuadra/)
       expect(hacienda).not_to have_received(:send_document)
     end
 
@@ -293,7 +315,8 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark_error)
-        .with(anything, /La clave no cumple el formato/)
+        .with(anything)
+      expect_error_attempt(/La clave no cumple el formato/)
       expect(client).to have_received(:patch)
         .with(anything, body: hash_including('U_CL_FEC_Status' => 4))
     end
@@ -362,7 +385,8 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark_error)
-        .with(anything, /usuario y la contraseña del ATV/)
+        .with(anything)
+      expect_error_attempt(/usuario y la contraseña del ATV/)
       expect(client).to have_received(:patch)
         .with(anything, body: hash_including('U_CL_FEC_Status' => 4))
       expect(Sentry).not_to have_received(:capture_exception)
@@ -377,7 +401,8 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark_error)
-        .with(anything, /no tiene certificado digital/)
+        .with(anything)
+      expect_error_attempt(/no tiene certificado digital/)
       expect(Sentry).not_to have_received(:capture_exception)
     end
 
@@ -390,7 +415,8 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark_error)
-        .with(anything, /HACIENDA_FE_URI_SEND/)
+        .with(anything)
+      expect_error_attempt(/HACIENDA_FE_URI_SEND/)
       expect(Sentry).not_to have_received(:capture_exception)
     end
 
@@ -403,7 +429,8 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark_error)
-        .with(anything, /AZURE_STORAGE_ACCOUNT_KEY/)
+        .with(anything)
+      expect_error_attempt(/AZURE_STORAGE_ACCOUNT_KEY/)
       expect(Sentry).not_to have_received(:capture_exception)
       expect(hacienda).not_to have_received(:send_document)
     end
@@ -417,7 +444,8 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark_error)
-        .with(anything, /no tiene número de identificación/)
+        .with(anything)
+      expect_error_attempt(/no tiene número de identificación/)
       expect(Sentry).not_to have_received(:capture_exception)
     end
 
@@ -452,7 +480,8 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark_error)
-        .with(anything, /container does not exist/)
+        .with(anything)
+      expect_error_attempt(/container does not exist/)
       expect(client).to have_received(:patch)
         .with(anything, body: hash_including('U_CL_FEC_Status' => 4))
       expect(Sentry).not_to have_received(:capture_exception)
@@ -520,18 +549,24 @@ RSpec.describe SyncIssuedDocumentsJob do
 
       described_class.perform_now
 
-      expect(Documents::PendingQueue)
-        .to have_received(:mark_error).with(failing, /SAP se cayó/)
+      expect(Documents::PendingQueue).to have_received(:mark_error).with(failing)
+      expect_error_attempt(/SAP se cayó/)
     end
 
+    # El tipo desconocido se descarta ANTES de resolver la compañía
+    # (`SyncIssuedDocumentsJob#process`), así que no hay cliente de SAP con el
+    # que registrar el intento: el motivo queda solo en la cola —como estado— y
+    # en el log. Es la contracara de haber movido el historial a SAP.
     it 'marca también el tipo desconocido, que si no reintentaría para siempre' do
       unknown = entry(doc_type: '99')
       queue(unknown)
+      allow(Rails.logger).to receive(:warn)
 
       described_class.perform_now
 
-      expect(Documents::PendingQueue)
-        .to have_received(:mark_error).with(unknown, /no es un comprobante/)
+      expect(Documents::PendingQueue).to have_received(:mark_error).with(unknown)
+      expect(Rails.logger).to have_received(:warn).with(/no es un comprobante/)
+      expect(client).not_to have_received(:post)
     end
 
     it 'no marca error cuando el documento se envió bien' do

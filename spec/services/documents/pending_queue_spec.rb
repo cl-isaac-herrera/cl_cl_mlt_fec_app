@@ -22,18 +22,21 @@ RSpec.describe Documents::PendingQueue do
       allow(client).to receive(:call).and_return([])
     end
 
-    # Los seis parámetros van posicionales y en el orden que declara el
-    # procedimiento: @Id, @DocEntry, @DocType, @SAPDB, @Details, @StatusCode.
-    # Los identificadores viajan aunque @Id ya alcance para la fila, porque el
-    # procedimiento los usa para resolver el duplicado en espera.
-    it 'manda los seis parámetros en orden, con el estado Error' do
+    # Los cinco parámetros van posicionales y en el orden que declara el
+    # procedimiento: @Id, @DocEntry, @DocType, @SAPDB, @StatusCode. Los
+    # identificadores viajan aunque @Id ya alcance para la fila, por
+    # compatibilidad con la firma existente.
+    #
+    # `@Details` NO viaja: el motivo del intento vive en la UDT de SAP
+    # (`Sap::DocSyncAttempts`) desde que se eliminó `DocumentAttemptDetails`.
+    it 'manda los cinco parámetros en orden, con el estado Error y sin motivo' do
       stub_update
 
-      described_class.mark_error(entry, 'SAP no respondió')
+      described_class.mark_error(entry)
 
       expect(client).to have_received(:call).with(
         'CL_D_CL_MLT_FEC_UPT_DOCUMENT',
-        [7, 25, '01', 'SBO_ACME', 'SAP no respondió', described_class::STATUS_ERROR],
+        [7, 25, '01', 'SBO_ACME', described_class::STATUS_ERROR],
         commit: true
       )
     end
@@ -42,22 +45,9 @@ RSpec.describe Documents::PendingQueue do
     it 'confirma la transacción' do
       stub_update
 
-      described_class.mark_error(entry, 'motivo')
+      described_class.mark_error(entry)
 
       expect(client).to have_received(:call).with(anything, anything, commit: true)
-    end
-
-    # Un backtrace entero convierte la cola en un depósito de basura, y no aporta
-    # nada que el log no tenga mejor.
-    it 'recorta un motivo desmedido' do
-      stub_update
-
-      described_class.mark_error(entry, 'x' * 5_000)
-
-      expect(client).to have_received(:call) do |_proc, binds, **|
-        expect(binds[4].length).to eq(described_class::MAX_DETAILS)
-        expect(binds[4]).to end_with('…')
-      end
     end
   end
 
@@ -175,14 +165,14 @@ RSpec.describe Documents::PendingQueue do
     # la que usa `CheckSentDocumentsJob`: el estado varía según lo que conteste
     # Hacienda (`Sent` si sigue en tránsito, `Accepted`/`Rejected` si ya se
     # resolvió).
-    it 'manda el estado y el detalle que reciba, sin fijar ninguno' do
+    it 'manda el estado que reciba, sin fijar ninguno' do
       stub_update
 
-      described_class.mark(entry, status: described_class::STATUS_ACCEPTED, details: nil)
+      described_class.mark(entry, status: described_class::STATUS_ACCEPTED)
 
       expect(client).to have_received(:call).with(
         'CL_D_CL_MLT_FEC_UPT_DOCUMENT',
-        [7, 25, '01', 'SBO_ACME', nil, described_class::STATUS_ACCEPTED],
+        [7, 25, '01', 'SBO_ACME', described_class::STATUS_ACCEPTED],
         commit: true
       )
     end
@@ -194,17 +184,20 @@ RSpec.describe Documents::PendingQueue do
       allow(client).to receive(:call).and_return(rows)
     end
 
-    # Los cuatro parámetros van posicionales y en el orden que declara el
-    # procedimiento: @DocEntry, @SAPDB, @DocType, @Details. La validación de
-    # que el documento esté Rejected vive en el SP, no acá.
-    it 'manda los cuatro parámetros en orden' do
+    # Los tres parámetros van posicionales y en el orden que declara el
+    # procedimiento: @DocEntry, @SAPDB, @DocType. La validación de que el
+    # documento esté Rejected vive en el SP, no acá.
+    #
+    # `@Details` ya no viaja: quién pidió el reprocesamiento es el motivo del
+    # intento y se registra en la UDT (`Sap::DocSyncAttempts`).
+    it 'manda los tres parámetros en orden' do
       stub_update([{ 'Id' => 7 }])
 
-      described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'motivo')
+      described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01')
 
       expect(client).to have_received(:call).with(
         'CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT',
-        [25, 'SBO_ACME', '01', 'motivo'],
+        [25, 'SBO_ACME', '01'],
         commit: true
       )
     end
@@ -212,7 +205,7 @@ RSpec.describe Documents::PendingQueue do
     it 'confirma la transacción, porque el procedimiento escribe' do
       stub_update([{ 'Id' => 7 }])
 
-      described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'motivo')
+      described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01')
 
       expect(client).to have_received(:call).with(anything, anything, commit: true)
     end
@@ -220,9 +213,7 @@ RSpec.describe Documents::PendingQueue do
     it 'devuelve true cuando el procedimiento reencoló una fila' do
       stub_update([{ 'Id' => 7 }])
 
-      expect(
-        described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'motivo')
-      ).to be(true)
+      expect(described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01')).to be(true)
     end
 
     # El SP no devuelve fila cuando el documento no existe en la cola o ya no
@@ -230,20 +221,7 @@ RSpec.describe Documents::PendingQueue do
     it 'devuelve false cuando el procedimiento no reencoló nada' do
       stub_update([])
 
-      expect(
-        described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'motivo')
-      ).to be(false)
-    end
-
-    it 'recorta un motivo desmedido' do
-      stub_update([{ 'Id' => 7 }])
-
-      described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01', details: 'x' * 5_000)
-
-      expect(client).to have_received(:call) do |_proc, binds, **|
-        expect(binds[3].length).to eq(described_class::MAX_DETAILS)
-        expect(binds[3]).to end_with('…')
-      end
+      expect(described_class.reprocess(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: '01')).to be(false)
     end
   end
 

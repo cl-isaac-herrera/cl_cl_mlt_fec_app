@@ -1224,6 +1224,57 @@ clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo p
       (`OINV`, cubre también `ORIN`/`OPCH` por la replicación) y `payments.json`
       (`ORCT`).
 
+- [ ] **El historial de intentos se movió a SAP — implementado, falta el despliegue
+      (2026-09-10).** `DocumentAttemptDetails` **ya no está** en
+      `db/external/sql_server/schema.sql`: el historial de cada intento pasó a la UDT
+      `@CL_FEC_DOCSYNCATTMP` (`config/sap_schemas/doc_sync_attempts_udt.json`, nueva), con
+      el mismo reparto que ya tenía el correo de recepción —la base externa decide CUÁNDO
+      reintentar (`StatusCode` + `Attempts`), el detalle vive en SAP para que el operador lo
+      vea desde el documento—. `U_Status` declara los 7 valores de `dbo.StatusCodes`
+      (incluido el transitorio 2), a diferencia del UDF `CL_FEC_Status` del comprobante, que
+      sigue sin el 2 — la razón y el checklist de qué tocar al agregar o quitar un estado
+      están en `config/sap_schemas/README.md` (nuevo).
+      **Los tres SPs quedaron sin el historial:** `CL_D_CL_MLT_FEC_UPT_DOCUMENT` y
+      `CL_D_CL_MLT_FEC_UPT_REPROCESSDOCUMENT` perdieron su `INSERT` y su parámetro
+      `@Details`, y `CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS` se eliminó completo (leía la tabla
+      que ya no existe).
+      **Rails ya está al día (mismo día):** `Sap::DocSyncAttempts` escribe (`POST`) y lee
+      (`GET`) la UDT por Service Layer, con sus dos filas de `sl_resources` sembradas en
+      `db/seeds.rb` y agregadas a una base viva por
+      `20260910160000_add_doc_sync_attempts_sl_resources.rb`. Los cuatro puntos donde nace
+      un intento la usan: `SyncIssuedDocumentsJob#sent`/`#failed`,
+      `CheckSentDocumentsJob#resolved`/`#stay_sent` y
+      `Api::DocumentsController#reprocess`. `PendingQueue#mark`/`#mark_error`/`#mark_sent`
+      y `#reprocess` perdieron el parámetro `details`, y
+      `app/services/documents/attempt_details.rb` (más su spec) se borró: el panel de
+      "Detalles de intentos" ahora lee la UDT.
+      **Pendiente de despliegue:** `rake sap:schema:sync` para crear la UDT en cada
+      instalación viva (§32) —sin eso, el `POST` falla con "campo/entidad inválida" y el
+      intento queda solo en el log—, y a mano el `DROP TABLE dbo.DocumentAttemptDetails`
+      (con su FK) y el `DROP PROCEDURE dbo.CL_D_CL_MLT_FEC_SLT_DOCUMENTATTEMPS`, más el
+      `ALTER PROCEDURE` de los dos SP que perdieron `@Details` — el script de la base
+      externa es la referencia de una base nueva, no se aplica solo. **⚠️ El orden importa:**
+      Rails ya manda 5 y 3 parámetros, así que hasta que los SP se actualicen, `#mark` y
+      `#reprocess` fallan contra una base vieja.
+      **Dos huecos asumidos, no olvidos:** (1) sin compañía resuelta no hay a qué SAP
+      escribirle, así que el intento de `sin_compania`/`tipo_desconocido` queda solo en el
+      log —antes caía en la tabla de la cola, que no dependía de credenciales—; (2)
+      `#stay_sent` registra un intento por corrida mientras Hacienda no resuelva (paridad
+      con la tabla vieja): si el volumen molesta, el filtro va en `#stay_sent`.
+      **Los límites de largo de SAP quedaron documentados** en
+      `config/sap_schemas/README.md` (UDT: 19 caracteres de nombre y 30 de descripción;
+      UDF: 50 y 50), con un snippet para verificarlos antes de `sync`. Al escribirlos
+      aparecieron 11 objetos fuera de límite y se corrigieron todos: la UDT se renombró a
+      `@CL_FEC_DOCSYNCATTMP` (19) y se acortaron 10 descripciones —cuatro de ellas en
+      `marketing_documents.json` **y** `payments.json` (§2 del README)—. **Ojo al
+      desplegar:** esos cuatro UDFs ya existen en las instalaciones vivas, así que el
+      próximo `diff` va a reportar el cambio de descripción y `sync` va a mandar el PATCH;
+      es lo esperado (la descripción sí se puede corregir, §32), no un objeto nuevo.
+      **Pendiente decidir:** `CLAUDE.md` §32 sigue diciendo 60 caracteres para la
+      descripción de un UDF, tomado del estándar de Clavisco; el límite real de SAP es 50.
+      Conviene corregir esa línea de §32 para que no vuelva a colarse una descripción que
+      SAP no acepta.
+
 - [ ] **`db/external/hana/schema.sql` quedó desactualizado tras el rediseño de la cola (2026-09-06).**
       `db/external/sql_server/schema.sql` se reescribió: ya no hay `OnHold`(1)/`Cancelled`(5)
       ni la lógica de duplicados que dependía de ellos. Motivo (explicado por el usuario):

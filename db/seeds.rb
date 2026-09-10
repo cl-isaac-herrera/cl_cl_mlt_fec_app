@@ -822,6 +822,31 @@ SL_RESOURCES_DOCUMENT_ERROR_DETAILS = [
    'IncomingPayments(#DocEntry#)', '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails', 0]
 ].freeze
 
+# ── Historial de intentos de sincronización de un documento (UDT) ───────────
+# La UDT `@CL_FEC_DOCSYNCATTMP` (`config/sap_schemas/doc_sync_attempts_udt.json`),
+# que reemplazó a la tabla `DocumentAttemptDetails` de la base de la cola: el
+# detalle de cada intento vive en SAP, junto al documento, y la cola externa se
+# queda solo con cuándo reintentar. Las consume `Sap::DocSyncAttempts`.
+#
+# Dos filas, no tres (a diferencia de `SL_RESOURCES_MAIL_QUEUE`): un intento se
+# escribe una vez y no se vuelve a tocar, así que no hay `update`.
+#
+# `page_size: 0` en las dos: la escritura no pagina y el historial de un
+# documento son unos pocos intentos — el mismo criterio que la cola de correos.
+#
+# El `$orderby` va en el catálogo y no en el código: el orden es parte de la
+# consulta (`Sap::DocSyncAttempts#list` devuelve lo que SAP le dé), y así se
+# puede ajustar desde la pantalla de mantenimiento como cualquier otra.
+SL_RESOURCES_DOC_SYNC_ATTEMPTS = [
+  ['createDocSyncAttempt',
+   'Registra un intento de sincronización de un documento (UDT)',
+   'U_CL_FEC_DOCSYNCATTMP', nil, 0],
+  ['getDocSyncAttempts',
+   'Historial de intentos de sincronización de un documento (UDT)',
+   'U_CL_FEC_DOCSYNCATTMP',
+   '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType)&$orderby=U_CreatedAt desc', 0]
+].freeze
+
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
   # sin haber escrito ninguna fila.
@@ -831,7 +856,8 @@ ActiveRecord::Base.transaction do
 
   all_sl_resources = SL_RESOURCES + SL_RESOURCES_OWN + SL_RESOURCES_STATUS_UPDATES +
                      SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE +
-                     SL_RESOURCES_MAIL_DOCUMENT_INFO + SL_RESOURCES_DOCUMENT_ERROR_DETAILS
+                     SL_RESOURCES_MAIL_DOCUMENT_INFO + SL_RESOURCES_DOCUMENT_ERROR_DETAILS +
+                     SL_RESOURCES_DOC_SYNC_ATTEMPTS
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el

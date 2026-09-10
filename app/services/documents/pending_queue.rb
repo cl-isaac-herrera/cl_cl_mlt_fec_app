@@ -36,9 +36,15 @@ module Documents
   # siempre en `Error`.
   #
   # Por eso `#pending` reintenta `Error` con backoff exponencial (ver
-  # `PROCEDURE`) en vez de re-encolar, y cada intento —no solo el último— se
-  # guarda en `DocumentAttemptDetails` (ver `UPDATE_PROCEDURE`): es la
-  # trazabilidad de cuántas veces se reintentó y por qué falló cada vez.
+  # `PROCEDURE`) en vez de re-encolar.
+  #
+  # ⚠️ El DETALLE de cada intento NO se guarda acá. Vive en la UDT de SAP
+  # `@CL_FEC_DOCSYNCATTMP` (`Sap::DocSyncAttempts`), junto al documento, para
+  # que el operador lo vea desde SAP sin entrar a esta base. Esta clase se queda
+  # con lo que decide el ciclo —el estado y el contador de intentos—, el mismo
+  # reparto que tiene el correo de recepción entre `Documents::MailQueue` (cola)
+  # y `Sap::MailQueue` (UDT). Antes lo insertaba el propio SP en la tabla
+  # `DocumentAttemptDetails`, que ya no existe.
   #
   # `#pending_check` es la otra mitad del ciclo, que consume `CheckSentDocumentsJob`:
   # los documentos que ya se enviaron (`Sent`) y falta que Hacienda resuelva.
@@ -67,14 +73,14 @@ module Documents
     # no dependa de que alguien lo re-encole a mano.
     PROCEDURE = 'CL_D_CL_MLT_FEC_SLT_PENDINGDOCUMENTS'
 
-    # Procedimiento que devuelve un documento a la cola con su estado y el motivo.
+    # Procedimiento que devuelve un documento a la cola con su estado.
     #
-    #   EXEC …UPT_DOCUMENT @Id, @DocEntry, @DocType, @SAPDB, @Details, @StatusCode
+    #   EXEC …UPT_DOCUMENT @Id, @DocEntry, @DocType, @SAPDB, @StatusCode
     #
-    # Además de actualizar la fila (y sumar el intento a `Attempts`, para el
-    # backoff exponencial de `#pending`), guarda el detalle en el historial de
-    # intentos (`DocumentAttemptDetails`) en vez de sobrescribir un único
-    # campo. `@DocEntry`/`@DocType`/`@SAPDB` quedan en la firma aunque `@Id` ya
+    # Actualiza la fila y suma el intento a `Attempts`, para el backoff
+    # exponencial de `#pending`. Ya NO recibe `@Details` ni registra historial:
+    # el detalle del intento va a la UDT (ver la nota de la clase).
+    # `@DocEntry`/`@DocType`/`@SAPDB` quedan en la firma aunque `@Id` ya
     # identifique la fila, por compatibilidad con la firma existente.
     UPDATE_PROCEDURE = 'CL_D_CL_MLT_FEC_UPT_DOCUMENT'
 
@@ -91,7 +97,7 @@ module Documents
     # Procedimiento que reencola un documento `Rejected` a pedido del usuario
     # (botón "Reprocesar" de `documents_issued_controller.js`).
     #
-    #   EXEC …UPT_REPROCESSDOCUMENT @DocEntry, @SAPDB, @DocType, @Details
+    #   EXEC …UPT_REPROCESSDOCUMENT @DocEntry, @SAPDB, @DocType
     #
     # La validación de que el documento esté en `Rejected` vive DENTRO del SP,
     # no acá: es lo que evita la carrera de dos pestañas reprocesando el mismo
@@ -115,17 +121,11 @@ module Documents
     # es un reintento explícito, no automático.
     STATUS_REPROCESS  = 8
 
-    # `Details` es `NVARCHAR(MAX)`, así que el tope no lo pide la columna: lo pide
-    # el sentido común. Un backtrace entero o el cuerpo de una respuesta de SAP
-    # convierten la cola en un depósito de basura y no aportan nada que el log no
-    # tenga mejor.
-    MAX_DETAILS = 2_000
-
     # Una fila de la cola. `id` identifica al documento dentro de la cola —hay una
     # sola fila por documento, nunca una por intento (ver la nota de la clase); el
-    # historial de cada intento se guarda aparte, en `DocumentAttemptDetails`—.
-    # `doc_entry` + `doc_type` identifican el documento dentro de la compañía, y
-    # `sap_db` dice en cuál.
+    # detalle de cada intento se guarda aparte, en la UDT de SAP
+    # (`Sap::DocSyncAttempts`)—. `doc_entry` + `doc_type` identifican el documento
+    # dentro de la compañía, y `sap_db` dice en cuál.
     #
     # ⚠️ `doc_entry` NO es único por sí solo: es el consecutivo interno de cada
     # tabla de SAP, así que la factura 25 y la nota de crédito 25 existen a la vez.
@@ -156,27 +156,27 @@ module Documents
       end
 
       # @see #mark
-      def mark_error(entry, details)
-        new.mark(entry, status: STATUS_ERROR, details: details)
+      def mark_error(entry)
+        new.mark(entry, status: STATUS_ERROR)
       end
 
       # El comprobante quedó en poder de Hacienda y falta su resolución.
       #
-      # `details` lleva la URL donde Hacienda la va a publicar (el `Location`
-      # del envío): es de tránsito, no un mensaje de error, y es el único dato
-      # que la pasada que recoja la resolución va a necesitar para encontrarla.
-      def mark_sent(entry, location)
-        new.mark(entry, status: STATUS_SENT, details: location)
+      # El motivo —acá, la URL donde Hacienda va a publicar la resolución— lo
+      # registra quien llama, en la UDT (`Sap::DocSyncAttempts`): esta cola solo
+      # guarda el estado.
+      def mark_sent(entry)
+        new.mark(entry, status: STATUS_SENT)
       end
 
       # @see #mark
-      def mark(entry, status:, details: nil)
-        new.mark(entry, status: status, details: details)
+      def mark(entry, status:)
+        new.mark(entry, status: status)
       end
 
       # @see #reprocess
-      def reprocess(sap_db:, doc_entry:, doc_type:, details:)
-        new.reprocess(sap_db: sap_db, doc_entry: doc_entry, doc_type: doc_type, details: details)
+      def reprocess(sap_db:, doc_entry:, doc_type:)
+        new.reprocess(sap_db: sap_db, doc_entry: doc_entry, doc_type: doc_type)
       end
     end
 
@@ -203,7 +203,7 @@ module Documents
       rows.filter_map { |row| build_entry(row, CHECK_PROCEDURE) }
     end
 
-    # Devuelve el documento a la cola con su desenlace y el detalle.
+    # Devuelve el documento a la cola con su desenlace.
     #
     # Es lo que hace visible cómo terminó. Sin esto la fila se queda en
     # `Processing` —el estado en el que la dejó `#pending`— y desde afuera es
@@ -221,15 +221,13 @@ module Documents
     #
     # @param entry [Entry] el documento, tal como lo devolvió la cola.
     # @param status [Integer] uno de los `STATUS_*`.
-    # @param details [String, nil] el motivo o el `Location`, según el estado.
-    def mark(entry, status:, details:)
+    def mark(entry, status:)
       ExternalDb::Pool.with(GROUP_CODE) do |client|
         client.call(
           UPDATE_PROCEDURE,
           # Posicionales, en el orden en que el procedimiento los declara:
-          # @Id, @DocEntry, @DocType, @SAPDB, @Details, @StatusCode.
-          [entry.id, entry.doc_entry, entry.doc_type, entry.sap_db,
-           truncate_details(details), status],
+          # @Id, @DocEntry, @DocType, @SAPDB, @StatusCode.
+          [entry.id, entry.doc_entry, entry.doc_type, entry.sap_db, status],
           commit: true
         )
       end
@@ -240,37 +238,27 @@ module Documents
     #
     # A diferencia de `#mark`, no recibe un `Entry`: quien llama solo tiene lo
     # que trae el listado de SAP (`DocEntry`/`DocType`/`SAPDB`), no el `Id`
-    # interno de la cola — la fila se identifica por esos tres campos, igual que
-    # `Documents::AttemptDetails`.
+    # interno de la cola — la fila se identifica por esos tres campos.
     #
     # `commit: true` por la misma razón que `#mark`/`#pending`: el procedimiento
-    # SÍ escribe (reencola la fila y registra el intento) y el conector revierte
-    # por defecto (§37).
+    # SÍ escribe (reencola la fila) y el conector revierte por defecto (§37).
+    #
+    # Quién pidió el reprocesamiento lo registra el llamador en la UDT
+    # (`Sap::DocSyncAttempts`), y solo si esto devolvió `true`: un intento que
+    # no se reencoló no es un intento.
     #
     # @return [Boolean] `true` si había un `Rejected` para reencolar, `false` si
     #   no existía en la cola o ya no estaba en ese estado — la validación real
     #   la hace el SP, esto solo lee si devolvió una fila.
-    def reprocess(sap_db:, doc_entry:, doc_type:, details:)
+    def reprocess(sap_db:, doc_entry:, doc_type:)
       rows = ExternalDb::Pool.with(GROUP_CODE) do |client|
-        client.call(REPROCESS_PROCEDURE, [doc_entry, sap_db, doc_type, truncate_details(details)], commit: true)
+        client.call(REPROCESS_PROCEDURE, [doc_entry, sap_db, doc_type], commit: true)
       end
 
       rows.any?
     end
 
     private
-
-    # `nil` se conserva y no se convierte en cadena vacía: la columna es
-    # anulable y `NULL` significa "no hay nada que contar", que es distinto de
-    # un detalle en blanco.
-    def truncate_details(details)
-      return nil if details.nil?
-
-      text = details.to_s.strip
-      return text if text.length <= MAX_DETAILS
-
-      "#{text[0, MAX_DETAILS - 1]}…"
-    end
 
     # Una fila sin los datos mínimos se descarta con un aviso en vez de tumbar la
     # corrida entera: el resto de la cola sí se puede procesar, y una fila rota es
