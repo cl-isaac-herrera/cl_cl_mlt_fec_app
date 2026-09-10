@@ -1797,6 +1797,62 @@ en `[x]`; lo que sigue abierto necesita una decisión, no solo trabajo.
 
 ---
 
+## ⚠️ Deploy — `db:seed` sobre una base viva borra las asignaciones de permisos
+
+- [ ] **REVISAR ANTES DEL PRIMER DEPLOY A UNA BASE CON DATOS REALES.** El bloque de
+      permisos de `db/seeds.rb` (líneas 244-246) **vacía tres tablas** antes de recrear el
+      catálogo, porque necesita fijar los Id del origen:
+
+      ```ruby
+      RolePermission.unscoped.delete_all   # los permisos de TODOS los roles
+      UserPermission.unscoped.delete_all   # los permisos globales directos
+      Permission.unscoped.delete_all       # el catálogo (se recrea idéntico)
+      ```
+
+      Y después recrea **solo** el catálogo, los permisos del rol `Administrador` y sus
+      `user_roles` (`seeds.rb:263-285`). Todo lo que la aplicación creó queda afuera.
+
+      El seed **es** idempotente —dos corridas dejan el mismo estado final— y por eso
+      confunde: el problema no es que se descuadre, es a qué estado converge.
+
+      | | Después de un `db:seed` |
+      |---|---|
+      | Rol creado desde la app (`roles`) | Sobrevive — esa tabla no se toca |
+      | Sus permisos (`role_permissions`) | **Se pierden**, y nadie los recrea |
+      | Usuarios con ese rol (`user_roles`) | Sobreviven, con un rol vacío |
+      | Permisos globales directos (`user_permissions`) | **Se pierden** |
+
+      El síntoma es el peor posible: el usuario entra, el rol figura asignado, y no ve
+      ninguna pantalla. Sin error, sin log, sin nada que apunte al seed.
+
+      **Contraste — el resto del archivo sí es seguro:** `sl_resources` (`seeds.rb:793`) y
+      `settings` (`seeds.rb:969`) son upsert por `code` y no borran nada. La advertencia de
+      `CLAUDE.md` §36 es exactamente sobre no copiarle a `permissions` su `delete_all`. Es
+      probable que de ahí venga la idea de que "correr los seeds no afecta nada": para esas
+      dos secciones es cierto, para permisos no.
+
+      **Estado hoy (2026-09-10):** no hay riesgo materializado — el repo **no tiene pipeline
+      de deploy** (ni `Dockerfile`, ni Kamal, ni workflows) y no existe ninguna referencia a
+      `db:seed` fuera del propio archivo. El riesgo es que quien escriba ese pipeline meta
+      `db:seed` por reflejo, que es lo habitual.
+
+      **Pendiente — decidir entre dos caminos:**
+      1. **Dejar el seed como está y no correrlo nunca en un ambiente con datos.** Es lo que
+         ya pide `CLAUDE.md` §28 (*"cambiar el catálogo en una base viva es una MIGRACIÓN, no
+         un re-seed"*, con `20260812130000_apply_permission_catalog_changes.rb` como
+         referencia). Requiere que el pipeline corra `db:migrate` y **no** `db:seed`, y que
+         eso quede escrito donde el que despliega lo lea.
+      2. **Hacer el bloque de permisos un upsert de verdad** (por `id`/`name`, sin
+         `delete_all`, preservando `role_permissions` y `user_permissions`). Elimina la trampa
+         en lugar de documentarla, y hace que un `db:seed` accidental sea inofensivo. Cuesta
+         más: hay que resolver qué pasa con un permiso cuyo Id cambió y con los dados de baja
+         (`DEACTIVATED`), que hoy se resuelven gratis al recrear todo.
+
+      La opción 2 es la que vuelve el sistema seguro por construcción; la 1 depende de que
+      nadie se equivoque una vez.
+
+---
+
 ## Submódulos — cambios que corresponden a `cl-sap-udfs-ruby`
 
 - [ ] **`ClientFactory.build` exige el Service Layer en el `$LOAD_PATH`, no la constante.**

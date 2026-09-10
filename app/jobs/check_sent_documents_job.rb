@@ -132,7 +132,7 @@ class CheckSentDocumentsJob < ApplicationJob
     )
 
     xml_response_url = archive_response(entry, company, clave, xml)
-    details = result.accepted? ? nil : rejection_message(xml)
+    details = detail_message(xml)
 
     mark_queue(entry, status: status, details: details)
     mark_sap(entry, company, status: status, details: details, xml_response_url: xml_response_url)
@@ -198,11 +198,13 @@ class CheckSentDocumentsJob < ApplicationJob
     nil
   end
 
-  # El motivo legible del rechazo, del propio XML que devuelve Hacienda
-  # (`MensajeHacienda` trae un `DetalleMensaje`). Sin namespace: el XML de
-  # Hacienda lo declara y buscarlo calificado obligaría a repetir la URI en
-  # cada `xpath`.
-  def rejection_message(xml)
+  # El detalle legible que trae la respuesta de Hacienda, del propio XML
+  # (`MensajeHacienda` trae un `DetalleMensaje`) — SIEMPRE, no solo en el
+  # rechazo: un comprobante ACEPTADO puede traer igual un `DetalleMensaje`
+  # (una observación, por ejemplo) en el MISMO campo, y antes se descartaba a
+  # propósito. Sin namespace: el XML de Hacienda lo declara y buscarlo
+  # calificado obligaría a repetir la URI en cada `xpath`.
+  def detail_message(xml)
     return nil if xml.nil?
 
     Nokogiri::XML(xml).remove_namespaces!.at_xpath('//DetalleMensaje')&.text&.strip.presence

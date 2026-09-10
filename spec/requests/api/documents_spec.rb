@@ -124,6 +124,128 @@ RSpec.describe 'GET /api/documents', type: :request do
   end
 end
 
+RSpec.describe 'GET /api/documents/:id', type: :request do
+  let(:user)    { User.create!(email: 'documentos-show@example.com') }
+  let(:role)    { Role.create!(name: 'Configurador') }
+  let(:company) { Company.create!(name: 'ACME S.A.', sap_db: 'SBO_ACME') }
+  let(:client)  { instance_double(Clavisco::ServiceLayer::Client) }
+
+  def sign_in_with(*permission_names)
+    UsersByCompany.create!(user: user, company: company)
+    UserRole.create!(user: user, role: role, company: company)
+    permission_names.each do |name|
+      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
+    end
+    sign_in(user, company: company)
+  end
+
+  def body      = JSON.parse(response.body)
+  def body_data = body['Data']
+
+  def get_document(id, params = {})
+    get "/api/documents/#{id}", params: params
+  end
+
+  before do
+    SlResource.unscoped.find_or_initialize_by(code: 'getDocumentErrorDetails01').tap do |r|
+      r.update!(resource: 'Invoices(#DocEntry#)',
+                query_params: '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails',
+                page_size: 0, is_active: true)
+    end
+    allow(Sap::CompanyClient).to receive(:for).and_return(client)
+  end
+
+  describe 'autorización' do
+    it 'responde 401 sin sesión' do
+      get_document(25, doc_type: '01')
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'exige Documents_Issued_ViewDocuments' do
+      sign_in_with('Documents_Issued_ViewDocuments_Otro')
+      get_document(25, doc_type: '01')
+
+      expect(response).to have_http_status(:forbidden)
+    end
+  end
+
+  describe 'con permiso' do
+    before { sign_in_with('Documents_Issued_ViewDocuments') }
+
+    # La ENTIDAD por llave, con los nombres reales de los UDFs — no la vista de
+    # cabecera, que devuelve alias (`Status`, `ErrDetails`) y dejaba los dos
+    # campos en `nil` (ver el comentario de `Api::DocumentsController#show`).
+    #
+    # El `DocType` NO viaja en la consulta: elige la FILA del catálogo
+    # (`getDocumentErrorDetails01`), que ya sabe contra qué entidad va.
+    it 'consulta la entidad del documento con el DocEntry del path' do
+      allow(client).to receive(:get).and_return({ 'U_CL_FEC_Status' => 6, 'U_CL_FEC_ErrorDetails' => nil })
+
+      get_document(25, doc_type: '01')
+
+      expect(response).to have_http_status(:ok)
+      expect(client).to have_received(:get)
+        .with('Invoices(25)?$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails')
+    end
+
+    it 'devuelve el Status y el ErrorDetails ACTUALES del documento' do
+      allow(client).to receive(:get).and_return(
+        { 'U_CL_FEC_Status' => 7, 'U_CL_FEC_ErrorDetails' => 'La clave ya existe' }
+      )
+
+      get_document(25, doc_type: '01')
+
+      expect(body_data).to eq({ 'Status' => 7, 'ErrorDetails' => 'La clave ya existe' })
+    end
+
+    it 'responde 404 si SAP no devuelve el documento' do
+      allow(client).to receive(:get).and_return(nil)
+
+      get_document(25, doc_type: '01')
+
+      expect(response).to have_http_status(:not_found)
+    end
+
+    # Un `DocEntry` que no existe: el Service Layer contesta 404 y el cliente lo
+    # levanta como `NotFoundError`. Tiene que salir como 404 y no como 502.
+    it 'responde 404 cuando el Service Layer dice que la entidad no existe' do
+      allow(client).to receive(:get).and_raise(Clavisco::ServiceLayer::Client::NotFoundError.new('not found'))
+
+      get_document(25, doc_type: '01')
+
+      expect(response).to have_http_status(:not_found)
+    end
+
+    it 'rechaza un tipo de documento inválido' do
+      get_document(25, doc_type: 'XX')
+
+      expect(response).to have_http_status(:unprocessable_content)
+    end
+
+    it 'responde con un error claro si la compañía no tiene SAP configurado' do
+      allow(Sap::CompanyClient).to receive(:for)
+        .and_raise(Sap::CompanyClient::MissingConfiguration, 'ACME no tiene una conexión de SAP asignada.')
+
+      get_document(25, doc_type: '01')
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('ACME no tiene una conexión de SAP asignada.')
+    end
+
+    it 'traduce un error del Service Layer a un mensaje legible' do
+      allow(client).to receive(:get).and_raise(
+        Clavisco::ServiceLayer::Client::ServiceLayerError.new('SL error: boom', sap_message: 'Sesión inválida')
+      )
+
+      get_document(25, doc_type: '01')
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(body['Message']).to eq('Sesión inválida')
+    end
+  end
+end
+
 RSpec.describe 'GET /api/documents/:id/attempts', type: :request do
   let(:user)    { User.create!(email: 'documentos-intentos@example.com') }
   let(:role)    { Role.create!(name: 'Configurador') }

@@ -105,10 +105,10 @@ RSpec.describe CheckSentDocumentsJob do
       expect(Documents::PendingQueue).to have_received(:mark)
         .with(anything, status: Documents::PendingQueue::STATUS_ACCEPTED, details: nil)
       expect(client).to have_received(:patch).with(anything, body: {
-        'U_CL_FEC_Status' => Documents::PendingQueue::STATUS_ACCEPTED,
-        'U_CL_FEC_ErrorDetails' => nil,
-        'U_CL_FEC_XmlResponseUrl' => xml_response_url
-      })
+                                                     'U_CL_FEC_Status' => Documents::PendingQueue::STATUS_ACCEPTED,
+                                                     'U_CL_FEC_ErrorDetails' => nil,
+                                                     'U_CL_FEC_XmlResponseUrl' => xml_response_url
+                                                   })
     end
 
     it 'archiva el XML ya decodificado, con la clave que trajo SAP' do
@@ -118,6 +118,36 @@ RSpec.describe CheckSentDocumentsJob do
 
       expect(Documents::XmlArchive).to have_received(:store_response)
         .with(company: company, clave: '506123', xml: '<Mensaje/>')
+    end
+  end
+
+  describe 'Hacienda acepta con detalle' do
+    # Un comprobante ACEPTADO puede traer igual un `DetalleMensaje` (una
+    # observación de Hacienda, no un rechazo) — antes se descartaba a propósito
+    # con `result.accepted? ? nil : ...`; ahora se guarda igual que el del
+    # rechazo, en el MISMO campo.
+    let(:xml) do
+      '<MensajeHacienda><DetalleMensaje>Comprobante aceptado con observaciones</DetalleMensaje></MensajeHacienda>'
+    end
+
+    before do
+      allow(hacienda).to receive(:check_status)
+        .and_return(check_result(status: 'aceptado', xml_base64: Base64.strict_encode64(xml)))
+    end
+
+    it 'guarda el detalle en la cola y en SAP, no solo en el rechazo' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark).with(
+        anything, status: Documents::PendingQueue::STATUS_ACCEPTED,
+                  details: 'Comprobante aceptado con observaciones'
+      )
+      expect(client).to have_received(:patch).with(anything, body: hash_including(
+        'U_CL_FEC_Status' => Documents::PendingQueue::STATUS_ACCEPTED,
+        'U_CL_FEC_ErrorDetails' => 'Comprobante aceptado con observaciones'
+      ))
     end
   end
 

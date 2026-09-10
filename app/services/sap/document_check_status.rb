@@ -30,8 +30,10 @@ module Sap
 
     # @param status [Integer] `Documents::PendingQueue::STATUS_SENT` (sigue en
     #   proceso), `STATUS_ACCEPTED` o `STATUS_REJECTED`.
-    # @param details [String, nil] el motivo del rechazo, o el de un error al
-    #   consultar (la verificación falló pero el documento sigue `Sent`).
+    # @param details [String, nil] el `DetalleMensaje` de la respuesta de
+    #   Hacienda (rechazo, o una observación aunque haya aceptado), o el motivo
+    #   de un error al consultar (la verificación falló pero el documento sigue
+    #   `Sent`).
     # @param xml_response_url [String, nil] URL del XML de respuesta de
     #   Hacienda, ya archivado (`Documents::XmlArchive.store_response`).
     def call(status:, details: nil, xml_response_url: nil)

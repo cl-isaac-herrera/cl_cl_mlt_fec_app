@@ -176,7 +176,7 @@ Rails.application.routes.draw do
     # `reprocess` reemplaza `PATCH /api/Documents/:id/Reprocess` del servidor de
     # sincronización .NET (`ApiFEUrl`): ya no se cae al proxy, la reencola
     # `Documents::PendingQueue#reprocess` (§37) contra la cola propia.
-    resources :documents, only: [:index] do
+    resources :documents, only: %i[index show] do
       get   :attempts,  on: :member
       patch :reprocess, on: :member
     end

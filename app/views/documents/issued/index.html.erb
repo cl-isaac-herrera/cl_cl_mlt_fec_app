@@ -316,10 +316,10 @@
     </div>
 
     <div class="flex-1 min-h-0 overflow-y-auto px-6 py-5 flex flex-col">
-      <%# Bloque de alto natural (Clave/Fecha/Error interno/Hacienda). Es lo
-          que crece o encoge según "Error interno" esté expandida o no, y ese
-          cambio es justo lo que le deja más o menos espacio a "Detalles de
-          intentos" (flex-1 más abajo) — puro flexbox, sin JS de por medio. %>
+      <%# Bloque de alto natural (Clave/Fecha/Detalles/Hacienda). Es lo que
+          crece o encoge según "Detalles" esté expandida o no, y ese cambio es
+          justo lo que le deja más o menos espacio a "Detalles de intentos"
+          (flex-1 más abajo) — puro flexbox, sin JS de por medio. %>
       <div class="flex-shrink-0 space-y-4">
         <div>
           <p class="text-xs font-medium text-gray-500 mb-0.5">Clave</p>
@@ -346,15 +346,19 @@
              class="text-sm text-gray-800"></p>
         </div>
         <%# Sin tarjeta propia acá: #formatHaciendaError arma su(s) propia(s)
-            tarjeta(s) roja(s) por cada entrada — mismo patrón que
-            infoErrorHacienda, más abajo. %>
-        <%# Expandible (chevron), expandida por defecto — ver #toggleErrorSection. %>
+            tarjeta(s) por cada entrada — mismo patrón que infoErrorHacienda,
+            más abajo, en rojo o amarillo suave según el estado ACTUAL del
+            documento (ver #loadErrorDetails). %>
+        <%# Expandible (chevron), expandida por defecto — ver #toggleErrorSection.
+            Arranca oculta: #loadErrorDetails la consulta fresca (GET
+            /api/documents/:id) cada vez que se abre el panel y la muestra
+            solo si SAP devolvió un detalle. %>
         <div data-documents-issued-target="infoErrorSection" class="hidden">
           <button type="button"
                   data-action="click->documents-issued#toggleErrorSection"
                   data-testid="btn-toggle-error"
                   class="w-full flex items-center justify-between gap-2 text-left cursor-pointer">
-            <p class="text-xs font-medium text-gray-500">Error interno</p>
+            <p class="text-xs font-medium text-gray-500">Detalles</p>
             <span data-documents-issued-target="infoErrorChevron"
                   class="material-icons text-lg text-gray-400">expand_less</span>
           </button>

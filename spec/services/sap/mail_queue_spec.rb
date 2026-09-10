@@ -6,12 +6,12 @@ RSpec.describe Sap::MailQueue do
   let(:client) { instance_double(Clavisco::ServiceLayer::Client) }
 
   before do
-    SlResource.create!(code: 'getMailInformation', resource: '@CL_FEC_MAILSQUEUE',
+    SlResource.create!(code: 'getMailInformation', resource: 'U_CL_FEC_MAILSQUEUE',
                        query_params: '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and ' \
                                      'U_Status ne 4 and U_Status ne 5)',
                        page_size: 0)
-    SlResource.create!(code: 'createMailQueue', resource: '@CL_FEC_MAILSQUEUE', page_size: 0)
-    SlResource.create!(code: 'updateMailQueue', resource: '@CL_FEC_MAILSQUEUE(#Code#)', page_size: 0)
+    SlResource.create!(code: 'createMailQueue', resource: 'U_CL_FEC_MAILSQUEUE', page_size: 0)
+    SlResource.create!(code: 'updateMailQueue', resource: 'U_CL_FEC_MAILSQUEUE(#Code#)', page_size: 0)
   end
 
   subject(:mail_queue) { described_class.new(client: client) }
@@ -23,7 +23,7 @@ RSpec.describe Sap::MailQueue do
       mail_queue.find(doc_entry: 25, doc_type: '01')
 
       expect(client).to have_received(:get).with(
-        "@CL_FEC_MAILSQUEUE?$filter=(U_DocEntry eq 25 and U_DocType eq '01' and U_Status ne 4 and U_Status ne 5)"
+        "U_CL_FEC_MAILSQUEUE?$filter=(U_DocEntry eq 25 and U_DocType eq '01' and U_Status ne 4 and U_Status ne 5)"
       )
     end
 
@@ -60,7 +60,7 @@ RSpec.describe Sap::MailQueue do
       mail_queue.create(doc_entry: 25, doc_type: '01', output_to: 'a@test.com', output_cc: 'b@test.com',
                         output_bcc: nil)
 
-      expect(client).to have_received(:post).with('@CL_FEC_MAILSQUEUE', body: hash_including(
+      expect(client).to have_received(:post).with('U_CL_FEC_MAILSQUEUE', body: hash_including(
         'U_DocEntry' => 25,
         'U_DocType' => '01',
         'U_Status' => 1,
@@ -86,7 +86,7 @@ RSpec.describe Sap::MailQueue do
 
       mail_queue.update_status(code: '7', status: 4)
 
-      expect(client).to have_received(:patch).with('@CL_FEC_MAILSQUEUE(7)', anything)
+      expect(client).to have_received(:patch).with('U_CL_FEC_MAILSQUEUE(7)', anything)
     end
 
     it 'manda el estado, la fecha del intento y el motivo del error (sin remitente)' do

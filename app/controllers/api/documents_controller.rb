@@ -10,12 +10,13 @@ module Api
   # historial de reintentos, no para este listado.
   #
   # ── Alcance de esta migración ────────────────────────────────────────────────
-  # La BÚSQUEDA/listado y la acción "Reprocesar". El resto de las acciones por
-  # fila del legacy (ver/descargar PDF, ver/descargar XML, reenviar correo,
-  # anulación interna, omitir validaciones, descarga masiva) siguen sin migrar y
-  # sin consumidor coherente con esta forma de fila —usaban un `Id` de la base
-  # local que ya no existe en un resultado que viene de SAP—. Anotado en
-  # `TODOS.md` → Emisión de documentos.
+  # La BÚSQUEDA/listado, la consulta puntual de un documento (`show`, para
+  # refrescar el panel de información) y la acción "Reprocesar". El resto de
+  # las acciones por fila del legacy (ver/descargar PDF, ver/descargar XML,
+  # reenviar correo, anulación interna, omitir validaciones, descarga masiva)
+  # siguen sin migrar y sin consumidor coherente con esta forma de fila —usaban
+  # un `Id` de la base local que ya no existe en un resultado que viene de
+  # SAP—. Anotado en `TODOS.md` → Emisión de documentos.
   #
   # `reprocess` SÍ se puede resolver con lo que da SAP (`DocEntry`+`DocType`) más
   # la compañía activa (`SAPDB`): no depende del `Id` local ni de ningún dato que
@@ -33,6 +34,7 @@ module Api
 
     PERMISSIONS = {
       'index' => 'Documents_Issued_ViewDocuments',
+      'show' => 'Documents_Issued_ViewDocuments',
       'attempts' => 'Documents_Issued_ViewDocuments',
       'reprocess' => 'Documents_Emission_Reprocess'
     }.freeze
@@ -65,6 +67,63 @@ module Api
       render json: ApiResponse.success({ Items: result.items, HasMore: result.has_more }).to_h
     rescue Sap::CompanyClient::MissingConfiguration, Sap::IssuedDocumentsSearch::UnsupportedDocType,
            Sap::IssuedDocumentsSearch::InvalidDateRange => e
+      render json: ApiResponse.error(e.message).to_h, status: :unprocessable_content
+    rescue Clavisco::ServiceLayer::Client::ServiceLayerError => e
+      render json: ApiResponse.error(e.sap_message || e.message).to_h, status: :bad_gateway
+    end
+
+    # GET /api/documents/:id?doc_type=01
+    #
+    # `:id` es el `DocEntry` de SAP. Trae el `U_CL_FEC_Status`/
+    # `U_CL_FEC_ErrorDetails` ACTUALES de un solo documento, en vivo — el panel
+    # "Información del documento" del listado (`documents_issued_controller.js`)
+    # lo consulta cada vez que se abre, en vez de arrastrar el valor que trajo
+    # la búsqueda (`#mapDocument` ya no lo incluye a propósito): esos dos campos
+    # los pisa constantemente la sincronización (reprocesos, la verificación de
+    # `CheckSentDocumentsJob`), así que el de la última página del listado puede
+    # quedar desactualizado frente al estado real del documento.
+    #
+    # Consulta la ENTIDAD del documento por llave
+    # (`getDocumentErrorDetails<tipo>` → `Invoices(25)?$select=U_CL_FEC_Status,
+    # U_CL_FEC_ErrorDetails`), una fila del catálogo por tipo de documento.
+    #
+    # ⚠️ NO usar `qsGetDocumentHeaderInfo` para esto, aunque sea la consulta que
+    # ya existe: es una SQL Query view y devuelve sus propios alias (`Status`,
+    # `ErrDetails`), no los nombres de los UDFs — pedirle `U_CL_FEC_ErrorDetails`
+    # devuelve `nil` y el panel se queda sin mostrar la sección, sin ningún
+    # error. Contra la entidad los nombres son los del campo real y el `$select`
+    # es confiable; la advertencia sobre `$select` de
+    # `CheckSentDocumentsJob#header_for` aplica a las vistas, no a las entidades
+    # OData nativas.
+    def show
+      unless company
+        render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
+               status: :forbidden
+        return
+      end
+
+      doc_type = DocType.normalize(params[:doc_type])
+      if doc_type.nil? || DocType.receiver_message?(doc_type)
+        render json: ApiResponse.error('Debe indicar un tipo de documento válido.').to_h,
+               status: :unprocessable_content
+        return
+      end
+
+      row = fetch_error_details(doc_type: doc_type, doc_entry: params[:id].to_i)
+      if row.to_h.empty?
+        render json: ApiResponse.error('SAP no devolvió el documento solicitado.').to_h, status: :not_found
+        return
+      end
+
+      render json: ApiResponse.success({
+                                         Status: row.integer('U_CL_FEC_Status'),
+                                         ErrorDetails: row.string('U_CL_FEC_ErrorDetails')
+                                       }).to_h
+    rescue Clavisco::ServiceLayer::Client::NotFoundError
+      # Antes que el rescue de abajo: un `DocEntry` que no existe es un 404 del
+      # recurso pedido, no una falla del enlace con SAP (502).
+      render json: ApiResponse.error('SAP no devolvió el documento solicitado.').to_h, status: :not_found
+    rescue Sap::CompanyClient::MissingConfiguration, Sap::ResourceQuery::UnknownResource => e
       render json: ApiResponse.error(e.message).to_h, status: :unprocessable_content
     rescue Clavisco::ServiceLayer::Client::ServiceLayerError => e
       render json: ApiResponse.error(e.sap_message || e.message).to_h, status: :bad_gateway
@@ -187,6 +246,22 @@ module Api
         "[Api::DocumentsController#reprocess] DocEntry #{doc_entry} DocType #{doc_type.inspect}: " \
         "no se pudo actualizar el estado en SAP — #{e.message}"
       )
+    end
+
+    # La fila COMPLETA de la cabecera para `#show` — mismo criterio que
+    # `CheckSentDocumentsJob#header_for` (ver el comentario de `#show`).
+    # El documento por llave (`Invoices(25)?$select=U_CL_FEC_Status,…`), una
+    # fila del catálogo por tipo (`getDocumentErrorDetails<tipo>`, ver
+    # `db/seeds.rb`). Un tipo sin fila levanta `UnknownResource`, que `#show`
+    # traduce a 422.
+    #
+    # Devuelve la entidad, no una colección: el Service Layer contesta el objeto
+    # solo, así que no hay `.first` que sacar — y si el `DocEntry` no existe
+    # contesta 404, que llega como `NotFoundError`.
+    def fetch_error_details(doc_type:, doc_entry:)
+      query = Sap::ResourceQuery.new("getDocumentErrorDetails#{doc_type}", bindings: { DocEntry: doc_entry })
+
+      Documents::Row.new(Sap::CompanyClient.for(company).get(query.path))
     end
 
     def serialize_attempt(attempt)

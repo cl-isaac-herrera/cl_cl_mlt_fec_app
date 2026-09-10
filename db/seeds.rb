@@ -677,10 +677,23 @@ SL_RESOURCES_DOCUMENT_QUERIES = [
 # filas de la UDT declarada en `config/sap_schemas/outgoing_mails_udt.json`
 # (ver `SyncIssuedDocumentsJob#queue_receipt_mail` y `SendElectronicReceiptJob`).
 #
-# `resource` es literalmente `@CL_FEC_MAILSQUEUE` — es una UDT, no una vista
-# (`_B1SLQuery`), así que `SlResourceSeed.qualify` NO le agrega prefijo: el
-# mismo `code` sirve en SQL Server y en HANA (mismo criterio que
-# `SL_RESOURCES_STATUS_UPDATES`).
+# ── La UDT tiene DOS nombres, y acá va el de OData ───────────────────────────
+# `@CL_FEC_MAILSQUEUE` es el nombre SQL/DI-API: el que declara el schema y el
+# que usa `UserTablesMD` (la metadata, `vendor/clavisco/sap_udfs`). Los DATOS
+# de una UDT los expone el Service Layer como un entity set aparte, con el
+# prefijo `U_` — `U_CL_FEC_MAILSQUEUE` —, igual que a los UDFs de un documento
+# los expone como `U_CL_FEC_Clave`. Mandar el nombre con `@` devuelve
+# `SL error: Service Not Found`, que es lo que dejó sin fila en la UDT a los
+# documentos emitidos el 2026-09-10 (`db/migrate/20260910123000_*`).
+#
+# `SlResourceSeed.qualify` NO interviene: no es una vista (`_B1SLQuery`), así
+# que no lleva el prefijo `view.svc/`/`sml.svc/` y el mismo `resource` sirve en
+# SQL Server y en HANA (mismo criterio que `SL_RESOURCES_STATUS_UPDATES`).
+#
+# ⚠️ La llave del update va SIN comillas (`(#Code#)` y no `('#Code#')`): la
+# tabla es `bott_NoObjectAutoIncrement`, así que su `Code` es numérico y
+# citarlo hace fallar la petición. Una UDT de las otras categorías, con `Code`
+# alfanumérico, sí las necesitaría.
 #
 # El `$filter` de la consulta excluye `U_Status = 4` (Enviado) y `= 5`
 # (Omitido, ver `Documents::MailQueue::STATUS_SKIPPED`): en el caso normal hay
@@ -698,14 +711,14 @@ SL_RESOURCES_DOCUMENT_QUERIES = [
 SL_RESOURCES_MAIL_QUEUE = [
   ['getMailInformation',
    'Detalle pendiente de envío en la cola de correos de recepción electrónica (UDT)',
-   '@CL_FEC_MAILSQUEUE',
+   'U_CL_FEC_MAILSQUEUE',
    '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and U_Status ne 4 and U_Status ne 5)', 0],
   ['createMailQueue',
    'Crea una fila en la cola de correos de recepción electrónica (UDT)',
-   '@CL_FEC_MAILSQUEUE', nil, 0],
+   'U_CL_FEC_MAILSQUEUE', nil, 0],
   ['updateMailQueue',
    'Actualiza el estado de una fila de la cola de correos de recepción electrónica (UDT)',
-   '@CL_FEC_MAILSQUEUE(#Code#)', nil, 0]
+   'U_CL_FEC_MAILSQUEUE(#Code#)', nil, 0]
 ].freeze
 
 # ── Datos del comprobante para el correo de recepción electrónica ───────────
@@ -763,6 +776,52 @@ SL_RESOURCES_MAIL_DOCUMENT_INFO = [
    'U_CL_FEC_XmlResponseUrl', 0]
 ].freeze
 
+# ── Estado y detalle de error ACTUALES de un documento ──────────────────────
+# Las consume `Api::DocumentsController#show`, que es lo que el panel
+# "Información del documento" del listado pide cada vez que se abre
+# (`documents_issued_controller.js` → `#loadErrorDetails`). El listado NO
+# arrastra estos dos campos a propósito: la sincronización los pisa
+# constantemente (reprocesos, `CheckSentDocumentsJob`), así que el valor que
+# trajo la búsqueda puede estar viejo frente al del documento.
+#
+# ── Por qué la ENTIDAD y no la vista de cabecera ────────────────────────────
+# Antes esto salía de `qsGetDocumentHeaderInfo`, reutilizando la consulta que
+# ya usa `Sap::DocumentDetails`. No sirve: esa es una SQL Query view y devuelve
+# sus propios alias (`Status`, `ErrDetails`), no los nombres de los UDFs, así
+# que había que leerla con nombres que no se parecen a los del campo real —y
+# además trae la cabecera completa (67 columnas) para usar dos.
+#
+# Contra la entidad (`Invoices(#DocEntry#)`) el `$select` SÍ es confiable: la
+# advertencia de `CheckSentDocumentsJob#header_for` sobre `$select` aplica a
+# las vistas (`view.svc`/`sml.svc`), que no son entidades OData nativas.
+#
+# Una entidad puntual por llave —no un `$filter`— porque acá no hay nada que
+# componer: es un documento, por `DocEntry`. Ese es justo el caso que
+# `SL_RESOURCES_MAIL_DOCUMENT_INFO` NO podía usar (le suma un filtro de estado
+# según la compañía).
+#
+# Mismo universo y mismo mapeo tipo→entidad que las otras tres familias:
+# `Invoices` para FE/ND/TE/FEE, `CreditNotes` para NC, `PurchaseInvoices` para
+# FEC, `IncomingPayments` para REP. Los mensajes de receptor (05/06/07) no
+# tienen fila: no son comprobantes de este flujo y `#show` los rechaza antes
+# de llegar al catálogo.
+SL_RESOURCES_DOCUMENT_ERROR_DETAILS = [
+  ['getDocumentErrorDetails01', 'Estado y detalle de error actuales de una factura electrónica',
+   'Invoices(#DocEntry#)', '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails', 0],
+  ['getDocumentErrorDetails02', 'Estado y detalle de error actuales de una nota de débito electrónica',
+   'Invoices(#DocEntry#)', '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails', 0],
+  ['getDocumentErrorDetails03', 'Estado y detalle de error actuales de una nota de crédito electrónica',
+   'CreditNotes(#DocEntry#)', '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails', 0],
+  ['getDocumentErrorDetails04', 'Estado y detalle de error actuales de un tiquete electrónico',
+   'Invoices(#DocEntry#)', '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails', 0],
+  ['getDocumentErrorDetails08', 'Estado y detalle de error actuales de una factura electrónica de compra',
+   'PurchaseInvoices(#DocEntry#)', '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails', 0],
+  ['getDocumentErrorDetails09', 'Estado y detalle de error actuales de una factura electrónica de exportación',
+   'Invoices(#DocEntry#)', '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails', 0],
+  ['getDocumentErrorDetails10', 'Estado y detalle de error actuales de un recibo electrónico de pago',
+   'IncomingPayments(#DocEntry#)', '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails', 0]
+].freeze
+
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
   # sin haber escrito ninguna fila.
@@ -772,7 +831,7 @@ ActiveRecord::Base.transaction do
 
   all_sl_resources = SL_RESOURCES + SL_RESOURCES_OWN + SL_RESOURCES_STATUS_UPDATES +
                      SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE +
-                     SL_RESOURCES_MAIL_DOCUMENT_INFO
+                     SL_RESOURCES_MAIL_DOCUMENT_INFO + SL_RESOURCES_DOCUMENT_ERROR_DETAILS
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el
@@ -920,16 +979,16 @@ HACIENDA_XADES_SETTINGS = [
 # (dev/staging/prod usan cuentas distintas)—, con el mismo criterio que
 # `HACIENDA_FE_CLIENT_ID`.
 #
-# El CONTENEDOR, en cambio, es el mismo "clvsfe" que usaba el legacy en
-# cualquier instalación: no lo elige el operador, así que lleva `fixed_value` y
-# se reafirma en cada corrida — igual que `HACIENDA_FE_GRANT_TYPE` y
-# `HACIENDA_XADES_SETTINGS` de más arriba. Vive en `settings` (no en una
-# constante) solo para poder corregirlo desde la UI sin deploy si Hacienda
-# alguna vez pidiera otro contenedor.
+# El CONTENEDOR, en cambio, es el mismo "appfiles" en cualquier instalación:
+# no lo elige el operador, así que lleva `fixed_value` y se reafirma en cada
+# corrida — igual que `HACIENDA_FE_GRANT_TYPE` y `HACIENDA_XADES_SETTINGS` de
+# más arriba. Vive en `settings` (no en una constante) solo para poder
+# corregirlo desde la UI sin deploy si Hacienda alguna vez pidiera otro
+# contenedor.
 AZURE_STORAGE_SETTINGS = [
   ['AZURE_STORAGE_ACCOUNT_NAME', 'Nombre de la cuenta de Azure Storage', true],
   ['AZURE_STORAGE_ACCOUNT_KEY',  'Clave de acceso de la cuenta de Azure Storage', false],
-  ['AZURE_STORAGE_CONTAINER',    'Contenedor de Azure Storage donde se guardan los XML', true, 'clvsfe']
+  ['AZURE_STORAGE_CONTAINER',    'Contenedor de Azure Storage donde se guardan los XML', true, 'appfiles']
 ].freeze
 
 # El grupo es el prefijo del `code` sin el campo, y se declara junto a las filas

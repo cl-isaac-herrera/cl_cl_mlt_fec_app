@@ -301,7 +301,11 @@ export default class extends TabulatorController {
       Consecutivo: doc.DocNum,
       RcprNombre: doc.CardName,
       Clave: doc.U_CL_FEC_Clave,
-      ErrDetails: doc.U_CL_FEC_ErrorDetails,
+      // `U_CL_FEC_ErrorDetails` NO viaja acá a propósito: la sincronización lo
+      // pisa constantemente (reprocesos, `CheckSentDocumentsJob`), así que el
+      // valor de esta búsqueda puede quedar desactualizado frente al estado
+      // ACTUAL del documento. El panel "Información del documento" lo consulta
+      // fresco cada vez que se abre (`#loadErrorDetails`, `GET /api/documents/:id`).
       Status: doc.U_CL_FEC_Status,
       StatusForTable: this.#statusLabel(doc.U_CL_FEC_Status),
       FechaFactura: this.#formatDate(doc.DocDate),
@@ -983,11 +987,13 @@ export default class extends TabulatorController {
     this.infoClaveTarget.textContent        = row.Clave || '';
     this.infoFechaEmisionTarget.textContent = this.#formatDateTime(row.FechaEmision);
 
-    // "Error interno" — expandida por defecto en cada apertura (§ ver
-    // #toggleErrorSection); el usuario puede colapsarla, pero cada documento
-    // nuevo arranca igual.
+    // "Detalles" (antes "Error interno") — expandida por defecto en cada
+    // apertura (§ ver #toggleErrorSection); el usuario puede colapsarla, pero
+    // cada documento nuevo arranca igual. La sección misma queda oculta hasta
+    // que responda #loadErrorDetails: recién ahí se sabe si hay algo que mostrar.
     this.infoErrorTarget.classList.remove('hidden');
     this.infoErrorChevronTarget.textContent = 'expand_less';
+    this.#loadErrorDetails(row);
 
     // "Detalles de intentos" — colapsada por defecto. Arranca acá, ANTES del
     // await de Hacienda de abajo, para que la consulta corra en segundo plano
@@ -995,18 +1001,6 @@ export default class extends TabulatorController {
     this.infoAttemptsBodyTarget.classList.add('hidden');
     this.infoAttemptsChevronTarget.textContent = 'expand_more';
     this.#loadAttempts(row);
-
-    // `U_CL_FEC_ErrorDetails` mezcla dos cosas en un solo campo: el texto
-    // técnico propio (antes de "[") y, cuando Hacienda rechaza, el array con
-    // código+mensaje por cada error — `#formatHaciendaError` ya sabía separar
-    // eso (lo usa la sección de abajo), así que se reutiliza acá en vez de
-    // volcar el string crudo.
-    if (row.ErrDetails) {
-      this.infoErrorTarget.innerHTML = this.#formatHaciendaError(row.ErrDetails);
-      this.infoErrorSectionTarget.classList.remove('hidden');
-    } else {
-      this.infoErrorSectionTarget.classList.add('hidden');
-    }
 
     this.infoErrorHaciendaSectionTarget.classList.add('hidden');
     if (row.Status === 7) { // Rechazado (`U_CL_FEC_Status`) — ver #statusLabel
@@ -1024,6 +1018,37 @@ export default class extends TabulatorController {
     this.infoPanelBackdropTarget.classList.remove('hidden');
     this.infoModalTarget.classList.remove('translate-x-full');
     document.body.style.overflow = 'hidden';
+  }
+
+  // "Detalles" (antes "Error interno"). Consulta `GET /api/documents/:id`
+  // cada vez que se abre el panel en vez de usar el `U_CL_FEC_ErrorDetails`
+  // que trajo la búsqueda (ya no viaja en `#mapDocument`, ver el comentario
+  // ahí): ese campo lo pisa constantemente la sincronización (reprocesos,
+  // `CheckSentDocumentsJob`), así que el valor de la última página del listado
+  // puede estar desactualizado frente al estado ACTUAL del documento — pasaba
+  // que el panel seguía mostrando el detalle de un intento anterior distinto
+  // al estado vigente.
+  //
+  // El color acompaña el estado FRESCO que trae la misma respuesta: rojo para
+  // cualquier estado distinto de Aceptado (6), amarillo suave cuando el
+  // documento SÍ quedó aceptado (una observación de Hacienda, no un error).
+  async #loadErrorDetails(row) {
+    this.infoErrorSectionTarget.classList.add('hidden');
+    this.infoErrorTarget.innerHTML = '';
+
+    try {
+      const json = await this.#apiFetch(`/api/documents/${row.Id}?doc_type=${encodeURIComponent(row.DocType)}`);
+      if (this.#activeInfoDocId !== row.Id) return; // el usuario ya abrió otro documento
+
+      const details = json.Data?.ErrorDetails;
+      if (!details) return;
+
+      const tone = json.Data?.Status === 6 ? 'amber' : 'red'; // 6 = Aceptado, ver #statusLabel
+      this.infoErrorTarget.innerHTML = this.#formatHaciendaError(details, tone);
+      this.infoErrorSectionTarget.classList.remove('hidden');
+    } catch {
+      // No bloquear el panel por esto
+    }
   }
 
   toggleErrorSection() {
@@ -1415,30 +1440,54 @@ export default class extends TabulatorController {
     if (tip) tip.style.display = 'none';
   }
 
-  #formatHaciendaError(text) {
+  // `tone` decide la paleta de las tarjetas: 'red' (default, rechazo/error) o
+  // 'amber' — un amarillo suave para cuando el documento SÍ quedó Aceptado y
+  // lo que Hacienda mandó en el mismo campo es una observación, no un motivo
+  // de rechazo (ver #loadErrorDetails). La sección "Respuesta Hacienda" sigue
+  // llamando esto sin `tone`: ahí siempre es un rechazo, nunca amarillo.
+  #formatHaciendaError(text, tone = 'red') {
     if (!text) return '';
 
-    const bracketStart = text.indexOf('[');
-    const bracketEnd   = text.lastIndexOf(']');
+    const palette = tone === 'amber'
+      ? { border: 'border-amber-200', bg: 'bg-amber-50', text: 'text-amber-800',
+          badgeBg: 'bg-amber-100', badgeText: 'text-amber-700' }
+      : { border: 'border-red-200', bg: 'bg-red-50', text: 'text-red-800',
+          badgeBg: 'bg-red-100', badgeText: 'text-red-700' };
 
-    // Sin estructura de array → card rojo simple
-    if (bracketStart === -1) {
-      return `
-        <div class="rounded-lg border border-red-200 bg-red-50 p-3">
-          <p class="text-sm text-red-800 leading-relaxed break-all">${this.#escapeHtml(text)}</p>
-        </div>`;
-    }
-
-    const preamble     = text.substring(0, bracketStart).trim();
-    const arrayContent = text.substring(bracketStart + 1, bracketEnd !== -1 ? bracketEnd : undefined).trim();
-
-    // Parsear entradas: código, ""mensaje"", fila, columna
+    // Parsear las entradas de Hacienda: `código, ""mensaje"", fila, columna`.
+    //
+    // ⚠️ El disparador es QUE HAYA ENTRADAS, no que el texto traiga corchetes.
+    // Hacienda envuelve la lista en `[ … ]` cuando RECHAZA ("...tiene los
+    // siguientes errores: [ … ]"), pero cuando ACEPTA con observaciones manda
+    // las mismas entradas sueltas, sin corchetes. Buscar `[` primero y salir
+    // por el card simple si no estaba dejaba todas las observaciones de un
+    // documento aceptado apiladas en un solo bloque —incluido el encabezado de
+    // columnas— aunque fueran dos o tres observaciones distintas.
     const entries = [];
     const regex = /(-?\d+),\s*""([\s\S]*?)"",\s*-?\d+,\s*-?\d+/g;
     let match;
-    while ((match = regex.exec(arrayContent)) !== null) {
+    let firstEntryIndex = -1;
+    while ((match = regex.exec(text)) !== null) {
+      if (firstEntryIndex === -1) firstEntryIndex = match.index;
       entries.push({ code: match[1], message: match[2].trim() });
     }
+
+    // Sin entradas reconocibles → card simple con el texto tal cual
+    if (entries.length === 0) {
+      return `
+        <div class="rounded-lg border ${palette.border} ${palette.bg} p-3">
+          <p class="text-sm ${palette.text} leading-relaxed break-all">${this.#escapeHtml(text)}</p>
+        </div>`;
+    }
+
+    // Todo lo anterior a la primera entrada es el mensaje general de Hacienda
+    // ("Este comprobante fue recibido en el ambiente de pruebas…"). Se le
+    // quitan el encabezado de columnas y el corchete de apertura, que son
+    // andamiaje del formato y no información para el usuario.
+    const preamble = text.slice(0, firstEntryIndex)
+      .replace(/codigo\s*,\s*mensaje\s*,\s*fila\s*,\s*columna/i, '')
+      .replace(/\[/g, '')
+      .trim();
 
     let html = '';
 
@@ -1446,24 +1495,17 @@ export default class extends TabulatorController {
       html += `<p class="text-sm text-gray-600 mb-3 leading-relaxed break-all">${this.#escapeHtml(preamble)}</p>`;
     }
 
-    if (entries.length > 0) {
-      html += '<div class="space-y-2">';
-      for (const e of entries) {
-        html += `
-          <div class="rounded-lg border border-red-200 bg-red-50 p-3">
-            <span class="inline-block text-xs font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full mb-1.5">
-              Código ${this.#escapeHtml(e.code)}
-            </span>
-            <p class="text-sm text-red-800 leading-relaxed break-all">${this.#escapeHtml(e.message)}</p>
-          </div>`;
-      }
-      html += '</div>';
-    } else if (arrayContent) {
+    html += '<div class="space-y-2">';
+    for (const e of entries) {
       html += `
-        <div class="rounded-lg border border-red-200 bg-red-50 p-3">
-          <p class="text-sm text-red-800 leading-relaxed break-all">${this.#escapeHtml(arrayContent)}</p>
+        <div class="rounded-lg border ${palette.border} ${palette.bg} p-3">
+          <span class="inline-block text-xs font-semibold ${palette.badgeText} ${palette.badgeBg} px-2 py-0.5 rounded-full mb-1.5">
+            Código ${this.#escapeHtml(e.code)}
+          </span>
+          <p class="text-sm ${palette.text} leading-relaxed break-all">${this.#escapeHtml(e.message)}</p>
         </div>`;
     }
+    html += '</div>';
 
     return html;
   }

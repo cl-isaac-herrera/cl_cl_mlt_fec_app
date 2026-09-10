@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 module Sap
-  # Lee y escribe en la UDT `@CL_FEC_MAILSQUEUE`
+  # Lee y escribe en la UDT `@CL_FEC_MAILSQUEUE` —cuyos datos el Service Layer
+  # expone como el entity set `U_CL_FEC_MAILSQUEUE`, que es el nombre que
+  # guarda el catálogo (`db/seeds.rb` → `SL_RESOURCES_MAIL_QUEUE`)—
   # (`config/sap_schemas/outgoing_mails_udt.json`), el detalle del correo de
   # recepción electrónica de un documento: destinatarios, remitente y estado
   # visible en SAP. El CUERPO del correo no se guarda en ningún lado.
