@@ -44,10 +44,10 @@
       ]
     },
 
-    { "Name": "Details", "Description": "FEC · Detalle del envío o del error",
+    { "Name": "Details", "Description": "FEC · Motivo del error o de la omisión del envío",
       "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
 
-    { "Name": "Email", "Description": "FEC · Cuerpo o contenido del correo enviado",
-      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" }
+    { "Name": "Email", "Description": "FEC · Remitente con el que se envió el correo",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" }
   ]
 }

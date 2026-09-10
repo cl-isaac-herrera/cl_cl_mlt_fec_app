@@ -116,7 +116,12 @@ class SendElectronicReceiptJob < ApplicationJob
 
     Rails.logger.info("[SendElectronicReceipt] #{entry} · #{company.name} · correo enviado.")
 
-    mark_udt(company, mail_row, status: Documents::MailQueue::STATUS_SENT, email: body_html)
+    # `U_Email` es el REMITENTE, no el cuerpo: la dirección de la bandeja con la
+    # que salió el correo (`EmailConfig#email`, la misma que autentica contra el
+    # SMTP). Es lo que el reporte de correos muestra en la columna "Remitente".
+    # El cuerpo no se persiste en ningún lado, a propósito.
+    mark_udt(company, mail_row, status: Documents::MailQueue::STATUS_SENT,
+                                email: company.email_config&.email)
     mark_queue(entry, Documents::MailQueue::STATUS_SENT)
 
     :enviado

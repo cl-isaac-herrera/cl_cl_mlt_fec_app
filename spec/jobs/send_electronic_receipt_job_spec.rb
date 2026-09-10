@@ -7,8 +7,12 @@ RSpec.describe SendElectronicReceiptJob do
     Connection.create!(name: 'SAP QA', sl_url: 'https://sap.test:50000/b1s/v1/',
                        sap_license: 'licencia', sap_license_password: 'secreto')
   end
+  let(:email_config) do
+    EmailConfig.create!(email: 'bandeja@acme.test', host: 'smtp.acme.test', port: 587, password: 'secreto')
+  end
   let!(:company) do
-    Company.create!(name: 'ACME S.A.', sap_db: 'SBO_ACME', connection_id: connection.id)
+    Company.create!(name: 'ACME S.A.', sap_db: 'SBO_ACME', connection_id: connection.id,
+                    email_config_id: email_config.id)
   end
   let(:client) { instance_double(Clavisco::ServiceLayer::Client) }
   let(:mail_row) { Documents::Row.new('Code' => '7', 'U_OutputTo' => 'cliente@test.com', 'U_OutputCC' => nil) }
@@ -115,13 +119,14 @@ RSpec.describe SendElectronicReceiptJob do
       end
     end
 
-    it 'marca Enviado en la UDT y en la cola externa' do
+    it 'marca Enviado en la UDT y en la cola externa, con el remitente y sin el cuerpo' do
       queue(entry)
 
       described_class.perform_now
 
       expect(mail_queue).to have_received(:update_status)
-        .with(code: '7', status: Documents::MailQueue::STATUS_SENT, details: nil, email: anything)
+        .with(code: '7', status: Documents::MailQueue::STATUS_SENT, details: nil,
+              email: 'bandeja@acme.test')
       expect(Documents::MailQueue).to have_received(:mark)
         .with(entry, status: Documents::MailQueue::STATUS_SENT)
     end

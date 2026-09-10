@@ -89,7 +89,7 @@ RSpec.describe Sap::MailQueue do
       expect(client).to have_received(:patch).with('@CL_FEC_MAILSQUEUE(7)', anything)
     end
 
-    it 'manda el estado, la fecha del intento y el detalle o el correo enviado' do
+    it 'manda el estado, la fecha del intento y el motivo del error (sin remitente)' do
       allow(client).to receive(:patch)
 
       mail_queue.update_status(code: '7', status: 3, details: 'SMTP rechazó la conexión')
@@ -98,6 +98,18 @@ RSpec.describe Sap::MailQueue do
         'U_Status' => 3,
         'U_Details' => 'SMTP rechazó la conexión',
         'U_Email' => nil
+      ))
+    end
+
+    it 'manda en U_Email el remitente con el que salió el correo' do
+      allow(client).to receive(:patch)
+
+      mail_queue.update_status(code: '7', status: 4, email: 'bandeja@acme.test')
+
+      expect(client).to have_received(:patch).with(anything, body: hash_including(
+        'U_Status' => 4,
+        'U_Details' => nil,
+        'U_Email' => 'bandeja@acme.test'
       ))
     end
   end

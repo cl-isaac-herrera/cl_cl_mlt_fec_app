@@ -35,3 +35,4 @@ columna en todas las filas de la tabla, en cada compañía del archivo de conexi
 | Manifiesto | Qué quitó | Por qué |
 |---|---|---|
 | `oadm_company_config.json` | Los 10 UDFs `CL_FEC_*` de `OADM` | La configuración de FE de la compañía pasó a vivir en la base de la aplicación (tabla `companies`), no en SAP. |
+| `mailsqueue_email_field.json` | `Email` de `@CL_FEC_MAILSQUEUE` | **Borrar para recrear**, no una baja: el campo pasó de `db_Memo` a `db_Alpha(160)` —guarda un remitente, no el cuerpo del correo— y SAP no deja cambiar el `Type` de un UDF existente (ODBC -1029). Después de correr este manifiesto, `sap:schema:sync` lo vuelve a crear con el tipo nuevo. |

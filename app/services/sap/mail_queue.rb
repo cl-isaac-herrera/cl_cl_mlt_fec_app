@@ -3,8 +3,8 @@
 module Sap
   # Lee y escribe en la UDT `@CL_FEC_MAILSQUEUE`
   # (`config/sap_schemas/outgoing_mails_udt.json`), el detalle del correo de
-  # recepción electrónica de un documento: destinatarios, estado visible en
-  # SAP y el cuerpo que se envió.
+  # recepción electrónica de un documento: destinatarios, remitente y estado
+  # visible en SAP. El CUERPO del correo no se guarda en ningún lado.
   #
   # Es a `SendElectronicReceiptJob`/`SyncIssuedDocumentsJob` lo que
   # `Sap::DocumentStatus` es a `SyncIssuedDocumentsJob`: el detalle vive en SAP
@@ -72,10 +72,13 @@ module Sap
     end
 
     # Anota el desenlace de un intento de envío: estado, fecha del intento
-    # (`U_LastAttempt`) y, según el caso, el detalle del error o el cuerpo que
-    # se envió.
+    # (`U_LastAttempt`) y, según el caso, el motivo del error/de la omisión
+    # (`U_Details`) o el remitente con el que salió el correo (`U_Email`).
     #
     # @param status [Integer] uno de `Documents::MailQueue::STATUS_*`.
+    # @param details [String, nil] por qué falló o por qué se omitió el envío.
+    # @param email [String, nil] el REMITENTE (`EmailConfig#email`) — no el
+    #   cuerpo del correo, que no se persiste.
     def update_status(code:, status:, details: nil, email: nil)
       client.patch(Sap::ResourceQuery.path_for(UPDATE_CODE, Code: code), body: {
                      'U_Status'      => status,
