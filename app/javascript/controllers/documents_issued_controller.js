@@ -992,8 +992,8 @@ export default class extends TabulatorController {
   #openInfoModal(row) {
     this.#activeInfoDocId = row.Id;
 
-    this.infoClaveTarget.textContent        = row.Clave || '';
-    this.infoFechaEmisionTarget.textContent = this.#formatDateTime(row.FechaEmision);
+    this.infoClaveTarget.textContent = row.Clave || '';
+    this.#paintFechaEmision(row);
 
     this.infoPanelBackdropTarget.classList.remove('hidden');
     this.infoModalTarget.classList.remove('translate-x-full');
@@ -1012,6 +1012,29 @@ export default class extends TabulatorController {
     this.#loadAttempts(row);
 
     this.#loadHaciendaResponse(row);
+  }
+
+  // `U_CL_FEC_FechaEmision` la estampa la sincronización recién cuando el
+  // comprobante sale hacia Hacienda, así que viene vacía en todo documento que
+  // todavía no llegó a ese punto (Pendiente, Error, Reprocesando). Un campo en
+  // blanco ahí se lee como un dato que se perdió; el hint dice que la fecha
+  // todavía no existe porque el documento no se ha emitido.
+  //
+  // Si el estado SÍ es uno de los emitidos (3 Enviado, 6 Aceptado,
+  // 7 Rechazado — ver #statusLabel) y aun así no hay fecha, el campo queda en
+  // blanco: ahí el hint mentiría, porque el documento sí se emitió.
+  #paintFechaEmision(row) {
+    const fecha    = this.#formatDateTime(row.FechaEmision);
+    const emitido  = [3, 6, 7].includes(row.Status);
+    const mostrarHint = !fecha && !emitido;
+
+    this.infoFechaEmisionTarget.textContent = mostrarHint
+      ? '— El documento aún no se ha emitido ante Hacienda —'
+      : fecha;
+
+    this.infoFechaEmisionTarget.classList.toggle('italic',        mostrarHint);
+    this.infoFechaEmisionTarget.classList.toggle('text-gray-400', mostrarHint);
+    this.infoFechaEmisionTarget.classList.toggle('text-gray-800', !mostrarHint);
   }
 
   // "Detalles" (antes "Error interno"). Consulta `GET /api/documents/:id`
