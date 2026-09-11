@@ -90,32 +90,110 @@ RSpec.describe Documents::ReceiptMailer do
     end
   end
 
-  describe 'logo' do
-    it 'lo embebe inline cuando la compañía tiene uno legible' do
-      logo_path = Rails.root.join('tmp/receipt_mailer_spec_logo.png')
-      logo_path.write('contenido-del-logo')
-      allow_any_instance_of(Attachments::LogoStore).to receive(:readable_path).and_return(logo_path.to_s)
+  describe 'imágenes incrustadas' do
+    # Bytes que NO sobreviven a un round-trip mal codificado: el PNG de prueba
+    # lleva el rango completo 0x00–0xFF justamente para que una corrupción se
+    # note (ver el tercer ejemplo).
+    let(:png_bytes) { [137, 80, 78, 71, 13, 10, 26, 10].pack('C*') + (0..255).to_a.pack('C*') }
+    let(:logo_path) { Rails.root.join('tmp/receipt_mailer_spec_logo.png') }
 
-      message = capture_delivery do
-        described_class.new(company: company, to: 'a@test.com', body_html: '<p>hola</p>').call
+    before { logo_path.binwrite(png_bytes) }
+    after  { logo_path.delete if logo_path.exist? }
+
+    def deliver_with_logo
+      capture_delivery do
+        described_class.new(company: company, to: 'a@test.com', body_html: '<p><img src="cid:logo"></p>',
+                            inline_images: { 'logo' => logo_path.to_s }).call
       end
-
-      inline = message.attachments.find { |a| a.inline? }
-      expect(inline).not_to be_nil
-      expect(inline.body.to_s).to eq('contenido-del-logo')
-    ensure
-      logo_path.delete if logo_path.exist?
     end
 
-    it 'no agrega nada sin un logo legible' do
-      allow_any_instance_of(Attachments::LogoStore).to receive(:readable_path).and_return(nil)
+    # El defecto original: sin `content_id` explícito la gema genera uno
+    # aleatorio al serializar (`<6aa46063…@HOST.mail>`) y el `cid:logo` del HTML
+    # no le apunta a nada — el cliente muestra el ícono de imagen rota.
+    it 'le pone al adjunto el Content-ID que el HTML referencia' do
+      inline = Mail.read_from_string(deliver_with_logo.to_s).attachments.find(&:inline?)
 
+      expect(inline.content_id).to eq('<logo>')
+      expect(inline.url).to eq('cid:logo')
+    end
+
+    # Sin esto la gema deduce el tipo del nombre del adjunto y, con un nombre
+    # sin extensión, decide `text/plain`: ningún cliente pinta como imagen una
+    # parte que dice ser texto.
+    it 'declara el tipo de la imagen según su extensión' do
+      inline = Mail.read_from_string(deliver_with_logo.to_s).attachments.find(&:inline?)
+
+      expect(inline.content_type).to start_with('image/png')
+      expect(inline.inline?).to be(true)
+    end
+
+    # Fijar `content_transfer_encoding` a mano hace que la gema tome el body
+    # como si YA viniera codificado y lo decodifique: los bytes salen
+    # convertidos en basura, sin ningún error.
+    it 'preserva los bytes de la imagen intactos' do
+      inline = Mail.read_from_string(deliver_with_logo.to_s).attachments.find(&:inline?)
+
+      expect(inline.body.decoded.b).to eq(png_bytes)
+    end
+
+    # Las imágenes incrustadas tienen que quedar en un `multipart/related` junto
+    # al HTML que las referencia. Colgadas del `multipart/mixed`, al lado de los
+    # adjuntos, Outlook no resuelve los `cid:`.
+    it 'arma multipart/related con el cuerpo y la imagen adentro' do
+      message = capture_delivery do
+        described_class.new(company: company, to: 'a@test.com', body_html: '<p>hola</p>', body_text: 'hola',
+                            inline_images: { 'logo' => logo_path.to_s },
+                            attachments: [{ filename: 'x.xml', mime_type: 'application/xml', content: '<X/>' }]).call
+      end
+
+      expect(message.mime_type).to eq('multipart/mixed')
+      expect(message.parts.map(&:mime_type)).to eq(['multipart/related', 'application/xml'])
+
+      related = message.parts.first
+      expect(related.parts.map(&:mime_type)).to eq(['multipart/alternative', 'image/png'])
+      expect(related.parts.first.parts.map(&:mime_type)).to eq(['text/plain', 'text/html'])
+    end
+
+    it 'no agrega nada cuando no se le pasan imágenes' do
       message = capture_delivery do
         described_class.new(company: company, to: 'a@test.com', body_html: '<p>hola</p>').call
       end
 
       expect(message.attachments).to be_empty
     end
+  end
+
+  describe 'alternativa en texto plano' do
+    it 'agrega la parte de texto antes de la de HTML' do
+      message = capture_delivery do
+        described_class.new(company: company, to: 'a@test.com', body_html: '<p>hola</p>', body_text: 'hola').call
+      end
+
+      alternative = message.parts.first
+      expect(alternative.mime_type).to eq('multipart/alternative')
+      # El orden lo fija el RFC 2046 §5.1.4: de peor a mejor. Al revés, un
+      # cliente que entiende las dos mostraría el texto plano.
+      expect(alternative.parts.map(&:mime_type)).to eq(['text/plain', 'text/html'])
+      expect(message.text_part.body.to_s).to eq('hola')
+      expect(message.html_part.body.to_s).to eq('<p>hola</p>')
+    end
+
+    it 'manda solo HTML cuando no se le pasa texto' do
+      message = capture_delivery do
+        described_class.new(company: company, to: 'a@test.com', body_html: '<p>hola</p>').call
+      end
+
+      expect(message.all_parts.map(&:mime_type)).to eq(['text/html'])
+    end
+  end
+
+  it 'usa el asunto recibido cuando se le pasa uno' do
+    message = capture_delivery do
+      described_class.new(company: company, to: 'a@test.com', body_html: '<p>hola</p>',
+                          subject: 'Comprobante electrónico aceptado por Hacienda · 001').call
+    end
+
+    expect(message.subject).to eq('Comprobante electrónico aceptado por Hacienda · 001')
   end
 
   it 'entrega por SMTP con las credenciales de la bandeja de la compañía' do

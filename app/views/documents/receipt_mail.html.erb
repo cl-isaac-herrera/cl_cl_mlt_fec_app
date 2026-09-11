@@ -1,0 +1,201 @@
+<%#
+  Cuerpo HTML del correo de recepción electrónica. Lo renderiza
+  `Documents::ReceiptMailBody` con ERB pelado (no ActionView): no hay helpers de
+  Rails disponibles acá, solo los métodos privados de esa clase y `h`.
+
+  ── Por qué está escrito "a la antigua" ─────────────────────────────────────
+  Tablas para maquetar, estilos en línea y anchos en atributos. No es descuido:
+  Outlook de escritorio renderiza con el motor de Word, que no soporta flexbox,
+  grid, ni `max-width`, y Gmail descarta el `<style>` del `<head>` en varias de
+  sus vistas. Todo lo que tenga que verse SÍ o SÍ va en línea; el `<style>` de
+  abajo solo tiene mejoras progresivas (el ajuste a pantalla angosta).
+
+  Las imágenes van por `cid:` (adjuntos inline), no por URL: casi todo cliente
+  de correo bloquea las imágenes remotas por defecto. Qué `cid` existe lo decide
+  `ReceiptMailBody#inline_images` — si se agrega uno acá, hay que declararlo ahí.
+-%>
+<!DOCTYPE html>
+<html lang="es" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title><%= h(headline) %></title>
+<!--[if mso]>
+<noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+<![endif]-->
+<style>
+  @media only screen and (max-width: 620px) {
+    .cl-pad      { padding-left: 22px !important; padding-right: 22px !important; }
+    .cl-amount   { font-size: 26px !important; }
+    .cl-headline { font-size: 20px !important; }
+  }
+</style>
+</head>
+<body style="margin:0; padding:0; width:100%; background-color:#eef2f7;">
+
+<%# Línea de vista previa de la bandeja de entrada: se muestra junto al asunto y
+    no dentro del correo. El relleno invisible evita que Gmail la complete con
+    el primer texto del cuerpo. -%>
+<div style="display:none; font-size:1px; color:#eef2f7; line-height:1px; max-height:0; max-width:0; opacity:0; overflow:hidden;">
+  <%= h(headline) %><% if details.any? %> · <%= h(details.first.last) %><% end %>
+  <%= '&#847;&zwnj;&nbsp;' * 60 %>
+</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#eef2f7;">
+  <tr>
+    <td align="center" style="padding:28px 12px;">
+
+      <!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+             style="max-width:600px; width:100%; background-color:#ffffff; border:1px solid #e2e8f0; border-radius:14px;">
+
+        <%# ── Encabezado: el logo de la compañía, o su nombre si no tiene ── -%>
+        <tr>
+          <td class="cl-pad" style="padding:30px 34px 0 34px;">
+            <% if company_logo_path %>
+              <% size = company_logo_size -%>
+              <img src="cid:<%= h(company_logo_cid) %>" alt="<%= h(issuer) %>"
+                   <% if size %>width="<%= size[:width] %>" height="<%= size[:height] %>"<% end %>
+                   style="display:block; border:0; outline:none; text-decoration:none; max-width:200px; height:auto;">
+            <% else %>
+              <div style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:17px; font-weight:600; color:#0f172a;">
+                <%= h(issuer) %>
+              </div>
+            <% end %>
+          </td>
+        </tr>
+
+        <%# ── Estado, titular y bajada ───────────────────────────────────── -%>
+        <tr>
+          <td class="cl-pad" style="padding:26px 34px 0 34px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background-color:<%= status[:bg] %>; border-radius:999px; padding:5px 13px;
+                           font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+                           font-size:12px; font-weight:700; color:<%= status[:fg] %>; letter-spacing:0.4px; white-space:nowrap;">
+                  <%= h(status[:label].upcase) %> POR HACIENDA
+                </td>
+              </tr>
+            </table>
+
+            <h1 class="cl-headline"
+                style="margin:16px 0 0 0; font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+                       font-size:23px; line-height:30px; font-weight:600; color:#0f172a;">
+              <%= h(headline) %>
+            </h1>
+
+            <p style="margin:10px 0 0 0; font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+                      font-size:15px; line-height:23px; color:#64748b;">
+              <%= h(lead) %>
+            </p>
+          </td>
+        </tr>
+
+        <%# ── Monto: el dato que se busca primero al abrir el correo ─────── -%>
+        <% if amount %>
+        <tr>
+          <td class="cl-pad" style="padding:24px 34px 0 34px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                   style="background-color:#f8fafc; border:1px solid #e9eef5; border-radius:10px;">
+              <tr>
+                <td style="padding:16px 20px; font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+                  <div style="font-size:11px; font-weight:700; letter-spacing:0.8px; color:#94a3b8; text-transform:uppercase;">
+                    Monto del comprobante
+                  </div>
+                  <div class="cl-amount" style="margin-top:6px; font-size:29px; line-height:34px; font-weight:600; color:#0f172a;">
+                    <%= h(amount[:value]) %><% if amount[:currency].present? %><span style="font-size:14px; font-weight:600; color:#64748b;">&nbsp;<%= h(amount[:currency]) %></span><% end %>
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <% end %>
+
+        <%# ── Detalle del comprobante ────────────────────────────────────── -%>
+        <% if details.any? || clave.present? %>
+        <tr>
+          <td class="cl-pad" style="padding:24px 34px 0 34px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                   style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+              <% details.each_with_index do |(label, value), index| %>
+              <tr>
+                <td style="padding:11px 0; <%= 'border-top:1px solid #eef2f7;' if index.positive? %>
+                           font-size:13px; color:#64748b; white-space:nowrap; vertical-align:top;">
+                  <%= h(label) %>
+                </td>
+                <td align="right"
+                    style="padding:11px 0 11px 16px; <%= 'border-top:1px solid #eef2f7;' if index.positive? %>
+                           font-size:14px; font-weight:500; color:#0f172a; vertical-align:top;">
+                  <%= h(value) %>
+                </td>
+              </tr>
+              <% end %>
+
+              <%# La clave son 50 dígitos: fila propia, a lo ancho y monoespaciada,
+                  con corte por carácter para que no desborde en pantalla angosta. -%>
+              <% if clave.present? %>
+              <tr>
+                <td colspan="2" style="padding:11px 0 0 0; <%= 'border-top:1px solid #eef2f7;' if details.any? %>
+                                       font-size:13px; color:#64748b;">
+                  Clave numérica
+                </td>
+              </tr>
+              <tr>
+                <td colspan="2" style="padding:5px 0 0 0; font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+                                       font-size:13px; line-height:20px; color:#0f172a; word-break:break-all;">
+                  <%= h(clave) %>
+                </td>
+              </tr>
+              <% end %>
+            </table>
+          </td>
+        </tr>
+        <% end %>
+
+        <%# ── Nota de adjuntos ───────────────────────────────────────────── -%>
+        <% if attachments_note %>
+        <tr>
+          <td class="cl-pad" style="padding:24px 34px 0 34px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                   style="background-color:#f5f8ff; border-left:3px solid #1a56db; border-radius:0 8px 8px 0;">
+              <tr>
+                <td style="padding:13px 16px; font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+                           font-size:13px; line-height:20px; color:#3f5074;">
+                  <%= h(attachments_note) %>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <% end %>
+
+        <%# ── Pie ────────────────────────────────────────────────────────── -%>
+        <tr>
+          <td class="cl-pad" style="padding:28px 34px 0 34px;">
+            <div style="height:1px; background-color:#eef2f7; font-size:0; line-height:0;">&nbsp;</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="cl-pad" align="center" style="padding:22px 34px 30px 34px;
+                     font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            <p style="margin:0 0 16px 0; font-size:12px; line-height:18px; color:#94a3b8;">
+              Este es un mensaje automático, por favor no responda.
+            </p>
+            <img src="cid:<%= h(footer_logo_cid) %>" alt="Clavisco"
+                 width="<%= footer_logo_width %>" height="<%= footer_logo_height %>"
+                 style="display:block; margin:0 auto; border:0; outline:none; text-decoration:none;">
+          </td>
+        </tr>
+
+      </table>
+      <!--[if mso]></td></tr></table><![endif]-->
+
+    </td>
+  </tr>
+</table>
+</body>
+</html>

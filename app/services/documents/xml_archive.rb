@@ -80,6 +80,29 @@ module Documents
       Azure::BlobStorage.new.download(container: container, path: segments.join('/'))
     end
 
+    # El nombre del blob, tal como quedó guardado en Azure: `<clave>.xml` para el
+    # comprobante y `<clave>_respuesta.xml` para la respuesta de Hacienda (los
+    # arma `store_sent`/`store_response`).
+    #
+    # Es lo que `SendElectronicReceiptJob` usa para nombrar los adjuntos del
+    # correo, en vez de recomponerlos a mano: el nombre del archivo que recibe
+    # quien abre el correo es entonces EL MISMO que el del archivo archivado, y
+    # no dos convenciones que se pueden separar sin que nadie lo note.
+    #
+    # Vive acá por la misma razón que `fetch`: esta es la única clase que conoce
+    # la forma de esas URLs.
+    #
+    # @param url [String]
+    # @return [String, nil] `nil` si la URL no termina en un segmento con nombre.
+    def file_name(url)
+      # `CGI.unescape` por lo mismo que en `fetch`: los segmentos viajan
+      # codificados. Sin esto, una clave con caracteres escapados quedaría como
+      # adjunto con el `%XX` literal en el nombre.
+      name = CGI.unescape(URI.parse(url).path.split('/').last.to_s)
+
+      name.presence
+    end
+
     # "clvsfe", el mismo contenedor que usaba el legacy — es un ajuste (no una
     # constante) para poder corregirlo desde la UI sin deploy si Hacienda
     # alguna vez pidiera otro (`db/seeds.rb` lo reafirma en cada corrida).

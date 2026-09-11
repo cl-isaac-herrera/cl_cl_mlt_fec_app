@@ -15,9 +15,12 @@
 #      notificarse (`company.send_rejected_documents?` en `false`), y ahí el
 #      desenlace es `Omitido`, NO un envío ni un error (`#skip`)
 #   4. `Documents::XmlArchive.fetch`  → baja de Azure el XML enviado y el de
-#      respuesta, para adjuntarlos
-#   5. `Documents::ReceiptMailer`     → arma y envía el correo por SMTP
-#   6. `Sap::MailQueue#update_status` + `Documents::MailQueue.mark` → el
+#      respuesta, para adjuntarlos con el mismo nombre que tienen en Azure
+#      (`Documents::XmlArchive.file_name`)
+#   5. `Documents::ReceiptMailBody`   → arma el asunto y el cuerpo (HTML +
+#      texto plano), con la plantilla `app/views/documents/receipt_mail.html.erb`
+#   6. `Documents::ReceiptMailer`     → lo ensambla en MIME y lo envía por SMTP
+#   7. `Sap::MailQueue#update_status` + `Documents::MailQueue.mark` → el
 #      desenlace, en LOS DOS lados — mismo criterio que
 #      `SyncIssuedDocumentsJob`/`Documents::PendingQueue`.
 #
@@ -102,16 +105,18 @@ class SendElectronicReceiptJob < ApplicationJob
   end
 
   def send_mail(entry, company, mail_row, info)
-    body_html = receipt_body_html(entry, company, info)
-    attachments = build_attachments(info)
+    body = Documents::ReceiptMailBody.new(company: company, doc_type: entry.doc_type, info: info).call
 
     Documents::ReceiptMailer.new(
       company: company,
       to: mail_row.string('U_OutputTo'),
       cc: mail_row.string('U_OutputCC'),
       bcc: mail_row.string('U_OutputBCC'),
-      body_html: body_html,
-      attachments: attachments
+      subject: body.subject,
+      body_html: body.html,
+      body_text: body.text,
+      inline_images: body.inline_images,
+      attachments: build_attachments(info)
     ).call
 
     Rails.logger.info("[SendElectronicReceipt] #{entry} · #{company.name} · correo enviado.")
@@ -127,52 +132,22 @@ class SendElectronicReceiptJob < ApplicationJob
     :enviado
   end
 
-  # El cuerpo del correo: logo de la compañía (si tiene uno legible, ver
-  # `Documents::ReceiptMailer#embed_logo`), el nombre con el que se identifica
-  # ante el receptor (`Company#email_sender_name`, legal o comercial según
-  # `email_sender_type`) y los datos del comprobante que trajo
-  # `Sap::MailDocumentInfo`.
-  def receipt_body_html(entry, company, info)
-    total = info.decimal('DocTotal')
-    currency = info.string('DocCurrency')
-    monto = total ? "#{ActiveSupport::NumberHelper.number_to_currency(total, unit: '', precision: 2,
-                                                                              format: '%n')} #{currency}".strip : nil
-
-    <<~HTML
-      <div style="font-family: Arial, sans-serif; font-size: 14px; color: #1f2937;">
-        <p><img src="cid:logo" alt="#{ERB::Util.html_escape(company.email_sender_name)}" style="max-height: 60px;"></p>
-        <h2 style="margin: 0 0 8px;">#{ERB::Util.html_escape(company.email_sender_name)}</h2>
-        <p>Se ha procesado ante Hacienda el siguiente comprobante electrónico:</p>
-        <table cellpadding="4" cellspacing="0" style="border-collapse: collapse;">
-          <tr><td><strong>Tipo</strong></td><td>#{ERB::Util.html_escape(DocType.label(entry.doc_type))}</td></tr>
-          <tr><td><strong>Consecutivo</strong></td><td>#{ERB::Util.html_escape(info.string('U_CL_FEC_NumConsecutivo'))}</td></tr>
-          <tr><td><strong>Clave</strong></td><td>#{ERB::Util.html_escape(info.string('U_CL_FEC_Clave'))}</td></tr>
-          <tr><td><strong>Fecha de emisión</strong></td><td>#{ERB::Util.html_escape(info.string('U_CL_FEC_FechaEmision'))}</td></tr>
-          <tr><td><strong>Receptor</strong></td><td>#{ERB::Util.html_escape(info.string('CardName'))}</td></tr>
-          <tr><td><strong>Monto</strong></td><td>#{ERB::Util.html_escape(monto)}</td></tr>
-          <tr><td><strong>Estado</strong></td><td>#{ERB::Util.html_escape(status_label(info))}</td></tr>
-        </table>
-      </div>
-    HTML
-  end
-
-  def status_label(info)
-    info.integer('U_CL_FEC_Status') == Sap::MailDocumentInfo::ACCEPTED_STATUS ? 'Aceptado' : 'Rechazado'
-  end
-
   # Descarga de Azure el XML enviado y el de respuesta (`Documents::XmlArchive
   # .fetch`), para adjuntarlos — sin PDF, a propósito (ver el comentario de la
   # clase). Una URL vacía (el documento no llegó a esa etapa) simplemente no
   # aporta ese adjunto.
+  #
+  # El nombre del adjunto es el del blob (`Documents::XmlArchive.file_name`), no
+  # uno que se arme acá: así el archivo que recibe quien abre el correo se llama
+  # igual que el archivado (`<clave>.xml` y `<clave>_respuesta.xml`), y no hay
+  # dos convenciones de nombre que se puedan separar sin que nadie lo note.
   def build_attachments(info)
-    clave = info.string('U_CL_FEC_Clave')
-
-    [
-      ['U_CL_FEC_XmlSentUrl', "comprobante-#{clave}.xml"],
-      ['U_CL_FEC_XmlResponseUrl', "respuesta-#{clave}.xml"]
-    ].filter_map do |field, filename|
+    %w[U_CL_FEC_XmlSentUrl U_CL_FEC_XmlResponseUrl].filter_map do |field|
       url = info.string(field)
-      next if url.nil?
+      next if url.blank?
+
+      filename = Documents::XmlArchive.file_name(url)
+      next if filename.blank?
 
       { filename: filename, mime_type: 'application/xml', content: Documents::XmlArchive.fetch(url) }
     end

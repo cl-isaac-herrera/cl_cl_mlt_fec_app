@@ -15,15 +15,15 @@
 default: &default
   sync_issued_documents:
     class: SyncIssuedDocumentsJob
-    schedule: every 2 minutes
+    schedule: every minute
 
   check_sent_documents:
     class: CheckSentDocumentsJob
-    schedule: every 2 minutes
+    schedule: every minute
 
   send_electronic_receipt:
     class: SendElectronicReceiptJob
-    schedule: every 2 minutes
+    schedule: every minute
 
 development:
   <<: *default

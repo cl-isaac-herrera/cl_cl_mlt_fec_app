@@ -81,6 +81,33 @@ RSpec.describe Documents::XmlArchive do
     end
   end
 
+  # Las dos formas que produce `store_sent`/`store_response`. Se escriben
+  # literales y no se obtienen llamándolos porque el doble de `upload` devuelve
+  # siempre la misma URL: lo que se está probando es cómo se parte la URL, no
+  # cómo se arma.
+  describe '.file_name' do
+    it 'devuelve el nombre del blob del comprobante' do
+      expect(described_class.file_name('https://x.blob.core.windows.net/clvsfe/3101822733/506123.xml'))
+        .to eq('506123.xml')
+    end
+
+    # El de respuesta lleva guion BAJO, no guion medio: así lo nombra
+    # `store_response` y así quedó archivado en Azure.
+    it 'devuelve el nombre del blob de la respuesta de Hacienda' do
+      expect(described_class.file_name('https://x.blob.core.windows.net/clvsfe/3101822733/506123_respuesta.xml'))
+        .to eq('506123_respuesta.xml')
+    end
+
+    it 'decodifica el nombre codificado en la URL' do
+      expect(described_class.file_name('https://x.blob.core.windows.net/clvsfe/310/con%20espacio.xml'))
+        .to eq('con espacio.xml')
+    end
+
+    it 'devuelve nil cuando la URL no termina en un nombre' do
+      expect(described_class.file_name('https://x.blob.core.windows.net/')).to be_nil
+    end
+  end
+
   describe 'sin el ajuste del contenedor' do
     it 'nombra el ajuste que falta' do
       Setting.find_by!(code: 'AZURE_STORAGE_CONTAINER').update!(value: nil)

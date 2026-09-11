@@ -79,7 +79,8 @@ RSpec.describe SendElectronicReceiptJob do
       described_class.perform_now
 
       expect(Documents::ReceiptMailer).to have_received(:new)
-        .with(company: company, to: 'cliente@test.com', cc: nil, bcc: nil, body_html: anything, attachments: [])
+        .with(company: company, to: 'cliente@test.com', cc: nil, bcc: nil, subject: anything,
+              body_html: anything, body_text: anything, inline_images: anything, attachments: [])
       expect(mailer).to have_received(:call)
     end
 
@@ -89,7 +90,31 @@ RSpec.describe SendElectronicReceiptJob do
       described_class.perform_now
 
       expect(Documents::ReceiptMailer).to have_received(:new) do |**kwargs|
-        expect(kwargs[:body_html]).to include('Cliente Test', '00100001010000000001', 'ACME S.A.', 'Aceptado')
+        expect(kwargs[:body_html]).to include('Cliente Test', '00100001010000000001', 'ACME S.A.', 'ACEPTADO')
+        expect(kwargs[:body_text]).to include('Cliente Test', '00100001010000000001', 'ACME S.A.')
+      end
+    end
+
+    it 'manda el asunto con el desenlace y el consecutivo' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(Documents::ReceiptMailer).to have_received(:new) do |**kwargs|
+        expect(kwargs[:subject]).to eq('Comprobante electrónico aceptado por Hacienda · 00100001010000000001')
+      end
+    end
+
+    # El logo de la compañía solo se declara si hay un archivo legible; el del
+    # pie viaja en el repositorio, así que está siempre.
+    it 'declara el logo del pie como imagen incrustada' do
+      queue(entry)
+
+      described_class.perform_now
+
+      expect(Documents::ReceiptMailer).to have_received(:new) do |**kwargs|
+        expect(kwargs[:inline_images]).to include('clavisco-logo')
+        expect(kwargs[:inline_images]).not_to include('company-logo')
       end
     end
 
@@ -109,12 +134,13 @@ RSpec.describe SendElectronicReceiptJob do
 
       described_class.perform_now
 
+      # El nombre del adjunto es el del blob en Azure, no uno que arme el job:
+      # quien abre el correo recibe el archivo con el mismo nombre con el que
+      # quedó archivado.
       expect(Documents::ReceiptMailer).to have_received(:new) do |**kwargs|
         expect(kwargs[:attachments]).to contain_exactly(
-          { filename: "comprobante-#{document_info.string('U_CL_FEC_Clave')}.xml",
-            mime_type: 'application/xml', content: '<Factura/>' },
-          { filename: "respuesta-#{document_info.string('U_CL_FEC_Clave')}.xml",
-            mime_type: 'application/xml', content: '<MensajeHacienda/>' }
+          { filename: '506.xml', mime_type: 'application/xml', content: '<Factura/>' },
+          { filename: '506_respuesta.xml', mime_type: 'application/xml', content: '<MensajeHacienda/>' }
         )
       end
     end
