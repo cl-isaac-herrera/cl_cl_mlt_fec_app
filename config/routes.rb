@@ -140,6 +140,27 @@ Rails.application.routes.draw do
       get :assignable, on: :collection
     end
 
+    # Bandejas de correo de envío. Reemplazan `POST /api/EmailConfig/SearchEmailConfig`,
+    # `POST /api/EmailConfig/CreateEmailConfig` y `PATCH /api/EmailConfig/UpdateEmailConfig`
+    # del servidor de sincronización .NET: la búsqueda pasa a ser un GET con los
+    # filtros en la query string y el id del update pasa del cuerpo al path (§28).
+    #
+    # Sin `destroy`: una bandeja no se borra —`companies.email_config_id` la
+    # referencia con llave foránea— se da de baja con `Active: false` en el PATCH.
+    #
+    # `assignable` es la subcolección que alimenta el selector "Bandeja de correo"
+    # de la sección "Datos Generales" del formulario de compañías, con el mismo
+    # patrón que `connections/assignable`.
+    resources :email_configs, only: %i[index create update] do
+      get :assignable, on: :collection
+    end
+
+    # Prueba de una bandeja: se conecta al SMTP y manda un correo de prueba.
+    # Reemplaza `POST /api/EmailConfig/ValidateEmailConfig`. No cuelga de
+    # `/api/email_configs/:id` porque el botón también existe al crear, cuando
+    # todavía no hay id: lo que se prueba son los valores del formulario.
+    resources :email_credential_validations, only: [:create]
+
     # Consultas al Service Layer (pantalla de mantenimiento). Sin `create` ni
     # `destroy`: el catálogo lo define `db/seeds.rb`, la pantalla solo ajusta el
     # recurso y la query de las consultas que la app ya sabe consumir.

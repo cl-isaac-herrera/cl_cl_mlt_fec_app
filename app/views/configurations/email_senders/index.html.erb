@@ -1,225 +1,77 @@
 <% content_for :title, "Bandejas de emisión" %>
 <% content_for :page_title, "Bandejas de emisión" %>
 
+<%#
+  El tab "Asignación de bandejas a compañías" del Angular legacy NO está acá: la
+  bandeja de cada compañía se elige en la sección "Datos Generales" de su propio
+  formulario, al lado de la conexión de SAP. Ver el comentario de cabecera de
+  `email_senders_controller.js`.
+%>
 <div data-controller="email-senders"
      data-testid="email-senders-page"
      class="p-6 flex flex-col h-full">
 
-  <%# ── Tabs ───────────────────────────────────────────────────────────── %>
-  <div class="mb-4 flex-shrink-0 border-b border-gray-200">
-    <nav class="flex gap-1" aria-label="Tabs">
-      <button type="button"
-              data-action="click->email-senders#switchTab"
-              data-tab="config"
-              data-email-senders-target="tabConfig"
-              data-testid="tab-config"
-              class="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-blue-600 text-blue-600 bg-white transition-colors">
-        Bandeja de correos
-      </button>
-      <button type="button"
-              data-action="click->email-senders#switchTab"
-              data-tab="assignment"
-              data-email-senders-target="tabAssignment"
-              data-testid="tab-assignment"
-              class="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors">
-        Asignación de bandejas a compañías
-      </button>
-    </nav>
-  </div>
+  <%# Filtros + acción primaria %>
+  <div class="mb-4 flex-shrink-0 bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-end">
 
-  <%# ──────────────────────────────────────────────────────────────────── %>
-  <%# TAB 1: Bandeja de Correos (EmailInboxConfigComponent)               %>
-  <%# ──────────────────────────────────────────────────────────────────── %>
-  <div data-email-senders-target="panelConfig"
-       data-testid="panel-config"
-       class="flex flex-col flex-1 min-h-0">
-
-    <%# Filtros %>
-    <div class="mb-4 flex-shrink-0 bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-3 items-end">
-
-        <div class="flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">E-mail</label>
-          <input type="text"
-                 data-email-senders-target="filterEmail"
-                 data-testid="filter-email"
-                 placeholder="E-mail"
-                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        </div>
-
-        <div class="flex flex-col gap-1">
-          <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">SSL</label>
-          <select data-email-senders-target="filterSsl"
-                  data-testid="filter-ssl"
-                  class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-            <option value="2">Todos</option>
-            <option value="1">Activo</option>
-            <option value="0">Inactivo</option>
-          </select>
-        </div>
-
-        <div class="flex gap-2">
-          <button type="button"
-                  data-action="click->email-senders#searchConfig"
-                  data-testid="btn-search-config"
-                  class="flex-1 inline-flex items-center justify-center gap-1 px-4 py-2 border border-blue-600 text-blue-600 text-sm font-medium rounded-lg hover:bg-blue-50 transition-colors">
-            <span class="material-icons text-base">filter_alt</span>
-            Consultar
-          </button>
-          <span data-email-senders-target="btnCreateWrap"
-                data-tooltip="No cuenta con permisos para crear bandejas"
-                class="flex-1">
-            <button type="button"
-                    data-email-senders-target="btnCreate"
-                    data-action="click->email-senders#openCreatePanel"
-                    data-testid="btn-create-inbox"
-                    disabled
-                    class="w-full inline-flex items-center justify-center gap-1 px-4 py-2 bg-gray-300 text-gray-500 text-sm font-medium rounded-lg cursor-not-allowed pointer-events-none transition-colors">
-              <span class="material-icons text-base">add</span>
-              Nueva Bandeja
-            </button>
-          </span>
-        </div>
-
-      </div>
-    </div>
-
-    <%# Tabla %>
-    <div class="relative flex-1 min-h-0 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-      <div data-email-senders-target="tableLoader"
-           class="hidden absolute inset-0 z-10 flex items-center justify-center bg-white/60">
-        <div class="fec-table-spinner" role="status" aria-label="Cargando">
-          <svg width="40" height="40" viewBox="0 0 50 50" aria-hidden="true">
-            <circle cx="25" cy="25" r="20" fill="none" stroke="#e5e7eb" stroke-width="5"></circle>
-            <circle cx="25" cy="25" r="20" fill="none" stroke="#2563eb" stroke-width="5"
-                    stroke-linecap="round" stroke-dasharray="80 200">
-              <animateTransform attributeName="transform" attributeType="XML" type="rotate"
-                                from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"></animateTransform>
-            </circle>
-          </svg>
-        </div>
-      </div>
-      <div data-email-senders-target="table"
-           data-testid="config-table"
-           class="h-full">
-      </div>
-    </div>
-
-  </div>
-
-  <%# ──────────────────────────────────────────────────────────────────── %>
-  <%# TAB 2: Asignación de Bandejas (EmailInboxAssigmentComponent)        %>
-  <%# ──────────────────────────────────────────────────────────────────── %>
-  <div data-email-senders-target="panelAssignment"
-       data-testid="panel-assignment"
-       class="hidden flex flex-col flex-1 min-h-0">
-
-    <%# Selector de compañía %>
-    <div class="mb-4 flex-shrink-0 bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-      <div class="max-w-sm relative flex flex-col gap-1">
-        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Seleccione la compañía</label>
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Correo</label>
         <input type="text"
-               data-email-senders-target="assignCompanyInput"
-               data-action="input->email-senders#filterAssignCompanies focus->email-senders#showAssignCompanyDropdown blur->email-senders#closeAssignCompanyDropdown"
-               data-testid="assign-company-input"
-               placeholder="Digite el nombre de una compañía"
-               autocomplete="off"
+               data-email-senders-target="filterEmail"
+               data-action="keydown.enter->email-senders#search"
+               data-testid="filter-email"
+               placeholder="Correo"
                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <ul data-email-senders-target="assignCompanyDropdown"
-            class="hidden absolute z-10 w-full top-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto text-sm">
-        </ul>
-      </div>
-    </div>
-
-    <%# Panel dual estilo permisos: Disponibles | indicador | Asignadas %>
-    <div class="relative flex-1 min-h-0 bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex flex-col">
-
-      <%# Loader sobre los paneles drag&drop — visible al cargar bandejas de una compañía %>
-      <div data-email-senders-target="assignLoader"
-           data-testid="assign-loader"
-           class="hidden absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-white/60">
-        <div class="fec-table-spinner" role="status" aria-label="Cargando bandejas">
-          <svg width="40" height="40" viewBox="0 0 50 50" aria-hidden="true">
-            <circle cx="25" cy="25" r="20" fill="none" stroke="#e5e7eb" stroke-width="5"></circle>
-            <circle cx="25" cy="25" r="20" fill="none" stroke="#2563eb" stroke-width="5"
-                    stroke-linecap="round" stroke-dasharray="80 200">
-              <animateTransform attributeName="transform" attributeType="XML" type="rotate"
-                                from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"></animateTransform>
-            </circle>
-          </svg>
-        </div>
       </div>
 
-      <div class="grid grid-cols-[1fr_auto_1fr] gap-6 flex-1 min-h-0">
-
-        <%# Lista: Bandejas Disponibles %>
-        <div class="flex flex-col min-h-0">
-          <div class="flex items-center gap-3 px-4 py-3 rounded-t-lg text-white flex-shrink-0"
-               style="background: linear-gradient(135deg, #4db8e8 0%, #0082c0 100%)">
-            <span class="material-icons text-xl">mail_outline</span>
-            <h3 class="flex-1 text-sm font-medium m-0">Bandejas disponibles</h3>
-            <span data-email-senders-target="availableCount"
-                  class="bg-white/30 px-3 py-0.5 rounded-full text-xs font-bold">0</span>
-            <button type="button"
-                    data-action="click->email-senders#assignAll"
-                    data-testid="btn-assign-all"
-                    class="text-white hover:bg-white/20 rounded p-0.5 transition-colors"
-                    title="Asignar todas">
-              <span class="material-icons">chevron_right</span>
-            </button>
-          </div>
-          <div data-email-senders-target="availableList"
-               data-testid="available-list"
-               data-drop-zone="available"
-               data-action="dragover->email-senders#onDragOver dragleave->email-senders#onDragLeave drop->email-senders#onDrop"
-               class="flex-1 min-h-0 border-2 border-dashed border-gray-200 border-t-0 rounded-b-lg p-2 bg-gray-50 overflow-y-auto transition-colors">
-          </div>
-        </div>
-
-        <%# Indicador central %>
-        <div class="flex flex-col items-center justify-center gap-2 py-5 flex-shrink-0">
-          <span class="material-icons text-5xl text-gray-300">swap_horiz</span>
-          <p class="text-xs text-gray-400 text-center max-w-20">Arrastra para asignar/desasignar</p>
-        </div>
-
-        <%# Lista: Bandejas Asignadas %>
-        <div class="flex flex-col min-h-0">
-          <div class="flex items-center gap-3 px-4 py-3 rounded-t-lg text-white flex-shrink-0"
-               style="background: linear-gradient(135deg, #0082c0 0%, #005a85 100%)">
-            <button type="button"
-                    data-action="click->email-senders#removeAll"
-                    data-testid="btn-remove-all"
-                    class="text-white hover:bg-white/20 rounded p-0.5 transition-colors"
-                    title="Remover todas">
-              <span class="material-icons">chevron_left</span>
-            </button>
-            <span class="material-icons text-xl">mark_email_read</span>
-            <h3 class="flex-1 text-sm font-medium m-0">Bandejas asignadas</h3>
-            <span data-email-senders-target="assignedCount"
-                  class="bg-white/30 px-3 py-0.5 rounded-full text-xs font-bold">0</span>
-          </div>
-          <div data-email-senders-target="assignedList"
-               data-testid="assigned-list"
-               data-drop-zone="assigned"
-               data-action="dragover->email-senders#onDragOver dragleave->email-senders#onDragLeave drop->email-senders#onDrop"
-               class="flex-1 min-h-0 border-2 border-dashed border-gray-200 border-t-0 rounded-b-lg p-2 bg-gray-50 overflow-y-auto transition-colors">
-          </div>
-        </div>
-
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">SSL</label>
+        <%# "Todos" es la cadena vacía: un filtro ausente no filtra, y así no hace
+            falta el valor centinela `2` que usaba el API .NET. %>
+        <select data-email-senders-target="filterSsl"
+                data-testid="filter-ssl"
+                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+          <option value="">Todos</option>
+          <option value="true">Con SSL</option>
+          <option value="false">Sin SSL</option>
+        </select>
       </div>
 
-      <%# Guardar asignación %>
-      <div class="pt-4 border-t border-gray-100 flex justify-end mt-4 flex-shrink-0">
+      <div class="flex gap-2">
         <button type="button"
-                data-action="click->email-senders#saveAssignment"
-                data-testid="btn-save-assignment"
-                class="flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors">
-          <span class="material-icons text-base">save</span>
-          Guardar cambios
+                data-action="click->email-senders#search"
+                data-testid="btn-search-config"
+                class="flex-1 inline-flex items-center justify-center gap-1 px-4 py-2 border border-blue-600 text-blue-600 text-sm font-medium rounded-lg hover:bg-blue-50 transition-colors">
+          <span class="material-icons text-base">filter_alt</span>
+          Consultar
         </button>
+        <%# Nace deshabilitado con el motivo en el tooltip del <span>; el
+            controller lo habilita solo si hay permiso (CLAUDE.md §26). %>
+        <span data-email-senders-target="btnCreateWrap"
+              data-tooltip="No cuenta con permisos para crear bandejas de correo"
+              class="flex-1">
+          <button type="button"
+                  data-email-senders-target="btnCreate"
+                  data-action="click->email-senders#openCreatePanel"
+                  data-testid="btn-create-inbox"
+                  disabled
+                  class="w-full inline-flex items-center justify-center gap-1 px-4 py-2 bg-gray-300 text-gray-500 text-sm font-medium rounded-lg cursor-not-allowed pointer-events-none transition-colors">
+            <span class="material-icons text-base">add</span>
+            Nueva Bandeja
+          </button>
+        </span>
       </div>
-    </div>
 
+    </div>
+  </div>
+
+  <%# Tabla %>
+  <div class="flex-1 min-h-0 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+    <div data-email-senders-target="table"
+         data-testid="config-table"
+         class="h-full">
+    </div>
   </div>
 
   <%# ── Backdrop panel lateral ──────────────────────────────────────────── %>
@@ -229,13 +81,12 @@
        class="hidden fixed inset-0 z-40 bg-black/40">
   </div>
 
-  <%# ── Panel lateral crear/editar/ver bandeja ──────────────────────────── %>
+  <%# ── Panel lateral crear/editar bandeja ──────────────────────────────── %>
   <div data-email-senders-target="panel"
        data-testid="inbox-panel"
        class="fixed top-0 right-0 h-full w-full max-w-md bg-white shadow-2xl z-50
               translate-x-full transition-transform duration-300 ease-in-out flex flex-col">
 
-    <%# Header %>
     <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
       <h3 data-email-senders-target="panelTitle"
           data-testid="panel-title"
@@ -247,8 +98,11 @@
       </button>
     </div>
 
-    <%# Cuerpo scrolleable %>
-    <div class="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+    <%# Un solo `data-action` en el contenedor: cualquier campo que se agregue
+        adentro recalcula el estado de los botones sin tener que acordarse de
+        cablearlo. %>
+    <div class="flex-1 overflow-y-auto px-6 py-5 space-y-4"
+         data-action="input->email-senders#onFormChange change->email-senders#onFormChange">
 
       <%# Correo %>
       <div>
@@ -257,7 +111,6 @@
         </label>
         <input type="email"
                data-email-senders-target="inputEmail"
-               data-action="input->email-senders#onCredentialChange"
                data-testid="panel-input-email"
                placeholder="correo@ejemplo.com"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -275,9 +128,9 @@
         <div class="relative">
           <input type="password"
                  data-email-senders-target="inputPassword"
-                 data-action="input->email-senders#onCredentialChange"
                  data-testid="panel-input-password"
                  placeholder="Contraseña"
+                 autocomplete="new-password"
                  class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
           <button type="button"
                   data-action="click->email-senders#togglePassword"
@@ -287,19 +140,23 @@
         </div>
         <p data-email-senders-target="errorPassword"
            class="hidden mt-1 text-xs text-red-500">La contraseña es requerida.</p>
+        <%# La contraseña nunca vuelve del servidor, así que el campo siempre
+            carga en blanco y hay que decir qué significa dejarlo así. %>
+        <p data-email-senders-target="passwordHint"
+           class="hidden mt-1 text-xs text-gray-400">Déjelo en blanco para conservar la contraseña guardada.</p>
       </div>
 
       <%# A nombre de (SenderAddress) %>
       <div>
-        <label class="block text-xs font-medium text-gray-700 mb-1"
-               title="Correo que se mostrará como remitente en los correos enviados">
+        <label class="block text-xs font-medium text-gray-700 mb-1">
           A nombre de
         </label>
         <input type="text"
                data-email-senders-target="inputSenderAddress"
                data-testid="panel-input-sender-address"
-               placeholder="Correo que aparecerá como remitente"
+               placeholder="Nombre que verá el destinatario"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <p class="mt-1 text-xs text-gray-400">Nombre visible del remitente. En blanco se muestra el correo.</p>
       </div>
 
       <%# Host %>
@@ -309,9 +166,8 @@
         </label>
         <input type="text"
                data-email-senders-target="inputHost"
-               data-action="input->email-senders#onCredentialChange"
                data-testid="panel-input-host"
-               placeholder="Host"
+               placeholder="smtp.ejemplo.com"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         <p data-email-senders-target="errorHost"
            class="hidden mt-1 text-xs text-red-500">El host es requerido.</p>
@@ -324,45 +180,61 @@
         </label>
         <input type="number"
                data-email-senders-target="inputPort"
-               data-action="input->email-senders#onCredentialChange"
                data-testid="panel-input-port"
-               placeholder="Puerto"
+               placeholder="587"
+               min="1"
+               max="65535"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         <p data-email-senders-target="errorPort"
            class="hidden mt-1 text-xs text-red-500">El puerto es requerido.</p>
       </div>
 
-      <%# SSL checkbox %>
+      <%# SSL %>
       <div>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox"
                  data-email-senders-target="inputSsl"
-                 data-action="change->email-senders#onCredentialChange"
                  data-testid="panel-input-ssl"
+                 checked
                  class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
-          <span class="text-sm text-gray-700">SSL</span>
+          <span class="text-sm text-gray-700">Usar SSL/TLS</span>
         </label>
       </div>
 
-      <%# Correo destinatario de prueba (solo en create/edit, oculto en view) %>
-      <div data-email-senders-target="testEmailField">
+      <%# Estado — solo en edición: una bandeja nueva nace activa. %>
+      <div data-active-field class="hidden">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox"
+                 data-email-senders-target="inputActive"
+                 data-testid="panel-input-active"
+                 checked
+                 class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+          <span class="text-sm text-gray-700">Bandeja activa</span>
+        </label>
+        <p data-email-senders-target="activeHint"
+           class="hidden mt-1 text-xs text-amber-600"></p>
+      </div>
+
+      <%# Correo destinatario de la prueba %>
+      <div class="pt-2 border-t border-gray-100">
         <label class="block text-xs font-medium text-gray-700 mb-1">
-          Correo destinatario de prueba
+          Correo destinatario de prueba <span class="text-red-500">*</span>
         </label>
         <input type="email"
                data-email-senders-target="inputTestEmail"
                data-testid="panel-input-test-email"
                placeholder="correo@ejemplo.com"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p class="mt-1 text-xs text-gray-400">Se enviará un correo de prueba a esta dirección al validar.</p>
+        <p class="mt-1 text-xs text-gray-400">
+          Al probar se envía un correo real a esta dirección: es la única forma de
+          comprobar que el servidor deja salir el mensaje, y no solo que la
+          contraseña es correcta.
+        </p>
       </div>
 
     </div><%# /cuerpo %>
 
-    <%# Footer %>
-    <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 flex-shrink-0"
-         data-email-senders-target="panelFooter">
-
+    <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 flex-shrink-0">
       <button type="button"
               data-action="click->email-senders#closePanel"
               data-testid="btn-cancel-panel"
@@ -371,27 +243,29 @@
         Cancelar
       </button>
 
-      <%# Botones solo visible en create/edit %>
-      <div data-email-senders-target="panelActions" class="flex gap-3">
-        <button type="button"
-                data-action="click->email-senders#validateCredentials"
-                data-email-senders-target="btnValidate"
-                data-testid="btn-validate"
-                class="inline-flex items-center gap-1 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
-          <span data-email-senders-target="validateIcon" class="material-icons text-base">wifi_tethering</span>
-          <span data-email-senders-target="validateLabel">Probar credenciales</span>
-        </button>
+      <button type="button"
+              data-action="click->email-senders#validateCredentials"
+              data-email-senders-target="btnValidate"
+              data-testid="btn-validate"
+              class="inline-flex items-center gap-1 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        <span data-email-senders-target="validateIcon" class="material-icons text-base">wifi_tethering</span>
+        <span data-email-senders-target="validateLabel">Probar bandeja</span>
+      </button>
+
+      <%# El motivo de estar deshabilitado va en el <span>: un <button disabled>
+          no emite eventos de mouse (CLAUDE.md §2 y §26). %>
+      <span data-email-senders-target="saveBtnWrap"
+            data-tooltip="Debe probar la bandeja antes de guardarla">
         <button type="button"
                 data-action="click->email-senders#save"
                 data-email-senders-target="saveBtn"
                 data-testid="btn-save"
                 disabled
-                class="inline-flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                class="inline-flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed pointer-events-none">
           <span class="material-icons text-base">save</span>
           <span data-email-senders-target="saveLabel">Guardar</span>
         </button>
-      </div>
-
+      </span>
     </div>
 
   </div><%# /panel %>

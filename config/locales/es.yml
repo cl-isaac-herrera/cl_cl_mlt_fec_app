@@ -107,6 +107,7 @@ es:
         name: "El nombre"
         sap_db: "El código de base de SAP"
         connection_id: "La conexión de SAP"
+        email_config_id: "La bandeja de correo"
         # Bloque del emisor ante Hacienda. Sin estas claves el mensaje usa el
         # nombre de la columna humanizado y sale en inglés (§30).
         issuer_legal_name: "La razón social del emisor"
@@ -156,3 +157,5 @@ es:
         host: "El servidor"
         port: "El puerto"
         sender_address: "El nombre del remitente"
+        password: "La contraseña"
+        ssl: "El SSL"

@@ -1620,6 +1620,14 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 | `POST /api/Connections` | `POST /api/connections` |
 | `PATCH /api/Connections` (id en el cuerpo) | `PATCH /api/connections/:id` |
 | `GET /api/Connections/for-assignment` | `GET /api/connections/assignable` |
+| `POST /api/EmailConfig/SearchEmailConfig` (filtros y paginación en el cuerpo) | `GET /api/email_configs?email=&ssl=&page=&per_page=` ⚠️ buscar no crea nada: pasa a ser un GET |
+| `POST /api/EmailConfig/CreateEmailConfig` | `POST /api/email_configs` |
+| `PATCH /api/EmailConfig/UpdateEmailConfig` (id en el cuerpo) | `PATCH /api/email_configs/:id` |
+| `POST /api/EmailConfig/ValidateEmailConfig` | `POST /api/email_credential_validations` |
+| (nuevo — no existía) | `GET /api/email_configs/assignable` — selector "Bandeja de Correo" del formulario de compañías |
+| `GET /api/CompanyEmailConfig/GetEmailInboxesByCompanyId?_companyId=N` | (no se migra — no hay tabla puente, §38) |
+| `POST /api/EmailConfig/EmailInboxAssignment?_companyId=N` | `PATCH /api/companies/:id/general` con `EmailConfigId` (§38) |
+| `GET /api/EmailConfig/GetHost` | (no se migra — solo poblaba un filtro que se eliminó) |
 | `GET /api/Rol/GetRoles?companyId=N` | `GET /api/roles` |
 | `POST /api/Rol` | `POST /api/roles` |
 | `PATCH /api/Rol` (id en el cuerpo) | `PATCH /api/roles/:id` |
@@ -2587,3 +2595,72 @@ Cambiar la cuenta del servicio cambia con qué credenciales se conecta la aplica
 pantalla se vea distinta. En HANA no existe: `Config` levanta si se activa ahí.
 
 Referencia completa: **`docs/CONSULTA-BASE-EXTERNA.md`**.
+
+---
+
+## 38. Bandejas de correo — UNA por compañía, y se elige en el formulario de la compañía
+
+El SMTP desde el que sale cada correo vive en la tabla `email_configs` y cada compañía usa
+**exactamente una**, la de `companies.email_config_id`. La administración del catálogo está en
+`/configurations/email-senders`; **la asignación NO**: se elige en el select "Bandeja de Correo"
+de la sección "Datos Generales" del formulario de la compañía, al lado de "Conexión de SAP".
+
+### Por qué no es N a N, aunque el legacy lo pareciera
+
+El .NET tenía una tabla puente (`CompanyEmailConfig`) y un tab entero para llenarla, pero el
+envío resolvía la bandeja de un documento con un `FirstOrDefault`
+(`GetData.getEmailConfigs`): de las N asignadas usaba **una arbitraria** y las demás no las
+leía nadie. La columna dice lo mismo que ese código hacía, sin la ambigüedad de una pantalla
+que promete algo que el envío no cumple.
+
+> **Regla:** no volver a introducir una tabla puente compañía ↔ bandeja. Si alguna vez hiciera
+> falta más de una bandeja por compañía, primero hay que definir **qué la elige** (tipo de
+> documento, sucursal, moneda) — y eso es una columna con esa semántica, no una lista sin
+> criterio de desempate.
+
+### La bandeja es de dónde SALE el correo, no con qué nombre se firma
+
+Son dos campos distintos del mismo formulario y se confunden todo el tiempo:
+
+| Campo | Columna | Qué decide |
+|---|---|---|
+| Bandeja de Correo | `companies.email_config_id` | El servidor SMTP y la cuenta que autentica |
+| Nombre para el Envío de Correos | `companies.email_sender_type` | Si se firma con el nombre legal o el comercial |
+
+### Reglas del catálogo
+
+- **La contraseña no sale nunca del servidor.** `serialize` devuelve `HasPassword` (booleano),
+  igual que `connections.sap_license_password` (§22) y que los ajustes con `is_visible: false`
+  (§36). El campo carga siempre en blanco y el blanco significa *conservar la guardada*.
+- **Una bandeja no se borra, se da de baja** (`Active: false` en el PATCH):
+  `companies.email_config_id` la referencia con llave foránea y el borrado físico está
+  prohibido (§2.2). El listado consulta con `unscoped` para poder verlas y reactivarlas (§28).
+- **No se puede dar de baja una bandeja en uso.** `EmailConfig#not_in_use_when_deactivating` lo
+  bloquea y el mensaje nombra las compañías que hay que reasignar primero. Sin eso,
+  `Company#email_config` pasaría a `nil` por el `default_scope` y la compañía dejaría de enviar
+  sin ningún aviso — el fallo aparecería recién con el primer comprobante que no llega.
+- **El selector del formulario de compañías solo ofrece las activas**
+  (`GET /api/email_configs/assignable`), y `Company#email_config_must_be_available` rechaza del
+  lado del servidor una bandeja inactiva o inexistente. Es el mismo criterio de §28: el
+  catálogo y la escritura resuelven el mismo alcance.
+- **`email` es único entre las bandejas ACTIVAS**, no entre todas: dar de baja una tiene que
+  dejar libre su dirección para volver a cargarla. La condición va explícita en el validador y
+  no se apoya en el `default_scope`, porque la pantalla consulta con `unscoped`.
+
+### Probar una bandeja ENVÍA un correo de verdad
+
+`POST /api/email_credential_validations` no se limita a abrir la sesión SMTP: manda un mensaje
+al destinatario que indique quien configura. Autenticar prueba que la contraseña es correcta,
+pero **no que el servidor deje salir el correo** — relays que exigen que el `From` coincida con
+la cuenta, cuentas sin permiso de envío y políticas anti-spam autentican bien y rechazan el
+`MAIL FROM`/`RCPT TO`. Esos son justamente los casos que se descubrirían en producción.
+
+Por eso `EmailConfigs::CredentialValidator` distingue tres desenlaces y no dos: credenciales
+rechazadas, credenciales aceptadas con el **envío** rechazado, y servidor inalcanzable. El
+mensaje tiene que decir cuál de los tres fue, porque la acción a tomar es distinta en cada uno.
+
+Como en §22, **se prueban los valores del FORMULARIO**, no los guardados, y el botón de guardar
+queda deshabilitado hasta que la prueba pase. El estado "verificada" se invalida comparando una
+**huella** de los campos que afectan el resultado (`#fingerprint`), no escuchando cada campo:
+así un campo nuevo no se olvida de resetear el estado. La huella va con `JSON.stringify` y no
+con un `join` — cualquier separador puede aparecer dentro de una contraseña.

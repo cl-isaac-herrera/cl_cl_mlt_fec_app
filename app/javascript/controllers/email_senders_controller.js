@@ -1,109 +1,80 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
-import { Storage, SStore } from 'vendor/clavisco/core';
+import { SStore, getApiHeaders } from 'vendor/clavisco/core';
 import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
- * EmailSendersController — Gestión de bandejas de envío de correo y asignación a compañías.
+ * EmailSendersController — Bandejas de correo de envío (/configurations/email-senders).
  *
- * Replica: /emailInbox (Angular EmailInboxComponent — dos tabs)
+ * Migrado del `EmailInboxComponent` de Angular, que tenía dos tabs. Acá queda
+ * uno solo:
  *
- * TAB 1 "Bandeja de Correos" (EmailInboxConfigComponent):
- *   - Filtros: Email, SSL (2=Todos/1=Activo/0=Inactivo)
- *   - Tabla: Email, Host, Puerto, SSL, A nombre de (SenderAddress)
- *   - Acciones: Actualizar (edit panel), Visualizar (view panel — form deshabilitado)
- *   - Panel lateral: crear/editar/ver bandeja
- *     - Campos: Email*, Password* (no requerida en edit), SenderAddress, Host*, Port*, SSL
- *     - Correo destinatario de prueba (solo create/edit)
- *     - Botón "Probar credenciales" — Guardar deshabilitado hasta validar
+ *   - "Bandeja de Correos" (EmailInboxConfigComponent) → esta pantalla.
+ *   - "Asignación de Bandejas a Compañías" (EmailInboxAssigmentComponent) → se
+ *     eliminó. Asignaba N bandejas a una compañía contra la tabla puente
+ *     `CompanyEmailConfig` del .NET, pero el envío resolvía la suya con un
+ *     `FirstOrDefault`: de las N usaba una arbitraria. Acá la relación es
+ *     `companies.email_config_id` (UNA bandeja por compañía) y se elige en la
+ *     sección "Datos Generales" del formulario de compañías, al lado de la
+ *     conexión de SAP.
  *
- * TAB 2 "Asignación de Bandejas a Compañías" (EmailInboxAssigmentComponent):
- *   - Autocomplete de compañías activas
- *   - Dos columnas: Asignadas | Disponibles
- *   - Click en ítem para mover entre columnas
- *   - Remover todos / Asignar todos
- *   - Guardar cambios
+ * Endpoints (Rails nativo — ver CLAUDE.md §28):
+ *   GET   /api/email_configs?email=&ssl=&page=&per_page=
+ *   POST  /api/email_configs
+ *   PATCH /api/email_configs/:id
+ *   POST  /api/email_credential_validations
  *
- * APIs (ApiFEUrl):
- *   POST  /api/EmailConfig/SearchEmailConfig
- *   POST  /api/EmailConfig/CreateEmailConfig
- *   PATCH /api/EmailConfig/UpdateEmailConfig
- *   POST  /api/EmailConfig/ValidateEmailConfig
- *   GET   /api/CompanyEmailConfig/GetEmailInboxesByCompanyId?_companyId=X
- *   POST  /api/EmailConfig/EmailInboxAssignment?_companyId=X
- *
- * APIs (ApiAppUrl):
- *   GET   /api/Companies/GetCompanies?status=active
+ * Ninguno pasa por el proxy .NET, así que no hay header `API` ni token de
+ * `sessionStorage.currentFEUser`: la sesión va en la cookie y `getApiHeaders()`
+ * pone lo único que hace falta.
  */
 export default class extends TabulatorController {
   static targets = [
     ...TabulatorController.targets,
 
-    // Tabs
-    'tabConfig', 'tabAssignment',
-    'panelConfig', 'panelAssignment',
-
     // Toolbar
     'btnCreate', 'btnCreateWrap',
 
-    // TAB 1: Filtros
-    // NOTA: el filtro 'filterHost' se eliminó de la vista (ver TODOS.md). El campo Host
-    // se sigue enviando en SearchEmailConfig con valor por defecto hasta actualizar el API.
+    // Filtros
+    // NOTA: el filtro 'filterHost' se eliminó de la vista (ver TODOS.md). Ya no
+    // se envía nada en su lugar: `GET /api/email_configs` no lo pide.
     'filterEmail', 'filterSsl',
 
-    // TAB 1: Tabla — heredado de TabulatorController como 'table'
-    'tableLoader',
+    // Panel lateral
+    'panel', 'panelBackdrop', 'panelTitle',
+    'saveBtn', 'saveBtnWrap', 'saveLabel',
+    'btnValidate', 'validateIcon', 'validateLabel',
 
-    // Panel lateral bandeja
-    'panel', 'panelBackdrop', 'panelTitle', 'panelActions',
-    'saveBtn', 'saveLabel', 'btnValidate', 'validateIcon', 'validateLabel',
-    'testEmailField',
-
-    // Campos del formulario de bandeja
+    // Campos del formulario
     'inputEmail', 'errorEmail', 'errorEmailPattern',
-    'inputPassword', 'errorPassword', 'passwordEyeIcon', 'passwordAsterisk',
+    'inputPassword', 'errorPassword', 'passwordEyeIcon', 'passwordAsterisk', 'passwordHint',
     'inputSenderAddress',
     'inputHost', 'errorHost',
     'inputPort', 'errorPort',
     'inputSsl',
+    'inputActive', 'activeHint',
     'inputTestEmail',
-
-    // TAB 2: Asignación
-    'assignCompanyInput', 'assignCompanyDropdown',
-    'assignedList', 'availableList',
-    'assignedCount', 'availableCount',
-    'assignLoader',
   ];
 
   static values = { ...TabulatorController.values };
 
   // ── Estado ────────────────────────────────────────────────────────────────
 
-  #companyId    = null;
-  #currentTab   = 'config';
-  #permissions  = [];
+  #permissions = [];
 
-  // Tab 1
-  #totalRecords  = 0;        // total real del servidor (evita sobreestimación de Tabulator)
-  #editingRecord = null;
-  #isEdit       = false;
-  #isCredentialsValidated = false;
+  #totalRecords  = 0;        // total real del servidor (evita la sobreestimación de §17)
+  #editingRecord = null;     // null = creación
+
+  // La prueba de credenciales es requisito para guardar. `#verifiedFingerprint`
+  // guarda la huella de los valores con los que la prueba pasó: si alguno
+  // cambia, la verificación deja de valer sin tener que escuchar campo por
+  // campo (mismo patrón que `connections_controller.js`).
+  #verifiedFingerprint = null;
   #isValidating = false;
-  #credentialSnapshot = null; // null en create; objeto en edit — se compara al cambiar campos
-
-  // Tab 2
-  #companiesList    = [];          // ICompanyPaginator[]
-  #assignedInboxes  = [];          // IEmailConfig[]
-  #availableInboxes = [];          // IEmailConfig[]
-  #selectedCompanyId = 0;
-  #draggedInboxId   = null;
-  #draggedFromZone  = null;        // 'available' | 'assigned'
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   connect() {
-    const company   = SStore.get('CurrentCompany');
-    this.#companyId = company?.companyId ? parseInt(company.companyId) : null;
     this.#permissions = SStore.get('Permissions') || [];
 
     // Botón "Nueva Bandeja": habilitado solo con permiso; si no, queda
@@ -116,36 +87,42 @@ export default class extends TabulatorController {
       }
     }
 
-    super.connect();  // inicializa Tabulator; dispara ajaxRequestFunc con page=1 automáticamente
-    this.#loadCompanies();
+    // El botón de guardar del panel también vive fuera de la tabla, así que el
+    // `setupTooltip()` del base no lo cubre.
+    if (this.hasSaveBtnWrapTarget) this.#attachTooltip(this.saveBtnWrapTarget);
+
+    super.connect();  // inicializa Tabulator; dispara ajaxRequestFunc con page=1
   }
 
   // ── Configuración Tabulator ────────────────────────────────────────────────
 
   getTableConfig() {
     // Excluir 'data' y 'maxHeight' del base para que Tabulator entre en modo ajax
-    // (si 'data' key existe aunque sea undefined, Tabulator usa modo local y no muestra loader)
+    // (con la key 'data' presente, aunque sea undefined, usa modo local y no
+    // muestra el loader) y para que la tabla ocupe el alto del contenedor (§11).
     const { data: _d, maxHeight: _m, ...base } = super.getTableConfig();
     return {
       ...base,
-      height:    '100%',
+      height:      '100%',
       movableRows: false,
-      layout: 'fitColumns',
+      layout:      'fitColumns',
       placeholder: 'No hay bandejas registradas',
-      pagination: true,
+      pagination:     true,
       paginationMode: 'remote',
       paginationSize: 10,
       paginationSizeSelector: [10, 15, 25],
-      // paginationCounter custom — Tabulator calcula el total como last_page*pageSize, lo que
-      // sobreestima cuando la última página no está llena. Usamos el total real del servidor.
-      paginationCounter: (_pageSize, currentRow, _currentPage, _totalRows, _totalPages) => {
+      // Contador con el total REAL del servidor: `paginationCounter: 'rows'`
+      // calcula `last_page * pageSize` y sobreestima cuando la última página no
+      // está llena (CLAUDE.md §17).
+      paginationCounter: (pageSize, currentRow) => {
         const total = this.#totalRecords;
         if (!total) return '';
-        const to = Math.min(currentRow + _pageSize - 1, total);
+        const to = Math.min(currentRow + pageSize - 1, total);
         return `Mostrando ${currentRow.toLocaleString('es-CR')}-${to.toLocaleString('es-CR')} de ${total.toLocaleString('es-CR')} filas`;
       },
-      // ajaxURL requerido para activar modo remote; el request real lo hace ajaxRequestFunc
-      ajaxURL: '/api/EmailConfig/SearchEmailConfig',
+      // ajaxURL requerido para activar el modo remote; la petición real la hace
+      // ajaxRequestFunc.
+      ajaxURL:         '/api/email_configs',
       ajaxRequestFunc: (_url, _config, params) => this.#fetchPage(params),
       locale: TABULATOR_LOCALE,
       langs:  TABULATOR_LANGS,
@@ -157,17 +134,31 @@ export default class extends TabulatorController {
 
   getColumns() {
     return [
-      { title: 'Email',        field: 'Email',         minWidth: 180 },
+      { title: 'Correo',       field: 'Email',         minWidth: 180 },
       { title: 'Host',         field: 'Host',          minWidth: 140 },
-      { title: 'Puerto',       field: 'Port',          width: 80  },
+      { title: 'Puerto',       field: 'Port',          width: 90  },
       {
         title: 'SSL',
-        field: 'SSL',
-        width: 80,
-        formatter: (cell) => this.#statusBadge(cell.getValue() ? 'active' : 'inactive',
-          cell.getValue() ? 'Activo' : 'Inactivo'),
+        field: 'Ssl',
+        width: 90,
+        formatter: (cell) => this.#badge(cell.getValue() ? 'active' : 'inactive',
+          cell.getValue() ? 'Sí' : 'No'),
       },
       { title: 'A nombre de',  field: 'SenderAddress', minWidth: 160 },
+      {
+        // Cuántas compañías la usan: es lo que explica por qué una bandeja no se
+        // puede dar de baja, antes de que el guardado lo rechace.
+        title: 'Compañías',
+        field: 'CompaniesCount',
+        width: 110,
+        hozAlign: 'center',
+      },
+      {
+        title: 'Estado',
+        field: 'Active',
+        width: 110,
+        formatter: (cell) => this.#badge(cell.getValue() ? 'active' : 'inactive'),
+      },
       {
         title: 'Acciones',
         field: '_actions',
@@ -178,19 +169,18 @@ export default class extends TabulatorController {
         // data-tooltip va en el <span> envolvente (un <button disabled> no emite
         // eventos de mouse); el setupTooltip base (tabla) lo detecta.
         formatter: () => this.#hasPerm('Configurations_EmailInbox_Update')
-          ? `<button type="button" data-action-type="edit" data-tooltip="Actualizar"
+          ? `<button type="button" data-action-type="edit" data-tooltip="Modificar la bandeja"
                      class="p-1.5 text-blue-600 rounded hover:bg-blue-50 transition-colors cursor-pointer">
                <span class="material-icons text-base">edit</span>
              </button>`
-          : `<span data-tooltip="No cuenta con permisos para editar bandejas">
+          : `<span data-tooltip="No cuenta con permisos para editar bandejas de correo">
                <button type="button" disabled
                        class="p-1.5 text-gray-300 rounded cursor-not-allowed pointer-events-none">
                  <span class="material-icons text-base">edit</span>
                </button>
              </span>`,
-        cellClick: (_e, cell) => {
-          const btn = _e.target.closest('[data-action-type]');
-          if (!btn) return;
+        cellClick: (event, cell) => {
+          if (!event.target.closest('[data-action-type]')) return;
           this.#openEditPanel(cell.getRow().getData());
         },
       },
@@ -199,369 +189,209 @@ export default class extends TabulatorController {
 
   // ── Acciones públicas ─────────────────────────────────────────────────────
 
-  switchTab(event) {
-    const tab = event.currentTarget.dataset.tab;
-    this.#currentTab = tab;
-
-    // Estilos de tabs
-    const activeClass   = ['border-blue-600', 'text-blue-600', 'bg-white'];
-    const inactiveClass = ['border-transparent', 'text-gray-500'];
-
-    [this.tabConfigTarget, this.tabAssignmentTarget].forEach(btn => {
-      btn.classList.remove(...activeClass, ...inactiveClass);
-      btn.classList.add(...inactiveClass);
-    });
-    event.currentTarget.classList.remove(...inactiveClass);
-    event.currentTarget.classList.add(...activeClass);
-
-    if (tab === 'config') {
-      this.panelConfigTarget.classList.remove('hidden');
-      this.panelAssignmentTarget.classList.add('hidden');
-      requestAnimationFrame(() => this.table?.redraw(true));
-    } else {
-      this.panelConfigTarget.classList.add('hidden');
-      this.panelAssignmentTarget.classList.remove('hidden');
-    }
-  }
-
-  searchConfig() {
-    // setData() recarga vía ajaxRequestFunc y vuelve a la página 1
+  /** setData() recarga vía ajaxRequestFunc y vuelve a la página 1. */
+  search() {
     this.table?.setData();
   }
 
   openCreatePanel() {
     // Defensa en profundidad: el botón se deshabilita sin permiso, pero
-    // reverificamos aquí (ver CLAUDE.md §26).
+    // reverificamos acá (CLAUDE.md §26).
     if (!this.#hasPerm('Configurations_EmailInbox_Create')) {
-      showToast('No cuenta con permisos para crear bandejas.', 'info');
+      showToast('No cuenta con permisos para crear bandejas de correo.', 'info');
       return;
     }
     this.#editingRecord = null;
-    this.#isEdit  = false;
-    this.#isCredentialsValidated = false;
-    this.#credentialSnapshot = null;
     this.#resetForm();
     this.panelTitleTarget.textContent = 'Nueva bandeja';
-    this.#setPanelMode('create');
+    this.saveLabelTarget.textContent  = 'Crear';
+    this.#applyPanelMode();
     this.#openPanel();
   }
 
   closePanel() {
-    this.#closePanel();
+    this.panelTarget.classList.add('translate-x-full');
+    this.panelBackdropTarget.classList.add('hidden');
+    document.body.style.overflow = '';
+    this.#editingRecord = null;
+    this.#verifiedFingerprint = null;
   }
 
   togglePassword() {
     const input = this.inputPasswordTarget;
-    const icon  = this.passwordEyeIconTarget;
-    input.type  = input.type === 'password' ? 'text' : 'password';
-    icon.textContent = input.type === 'password' ? 'visibility_off' : 'visibility';
+    input.type = input.type === 'password' ? 'text' : 'password';
+    this.passwordEyeIconTarget.textContent = input.type === 'password' ? 'visibility_off' : 'visibility';
+  }
+
+  /**
+   * Llamada desde `data-action="input-> change->"` del contenedor del panel.
+   * No compara campo por campo: recalcula el estado de los dos botones a partir
+   * de la huella, así que un campo nuevo no se puede olvidar de invalidar la
+   * verificación.
+   */
+  onFormChange() {
+    this.#syncValidateButton();
+    this.#syncSaveButton();
   }
 
   async validateCredentials() {
     if (this.#isValidating) return;
 
-    const testEmail = this.inputTestEmailTarget.value.trim();
-    const EMAIL_RE  = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,3}$/i;
-    if (!testEmail || !EMAIL_RE.test(testEmail)) {
-      showToast('Ingrese un correo destinatario válido para la prueba.', 'warning');
+    const blocked = this.#validateBlockedReason();
+    if (blocked) {
+      showToast(blocked, 'warning');
       return;
     }
 
-    if (!this.#validateForm()) return;
-
+    const fingerprint = this.#fingerprint();
     this.#isValidating = true;
-    this.#isCredentialsValidated = false;
-    this.#updateValidateButton(true);
-    this.saveBtnTarget.disabled = true;
+    this.#verifiedFingerprint = null;
+    this.#syncValidateButton();
+    this.#syncSaveButton();
 
     try {
-      const payload = this.#buildPayload();
-      const res = await this.#apiFetch('/api/EmailConfig/ValidateEmailConfig', {
+      const json = await this.#apiFetch('/api/email_credential_validations', {
         method: 'POST',
-        body: JSON.stringify({ EmailConfig: payload, RecipientEmail: testEmail }),
-        headers: { 'API': 'ApiFEUrl' },
+        body: JSON.stringify({
+          EmailConfigId:  this.#editingRecord?.Id ?? null,
+          Email:          this.inputEmailTarget.value.trim(),
+          Password:       this.inputPasswordTarget.value,
+          Host:           this.inputHostTarget.value.trim(),
+          Port:           this.inputPortTarget.value,
+          Ssl:            this.inputSslTarget.checked,
+          SenderAddress:  this.inputSenderAddressTarget.value.trim(),
+          RecipientEmail: this.inputTestEmailTarget.value.trim(),
+        }),
       });
 
-      // El endpoint devuelve 200 con { result: false, errorInfo: { Message } } cuando falla
-      if (res?.result === false) {
-        const msg = res?.errorInfo?.Message || 'Error al validar las credenciales.';
-        throw new Error(msg);
+      // Credenciales inválidas llegan como 200 con `Data: false` y el motivo en
+      // `Message`: no es un error de la petición, es el resultado de la prueba.
+      if (json?.Data === true) {
+        this.#verifiedFingerprint = fingerprint;
+        showToast(json.Message || 'Se envió el correo de prueba.', 'success');
+      } else {
+        showAlert({
+          type:    ALERT_TYPES.ERROR,
+          title:   'No se pudo enviar el correo de prueba',
+          message: json?.Message || 'El servidor de correo rechazó la configuración.',
+        });
       }
-
-      this.#isCredentialsValidated = true;
-      this.#credentialSnapshot = this.#getCredentialValues();
-      this.#updateValidateButton(false, true);
-      this.saveBtnTarget.disabled = false;
-      showToast('Credenciales validadas correctamente. Se envió un correo de prueba.', 'success');
     } catch (err) {
-      // El endpoint puede devolver el cuerpo JSON crudo como texto del error si responde non-2xx
-      let displayMessage = err.message || 'Error al validar las credenciales.';
-      try {
-        const parsed = JSON.parse(displayMessage);
-        if (parsed?.errorInfo?.Message)      displayMessage = parsed.errorInfo.Message;
-        else if (parsed?.Message)            displayMessage = parsed.Message;
-      } catch { /* no es JSON, usar el mensaje tal cual */ }
-
-      this.#isCredentialsValidated = false;
-      this.#updateValidateButton(false, false);
-      this.saveBtnTarget.disabled = true;
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al validar', message: displayMessage });
+      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al probar la bandeja', message: err.message });
     } finally {
       this.#isValidating = false;
+      this.#syncValidateButton();
+      this.#syncSaveButton();
     }
   }
 
   async save() {
-    if (!this.#isCredentialsValidated) {
-      showToast('Debe probar las credenciales antes de guardar.', 'warning');
+    // Defensa en profundidad: la UI ya deshabilita el botón, pero se puede
+    // manipular (CLAUDE.md §26).
+    const blocked = this.#saveBlockedReason();
+    if (blocked) {
+      showToast(blocked, 'info');
       return;
     }
-    if (!this.#validateForm()) return;
 
-    const payload = this.#buildPayload();
-    const isCreate = payload.Id === 0;
+    const isCreate = !this.#editingRecord;
+    const url    = isCreate ? '/api/email_configs' : `/api/email_configs/${this.#editingRecord.Id}`;
+    const method = isCreate ? 'POST' : 'PATCH';
 
+    this.saveBtnTarget.disabled = true;
     try {
-      if (isCreate) {
-        await this.#apiFetch('/api/EmailConfig/CreateEmailConfig', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-          headers: { 'API': 'ApiFEUrl' },
-        });
-        showToast('Bandeja registrada exitosamente.', 'success');
-      } else {
-        await this.#apiFetch('/api/EmailConfig/UpdateEmailConfig', {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
-          headers: { 'API': 'ApiFEUrl' },
-        });
-        showToast('Bandeja actualizada exitosamente.', 'success');
-      }
-      this.#closePanel();
+      const json = await this.#apiFetch(url, { method, body: JSON.stringify(this.#payload()) });
+      this.closePanel();
       this.table?.setData();
+      showToast(json.Message || 'Bandeja guardada con éxito.', 'success');
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar', message: err.message || 'No se pudo guardar la bandeja.' });
+      // Error de escritura → modal, no toast (CLAUDE.md §9).
+      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar la bandeja', message: err.message });
+      this.#syncSaveButton();
     }
   }
 
-  // Llamado por data-action="input/change->email-senders#onCredentialChange"
-  // Solo actúa en modo edición; en creación siempre se requiere validar (snapshot=null)
-  onCredentialChange() {
-    if (!this.#credentialSnapshot) return; // creación — comportamiento existente
-    const changed = JSON.stringify(this.#getCredentialValues()) !== JSON.stringify(this.#credentialSnapshot);
-    if (changed && this.#isCredentialsValidated) {
-      this.#isCredentialsValidated = false;
-      this.saveBtnTarget.disabled = true;
-      this.#updateValidateButton(false, false);
-    } else if (!changed && !this.#isCredentialsValidated) {
-      // El usuario revirtió los cambios — volver a habilitar
-      this.#isCredentialsValidated = true;
-      this.saveBtnTarget.disabled = false;
-      this.#updateValidateButton(false, true);
-    }
-  }
-
-  #getCredentialValues() {
-    return {
-      email:    this.inputEmailTarget.value.trim(),
-      password: this.inputPasswordTarget.value, // vacío en edición = sin cambio
-      host:     this.inputHostTarget.value.trim(),
-      port:     this.inputPortTarget.value,
-      ssl:      this.inputSslTarget.checked,
-    };
-  }
-
-  // ── Asignación de compañías ───────────────────────────────────────────────
-
-  filterAssignCompanies() {
-    const q = this.assignCompanyInputTarget.value.toLowerCase();
-    const filtered = this.#companiesList.filter(c =>
-      `${c.EmsrIdeNumero}-${c.EmsrNombreComercial}`.toLowerCase().includes(q)
-    );
-    this.#renderAssignCompanyDropdown(filtered);
-  }
-
-  showAssignCompanyDropdown() {
-    this.#renderAssignCompanyDropdown(this.#companiesList);
-  }
-
-  closeAssignCompanyDropdown() {
-    setTimeout(() => this.assignCompanyDropdownTarget.classList.add('hidden'), 150);
-  }
-
-  onDragOver(event) {
-    event.preventDefault();
-    event.currentTarget.classList.add('border-blue-400', 'bg-blue-50');
-  }
-
-  onDrop(event) {
-    event.preventDefault();
-    event.currentTarget.classList.remove('border-blue-400', 'bg-blue-50');
-
-    const targetZone = event.currentTarget.dataset.dropZone;
-    if (!this.#draggedInboxId || this.#draggedFromZone === targetZone) return;
-
-    const id = this.#draggedInboxId;
-
-    if (targetZone === 'assigned') {
-      const idx = this.#availableInboxes.findIndex(i => i.Id === id);
-      if (idx !== -1) this.#assignedInboxes.push(...this.#availableInboxes.splice(idx, 1));
-    } else {
-      const idx = this.#assignedInboxes.findIndex(i => i.Id === id);
-      if (idx !== -1) this.#availableInboxes.push(...this.#assignedInboxes.splice(idx, 1));
-    }
-
-    this.#draggedInboxId  = null;
-    this.#draggedFromZone = null;
-    this.#renderAssignmentLists();
-  }
-
-  onDragLeave(event) {
-    event.currentTarget.classList.remove('border-blue-400', 'bg-blue-50');
-  }
-
-  removeAll() {
-    this.#availableInboxes.push(...this.#assignedInboxes);
-    this.#assignedInboxes = [];
-    this.#renderAssignmentLists();
-  }
-
-  assignAll() {
-    this.#assignedInboxes.push(...this.#availableInboxes);
-    this.#availableInboxes = [];
-    this.#renderAssignmentLists();
-  }
-
-  async saveAssignment() {
-    if (!this.#selectedCompanyId) {
-      showToast('Seleccione una compañía antes de guardar.', 'warning');
-      return;
-    }
-    this.#showAssignLoader();
-    try {
-      await this.#apiFetch(`/api/EmailConfig/EmailInboxAssignment?_companyId=${this.#selectedCompanyId}`, {
-        method: 'POST',
-        body: JSON.stringify(this.#assignedInboxes),
-        headers: { 'API': 'ApiFEUrl' },
-      });
-      showToast('Bandejas asignadas exitosamente.', 'success');
-    } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar', message: err.message || 'No se pudieron guardar las asignaciones.' });
-    } finally {
-      this.#hideAssignLoader();
-    }
-  }
-
-  // ── Métodos privados: datos ───────────────────────────────────────────────
-
-  async #loadCompanies() {
-    try {
-      const data = await this.#apiFetch('/api/Companies/GetCompanies?status=active');
-      this.#companiesList = data.Data || [];
-    } catch (_) { /* no bloquear */ }
-  }
+  // ── Datos ─────────────────────────────────────────────────────────────────
 
   /**
-   * Función de carga remota para Tabulator.
-   * @param {Object} params  { page (1-indexed), size, ... }
+   * Carga remota para Tabulator.
+   * @param {Object} params `{ page (1-indexed), size }`
    * @returns {Promise<{data: Array, last_page: number}>}
    */
   async #fetchPage(params) {
     const page = params.page || 1;
-    const size = params.size || 5;
+    const size = params.size || 10;
 
-    const payload = {
-      Email:    this.filterEmailTarget.value.trim(),
-      // El filtro Host se eliminó de la vista — se envía vacío (= todos) por defecto.
-      // TODO (TODOS.md): quitar este campo del payload cuando el API deje de requerirlo.
-      Host:     '',
-      SSL:      this.filterSslTarget.value,
-      StartPos: page,
-      StepPos:  size,
-    };
+    const query = new URLSearchParams({ page, per_page: size });
+    const email = this.filterEmailTarget.value.trim();
+    if (email) query.set('email', email);
+    // El `<select>` de SSL usa '' para "Todos": un filtro ausente no filtra, y
+    // no hace falta el valor centinela `2` del .NET.
+    if (this.filterSslTarget.value) query.set('ssl', this.filterSslTarget.value);
 
     try {
-      const data = await this.#apiFetch('/api/EmailConfig/SearchEmailConfig', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-        headers: { 'API': 'ApiFEUrl' },
-      });
-
-      const records = data.emailConfigList || [];
-      const total   = data.maxQuantityRows ?? records[0]?.maxQuantityRows ?? 0;
+      const json = await this.#apiFetch(`/api/email_configs?${query}`);
+      const total = json.Data?.Total ?? 0;
       this.#totalRecords = total;
-      const lastPage = Math.max(1, Math.ceil(total / size));
-      return { data: records, last_page: lastPage };
+      return { data: json.Data?.Items ?? [], last_page: Math.max(1, Math.ceil(total / size)) };
     } catch (err) {
+      // Error de lectura → toast (CLAUDE.md §9).
       showToast(err.message || 'Error al buscar las bandejas.', 'error');
+      this.#totalRecords = 0;
       return { data: [], last_page: 1 };
     }
   }
 
-  async #loadInboxesByCompany(companyId) {
-    this.#selectedCompanyId = companyId;
-    this.#showAssignLoader();
-    try {
-      const data = await this.#apiFetch(
-        `/api/CompanyEmailConfig/GetEmailInboxesByCompanyId?_companyId=${companyId}`,
-        { headers: { 'API': 'ApiFEUrl' } }
-      );
-      this.#assignedInboxes  = data.ListEmailInboxesAssigned    || [];
-      this.#availableInboxes = data.ListEmailInboxesNotAssigned || [];
-      this.#renderAssignmentLists();
-    } catch (err) {
-      showToast(err.message || 'Error al obtener las bandejas de la compañía.', 'error');
-    } finally {
-      this.#hideAssignLoader();
-    }
-  }
-
-  #showAssignLoader() {
-    if (this.hasAssignLoaderTarget) this.assignLoaderTarget.classList.remove('hidden');
-  }
-
-  #hideAssignLoader() {
-    if (this.hasAssignLoaderTarget) this.assignLoaderTarget.classList.add('hidden');
-  }
-
-  // ── Métodos privados: panel lateral ──────────────────────────────────────
+  // ── Panel lateral ─────────────────────────────────────────────────────────
 
   #openEditPanel(row) {
     if (!this.#hasPerm('Configurations_EmailInbox_Update')) {
-      showToast('No cuenta con permisos para editar bandejas.', 'info');
+      showToast('No cuenta con permisos para editar bandejas de correo.', 'info');
       return;
     }
     this.#editingRecord = row;
-    this.#isEdit  = true;
-    this.#isCredentialsValidated = true; // ya validadas en el servidor — habilitar save
     this.#resetForm();
+
     this.panelTitleTarget.textContent = 'Modificar bandeja';
+    this.saveLabelTarget.textContent  = 'Modificar';
 
     this.inputEmailTarget.value         = row.Email         || '';
-    this.inputPasswordTarget.value      = '';
-    this.inputSenderAddressTarget.value = row.SenderAddress  || '';
+    this.inputSenderAddressTarget.value = row.SenderAddress || '';
     this.inputHostTarget.value          = row.Host          || '';
-    this.inputPortTarget.value          = row.Port          || '';
-    this.inputSslTarget.checked         = !!row.SSL;
+    this.inputPortTarget.value          = row.Port ?? '';
+    this.inputSslTarget.checked         = !!row.Ssl;
+    this.inputActiveTarget.checked      = row.Active !== false;
 
-    // Capturar snapshot tras poblar el form — cualquier cambio en estos campos
-    // invalida las credenciales y obliga a re-validar
-    this.#credentialSnapshot = this.#getCredentialValues();
-
-    this.#setPanelMode('edit');
+    this.#applyPanelMode();
     this.#openPanel();
   }
 
-  #setPanelMode(mode) {
-    // mode: 'create' | 'edit'
-    this.panelActionsTarget.classList.remove('hidden');
-    this.testEmailFieldTarget.classList.remove('hidden');
-    this.saveLabelTarget.textContent = mode === 'create' ? 'Crear' : 'Modificar';
-    this.passwordAsteriskTarget.classList.toggle('hidden', mode === 'edit');
-    // En edición el save ya está habilitado (credenciales ya válidas en servidor);
-    // en creación permanece deshabilitado hasta validar
-    this.saveBtnTarget.disabled = !this.#isCredentialsValidated;
-    this.#updateValidateButton(false, this.#isCredentialsValidated);
+  /**
+   * Lo que cambia entre crear y editar. Son tres cosas y todas salen del mismo
+   * lugar para que no se desincronicen:
+   *
+   *  - la contraseña deja de ser obligatoria (en blanco = conservar la guardada);
+   *  - el check "Bandeja activa" solo aparece al editar: dar de alta una bandeja
+   *    inactiva no tiene sentido, y `is_active` nace en `true`;
+   *  - el aviso de cuántas compañías la usan, que es el motivo por el que
+   *    desactivarla puede fallar.
+   */
+  #applyPanelMode() {
+    const isEdit = !!this.#editingRecord;
+
+    this.passwordAsteriskTarget.classList.toggle('hidden', isEdit);
+    this.passwordHintTarget.classList.toggle('hidden', !isEdit || !this.#editingRecord.HasPassword);
+    this.inputActiveTarget.closest('[data-active-field]').classList.toggle('hidden', !isEdit);
+
+    const inUse = isEdit ? (this.#editingRecord.CompaniesCount || 0) : 0;
+    this.activeHintTarget.classList.toggle('hidden', inUse === 0);
+    if (inUse > 0) {
+      this.activeHintTarget.textContent = inUse === 1
+        ? 'Una compañía usa esta bandeja: hay que reasignarla antes de poder desactivarla.'
+        : `${inUse} compañías usan esta bandeja: hay que reasignarlas antes de poder desactivarla.`;
+    }
+
+    this.onFormChange();
   }
 
   #openPanel() {
@@ -570,166 +400,145 @@ export default class extends TabulatorController {
     document.body.style.overflow = 'hidden';
   }
 
-  #closePanel() {
-    this.panelTarget.classList.add('translate-x-full');
-    this.panelBackdropTarget.classList.add('hidden');
-    document.body.style.overflow = '';
-    this.#editingRecord = null;
-    this.#isEdit = false;
-    this.#isCredentialsValidated = false;
-    this.#credentialSnapshot = null;
-  }
-
   #resetForm() {
-    this.inputEmailTarget.value         = '';
-    this.inputPasswordTarget.value      = '';
-    this.inputPasswordTarget.type       = 'password';
+    this.inputEmailTarget.value            = '';
+    this.inputPasswordTarget.value         = '';
+    this.inputPasswordTarget.type          = 'password';
     this.passwordEyeIconTarget.textContent = 'visibility_off';
-    this.inputSenderAddressTarget.value = '';
-    this.inputHostTarget.value          = '';
-    this.inputPortTarget.value          = '';
-    this.inputSslTarget.checked         = false;
-    this.inputTestEmailTarget.value     = '';
+    this.inputSenderAddressTarget.value    = '';
+    this.inputHostTarget.value             = '';
+    this.inputPortTarget.value             = '';
+    this.inputSslTarget.checked            = true;   // el default de la columna
+    this.inputActiveTarget.checked         = true;
+    this.inputTestEmailTarget.value        = '';
+    this.#verifiedFingerprint = null;
     this.#clearErrors();
   }
 
-  // ── Métodos privados: validación ─────────────────────────────────────────
+  // ── Validación y estado de los botones ────────────────────────────────────
 
-  #validateForm() {
-    this.#clearErrors();
-    let valid = true;
-    const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,3}$/i;
+  /**
+   * Valores de los que depende el resultado de la prueba. Se serializa con
+   * `JSON.stringify` y no con un `join`: cualquier separador puede aparecer
+   * dentro de una contraseña.
+   *
+   * El destinatario de la prueba NO entra: cambiar a quién se le manda no
+   * invalida unas credenciales que ya funcionaron.
+   */
+  #fingerprint() {
+    return JSON.stringify([
+      this.inputEmailTarget.value.trim(),
+      this.inputPasswordTarget.value,
+      this.inputHostTarget.value.trim(),
+      this.inputPortTarget.value,
+      this.inputSslTarget.checked,
+      this.inputSenderAddressTarget.value.trim(),
+    ]);
+  }
 
-    if (!this.inputEmailTarget.value.trim()) {
-      this.errorEmailTarget.classList.remove('hidden'); valid = false;
-    } else if (!EMAIL_RE.test(this.inputEmailTarget.value)) {
-      this.errorEmailPatternTarget.classList.remove('hidden'); valid = false;
+  #isVerified() {
+    return this.#verifiedFingerprint !== null && this.#verifiedFingerprint === this.#fingerprint();
+  }
+
+  /**
+   * Motivo por el que todavía no se puede PROBAR, o `null` si ya se puede. Es lo
+   * mismo que alimenta el tooltip del botón deshabilitado (§2): cada mensaje
+   * responde *¿cuándo SÍ podré usarlo?*.
+   */
+  #validateBlockedReason() {
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!this.inputEmailTarget.value.trim())            return 'Ingrese el correo de la bandeja para probarla';
+    if (!EMAIL_RE.test(this.inputEmailTarget.value.trim())) return 'El correo de la bandeja no tiene un formato válido';
+    if (!this.inputHostTarget.value.trim())             return 'Ingrese el host para probar la bandeja';
+    if (!this.inputPortTarget.value)                    return 'Ingrese el puerto para probar la bandeja';
+    // En edición la contraseña guardada sirve: en blanco significa "la que ya está".
+    if (!this.inputPasswordTarget.value && !this.#editingRecord?.HasPassword) {
+      return 'Ingrese la contraseña de la bandeja para probarla';
     }
+    if (!this.inputTestEmailTarget.value.trim())        return 'Indique el correo destinatario al que se enviará la prueba';
+    if (!EMAIL_RE.test(this.inputTestEmailTarget.value.trim())) return 'El correo destinatario de la prueba no tiene un formato válido';
 
-    const isCreate = !this.#editingRecord;
-    if (isCreate && !this.inputPasswordTarget.value) {
-      this.errorPasswordTarget.classList.remove('hidden'); valid = false;
-    }
+    return null;
+  }
 
-    if (!this.inputHostTarget.value.trim()) {
-      this.errorHostTarget.classList.remove('hidden'); valid = false;
-    }
-    if (!this.inputPortTarget.value) {
-      this.errorPortTarget.classList.remove('hidden'); valid = false;
-    }
+  /** Motivo por el que todavía no se puede GUARDAR, o `null`. */
+  #saveBlockedReason() {
+    const blocked = this.#validateBlockedReason();
+    // Mientras falten campos, el motivo de no poder guardar es el mismo que el
+    // de no poder probar — decir "pruebe las credenciales" con el host vacío
+    // manda al usuario a un botón que tampoco funciona.
+    if (blocked) return blocked;
+    if (this.#isValidating) return 'Espere a que termine la prueba de la bandeja';
+    if (!this.#isVerified()) return 'Debe probar la bandeja antes de guardarla';
 
-    if (!valid) showToast('Favor completar los espacios requeridos.', 'warning');
-    return valid;
+    return null;
+  }
+
+  #syncValidateButton() {
+    const blocked  = this.#validateBlockedReason();
+    const verified = this.#isVerified();
+
+    this.btnValidateTarget.disabled = this.#isValidating || !!blocked;
+
+    if (this.#isValidating) {
+      this.validateIconTarget.textContent  = 'hourglass_empty';
+      this.validateLabelTarget.textContent = 'Enviando prueba...';
+    } else if (verified) {
+      this.validateIconTarget.textContent  = 'check_circle';
+      this.validateLabelTarget.textContent = 'Bandeja verificada';
+    } else {
+      this.validateIconTarget.textContent  = 'wifi_tethering';
+      this.validateLabelTarget.textContent = 'Probar bandeja';
+    }
+  }
+
+  /**
+   * El botón de guardar nace deshabilitado y el motivo va en el `data-tooltip`
+   * del <span> envolvente: un `<button disabled>` no emite eventos de mouse
+   * (§2 y §26), por eso el botón lleva `pointer-events-none` mientras lo está.
+   */
+  #syncSaveButton() {
+    const blocked = this.#saveBlockedReason();
+    const btn = this.saveBtnTarget;
+
+    btn.disabled = !!blocked;
+    btn.classList.toggle('pointer-events-none', !!blocked);
+    if (this.hasSaveBtnWrapTarget) {
+      this.saveBtnWrapTarget.dataset.tooltip = blocked || 'Guardar la bandeja';
+    }
   }
 
   #clearErrors() {
     ['errorEmail', 'errorEmailPattern', 'errorPassword', 'errorHost', 'errorPort']
-      .forEach(t => { if (this[`${t}Target`]) this[`${t}Target`].classList.add('hidden'); });
+      .forEach((name) => this[`${name}Target`]?.classList.add('hidden'));
   }
 
-  #buildPayload() {
-    return {
-      Id:                          this.#editingRecord?.Id || 0,
-      Email:                       this.inputEmailTarget.value.trim(),
-      Password:                    this.inputPasswordTarget.value || '',
-      SenderAddress:               this.inputSenderAddressTarget.value.trim(),
-      Host:                        this.inputHostTarget.value.trim(),
-      Port:                        parseInt(this.inputPortTarget.value) || 0,
-      SSL:                         this.inputSslTarget.checked,
-      ActiveMailsService:          false,
-      ActiveReceptMailsService:    false,
-      LastAttemptMailsService:     new Date().toISOString(),
-      LastAttemptReceptMailsService: new Date().toISOString(),
+  /**
+   * El cuerpo del POST/PATCH: exactamente los campos que el formulario ofrece.
+   *
+   * `Password` en blanco NO se manda: para el servidor eso significa "conservar
+   * la guardada" (ver `Api::EmailConfigsController#password_param`), y mandar la
+   * cadena vacía sería pedirle que la borre.
+   *
+   * `Active` solo al editar: el check no existe al crear y `is_active` nace en
+   * `true` por el default de la columna.
+   */
+  #payload() {
+    const body = {
+      Email:         this.inputEmailTarget.value.trim(),
+      Host:          this.inputHostTarget.value.trim(),
+      Port:          this.inputPortTarget.value,
+      Ssl:           this.inputSslTarget.checked,
+      SenderAddress: this.inputSenderAddressTarget.value.trim(),
     };
+    if (this.inputPasswordTarget.value) body.Password = this.inputPasswordTarget.value;
+    if (this.#editingRecord)            body.Active   = this.inputActiveTarget.checked;
+
+    return body;
   }
 
-  // ── Métodos privados: UI helpers ─────────────────────────────────────────
-
-  #updateValidateButton(validating = false, validated = false) {
-    const icon  = this.validateIconTarget;
-    const label = this.validateLabelTarget;
-    if (validating) {
-      icon.textContent  = 'hourglass_empty';
-      label.textContent = 'Probando...';
-      this.btnValidateTarget.disabled = true;
-    } else if (validated) {
-      icon.textContent  = 'check_circle';
-      label.textContent = 'Credenciales verificadas';
-      this.btnValidateTarget.disabled = false;
-    } else {
-      icon.textContent  = 'wifi_tethering';
-      label.textContent = 'Probar credenciales';
-      this.btnValidateTarget.disabled = false;
-    }
-  }
-
-  #renderAssignCompanyDropdown(list) {
-    const dropdown = this.assignCompanyDropdownTarget;
-    dropdown.innerHTML = '';
-    if (!list.length) { dropdown.classList.add('hidden'); return; }
-
-    list.slice(0, 50).forEach(c => {
-      const li = document.createElement('li');
-      li.textContent = `${c.EmsrIdeNumero}-${c.EmsrNombreComercial}`;
-      li.className   = 'px-3 py-2 cursor-pointer hover:bg-blue-50 text-sm';
-      li.addEventListener('mousedown', () => {
-        this.assignCompanyInputTarget.value = `${c.EmsrIdeNumero}-${c.EmsrNombreComercial}`;
-        dropdown.classList.add('hidden');
-        this.#loadInboxesByCompany(c.Id);
-      });
-      dropdown.appendChild(li);
-    });
-    dropdown.classList.remove('hidden');
-  }
-
-  #renderAssignmentLists() {
-    this.assignedCountTarget.textContent  = this.#assignedInboxes.length;
-    this.availableCountTarget.textContent = this.#availableInboxes.length;
-
-    this.#renderInboxList(this.assignedListTarget,  this.#assignedInboxes,  'assigned',
-      `<div class="flex flex-col items-center justify-center h-full text-gray-400 py-10">
-         <span class="material-icons text-5xl opacity-40 mb-3">inbox</span>
-         <p class="text-xs">Sin bandejas asignadas</p>
-       </div>`);
-
-    this.#renderInboxList(this.availableListTarget, this.#availableInboxes, 'available',
-      `<div class="flex flex-col items-center justify-center h-full text-gray-400 py-10">
-         <span class="material-icons text-5xl opacity-40 mb-3">check_circle</span>
-         <p class="text-xs">Todas las bandejas están asignadas</p>
-       </div>`);
-  }
-
-  #renderInboxList(container, inboxes, zone, emptyHtml) {
-    container.innerHTML = inboxes.length ? '' : emptyHtml;
-    inboxes.forEach(inbox => {
-      const isAssigned = zone === 'assigned';
-      const div = document.createElement('div');
-      div.dataset.inboxId = inbox.Id;
-      div.draggable = true;
-      div.className = [
-        'flex items-center gap-3 p-3 mb-2 bg-white border border-gray-200 rounded-lg cursor-move',
-        'transition-all hover:shadow-md hover:-translate-y-0.5',
-        isAssigned ? 'border-l-4 border-l-green-400' : '',
-      ].join(' ');
-      div.innerHTML = `
-        <div class="text-gray-400 cursor-grab flex-shrink-0">
-          <span class="material-icons text-xl">drag_indicator</span>
-        </div>
-        <div class="flex flex-col flex-1 gap-0.5 min-w-0">
-          <span class="font-medium text-gray-800 text-sm truncate">${inbox.Email}</span>
-          <span class="text-xs text-gray-400">#${inbox.Id}</span>
-        </div>`;
-      div.addEventListener('dragstart', () => {
-        this.#draggedInboxId  = inbox.Id;
-        this.#draggedFromZone = zone;
-        div.classList.add('opacity-50');
-      });
-      div.addEventListener('dragend', () => {
-        div.classList.remove('opacity-50');
-      });
-      container.appendChild(div);
-    });
-  }
+  // ── UI helpers ────────────────────────────────────────────────────────────
 
   #hasPerm(name) {
     return this.#permissions.includes(name);
@@ -745,8 +554,20 @@ export default class extends TabulatorController {
     if (this.hasBtnCreateWrapTarget) this.btnCreateWrapTarget.removeAttribute('data-tooltip');
   }
 
-  // Tooltip flotante scoped a un elemento del toolbar (fuera de la tabla, que el
-  // setupTooltip base no cubre). Reposiciona dentro del viewport. Ver CLAUDE.md §25/§26.
+  #badge(status, labelOverride = null) {
+    const map = {
+      active:   { bg: '#e8f5ee', color: '#3a7d52', label: 'Activo'   },
+      inactive: { bg: '#fdecea', color: '#c0392b', label: 'Inactivo' },
+    };
+    const { bg, color, label } = map[status] ?? { bg: '#f3f4f6', color: '#4b5563', label: status };
+    return `<span style="background-color:${bg}; color:${color};"
+                 class="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide">
+      ${labelOverride ?? label}
+    </span>`;
+  }
+
+  // Tooltip flotante para un elemento fuera de la tabla, que el `setupTooltip()`
+  // base no cubre. Reposiciona dentro del viewport (CLAUDE.md §25).
   #attachTooltip(el) {
     let tip = document.getElementById('cl-tabulator-tooltip');
     if (!tip) {
@@ -773,8 +594,8 @@ export default class extends TabulatorController {
       if (left + w + margin > window.innerWidth) left = window.innerWidth - w - margin;
       if (top < margin) top = e.clientY + 18;
       if (top + h + margin > window.innerHeight) top = window.innerHeight - h - margin;
-      tip.style.left = left + 'px';
-      tip.style.top  = top + 'px';
+      tip.style.left = `${left}px`;
+      tip.style.top  = `${top}px`;
     };
 
     el.addEventListener('mouseenter', (e) => {
@@ -791,67 +612,26 @@ export default class extends TabulatorController {
     });
   }
 
-  #statusBadge(status, labelOverride = null) {
-    const map = {
-      active:   { bg: '#e8f5ee', color: '#3a7d52', label: 'Activo'   },
-      inactive: { bg: '#fdecea', color: '#c0392b', label: 'Inactivo' },
-    };
-    const { bg, color, label } = map[status] ?? { bg: '#f3f4f6', color: '#4b5563', label: status };
-    return `<span style="background-color:${bg}; color:${color};"
-                 class="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide">
-      ${labelOverride ?? label}
-    </span>`;
-  }
+  // ── Fetch ─────────────────────────────────────────────────────────────────
 
-  #showErrorModal(title, subtitle) {
-    this.errorTitleTarget.textContent    = title;
-    this.errorSubtitleTarget.textContent = subtitle;
-    this.errorModalTarget.classList.remove('hidden');
-  }
-
-  // ── Fetch helper ─────────────────────────────────────────────────────────
-
+  // Endpoints nativos: la sesión va en la cookie httpOnly, así que no se arma
+  // header `Authorization` — `getApiHeaders()` pone lo único que hace falta
+  // (CLAUDE.md §28).
   async #apiFetch(url, options = {}) {
-    const isFESync  = (options.headers?.['API'] ?? 'ApiAppUrl') === 'ApiFEUrl';
-
-    // ApiFEUrl (servidor Sync/FE) usa su propio token almacenado en sessionStorage.currentFEUser
-    // ApiAppUrl (servidor App)    usa el token principal de sesión en localStorage.Session
-    const token = isFESync
-      ? (JSON.parse(sessionStorage.getItem('currentFEUser') || '{}')?.access_token ?? null)
-      : (Storage.get('Session') || {}).access_token;
-
-    const company   = SStore.get('CurrentCompany');
-    const companyId = company?.companyId ?? this.#companyId;
-
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type':             'application/json',
-        'API':                      'ApiAppUrl',
-        'X-Skip-Error-Interceptor': 'true',
-        ...(token     ? { Authorization:   `Bearer ${token}` } : {}),
-        ...(companyId ? { 'Cl-Company-Id': String(companyId) } : {}),
+        'Accept': 'application/json',
+        ...getApiHeaders(),
         ...(options.headers || {}),
       },
     });
 
-    const clMessage = response.headers.get('cl-message');
-    const decodedMessage = clMessage ? (() => {
-      try { return decodeURIComponent(clMessage); } catch { return clMessage; }
-    })() : null;
-
     if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(decodedMessage || text || `HTTP ${response.status}`);
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.Message || `HTTP ${response.status}`);
     }
 
-    const hasBody = response.status !== 204 &&
-                    response.headers.get('content-length') !== '0' &&
-                    response.headers.get('content-type')?.includes('application/json');
-    if (!hasBody) return { Message: decodedMessage || null };
-
-    const json = await response.json();
-    if (decodedMessage && !json.Message) json.Message = decodedMessage;
-    return json;
+    return response.json();
   }
 }

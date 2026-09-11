@@ -161,9 +161,10 @@
       </div>
     </div>
 
-    <%# DB SAP %>
+    <%# Código base de datos SAP — la columna `companies.sap_db`. Es el          %>
+    <%# `CompanyDB` que el Service Layer exige para iniciar sesión (§29).        %>
     <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">DB SAP <span class="text-red-500">*</span></label>
+      <label class="text-xs font-medium text-gray-600">Código base de datos SAP <span class="text-red-500">*</span></label>
       <input type="text"
              data-company-form-target="dbSap"
              data-testid="field-db-sap"
@@ -172,20 +173,84 @@
              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
     </div>
 
+    <%# Bandeja de correo. Va DESPUÉS de la base de datos de SAP: las dos de      %>
+    <%# arriba son la conexión con SAP, esta abre el bloque de correo.            %>
+    <%# Es de dónde SALEN los correos de esta compañía (`companies.email_config_id`, %>
+    <%# el SMTP que usa `Documents::ReceiptMailer`). No confundir con "Nombre para  %>
+    <%# el Envío de Correos", que es con qué nombre se firman.                      %>
+    <%# Opcional a propósito: una compañía sin bandeja simplemente no envía          %>
+    <%# todavía; el catálogo se administra en /configurations/email-senders.        %>
+    <%# Oculto en el ALTA: la creación todavía va al `POST /api/Companies` del      %>
+    <%# .NET, que no conoce `email_config_id` — el campo se perdería en silencio.   %>
+    <%# Lo muestra `#setupMode()` solo en edición. Ver TODOS.md → Compañías.        %>
+    <div data-company-form-target="emailConfigField" class="hidden flex-col gap-1">
+      <label class="text-xs font-medium text-gray-600 flex items-center gap-1">
+        Bandeja de Correo
+        <%# El hint vive en el tooltip del ícono, no como texto bajo el campo.    %>
+        <%# `#refreshEmailConfigHint()` le reescribe el `data-tooltip` y, cuando  %>
+        <%# no hay bandeja, le cambia el ícono a `warning`: ese caso no es una    %>
+        <%# aclaración sino el motivo por el que la compañía no puede enviar.     %>
+        <span data-help
+              data-company-form-target="emailConfigHint"
+              data-tooltip="Bandeja desde la que se envían los correos de esta compañía."
+              class="material-icons text-gray-400 cursor-help flex-shrink-0"
+              style="font-size:14px; line-height:1">help_outline</span>
+      </label>
+      <select data-company-form-target="emailConfigId"
+              data-testid="field-email-config"
+              data-action="change->company-form#onFormChange"
+              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+      </select>
+    </div>
+
     <%# Checkboxes. "Utiliza Service Layer" se eliminó: este producto llega a SAP %>
     <%# únicamente por Service Layer (CLAUDE.md §29), así que el check no elegía  %>
     <%# nada.                                                                     %>
-    <div class="flex flex-col gap-3 sm:col-span-2">
-      <label class="flex items-center gap-2 cursor-pointer"
-             title="Indica si la compañía se encuentra activa o inactiva">
-        <input type="checkbox"
-               data-company-form-target="active"
-               data-testid="field-active"
-               data-action="change->company-form#onFormChange"
-               checked
-               class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500">
-        <span class="text-sm text-gray-700">Compañía activa</span>
-      </label>
+    <%# Van en DOS columnas, con la misma grilla que los campos de arriba: cada   %>
+    <%# check ocupa una celda y los dos quedan alineados en la misma fila, en vez %>
+    <%# de apilarse uno debajo del otro a lo ancho del formulario.                %>
+    <div class="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div class="flex items-center gap-1">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox"
+                 data-company-form-target="active"
+                 data-testid="field-active"
+                 data-action="change->company-form#onFormChange"
+                 checked
+                 class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500">
+          <span class="text-sm text-gray-700">Compañía activa</span>
+        </label>
+        <%# Fuera del <label> a propósito: adentro, pasar por el ícono para leer  %>
+        <%# la ayuda alcanzaría para marcar el check sin querer.                  %>
+        <span data-help
+              data-tooltip="Indica si la compañía se encuentra activa o inactiva."
+              class="material-icons text-gray-400 cursor-help flex-shrink-0"
+              style="font-size:14px; line-height:1">help_outline</span>
+      </div>
+
+      <%# Documentos rechazados por Hacienda.                                     %>
+      <%# Decide si el correo de recepción electrónica le llega al receptor       %>
+      <%# también cuando Hacienda RECHAZA el comprobante. Apagado, el job lo      %>
+      <%# marca "Omitido" y no manda nada (`Sap::MailDocumentInfo` le suma        %>
+      <%# `U_CL_FEC_Status eq 6` al $filter).                                     %>
+      <%# Oculto en el ALTA por lo mismo que "Bandeja de Correo": la creación     %>
+      <%# todavía va al `POST /api/Companies` del .NET, que no conoce la columna  %>
+      <%# — el check se vería pero no guardaría nada. Lo muestra `#setupMode()`   %>
+      <%# solo en edición. Ver TODOS.md → Compañías.                              %>
+      <div data-company-form-target="sendRejectedDocumentsField" class="hidden items-center gap-1">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox"
+                 data-company-form-target="sendRejectedDocuments"
+                 data-testid="field-send-rejected-documents"
+                 data-action="change->company-form#onFormChange"
+                 class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500">
+          <span class="text-sm text-gray-700">Enviar los documentos rechazados por Hacienda</span>
+        </label>
+        <span data-help
+              data-tooltip="Apagado, el receptor solo recibe el correo de los comprobantes aceptados."
+              class="material-icons text-gray-400 cursor-help flex-shrink-0"
+              style="font-size:14px; line-height:1">help_outline</span>
+      </div>
     </div>
 
     <%# Botón guardar sección (solo edición).                                     %>

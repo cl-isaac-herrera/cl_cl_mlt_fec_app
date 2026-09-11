@@ -23,18 +23,62 @@ Formato de cada entrada:
 
 <!-- Las entradas de cambios pendientes van debajo de esta línea -->
 
-## Bandejas de emisión — filtro de búsqueda (`/configurations/email-senders`)
+## Bandejas de emisión — endpoints migrados a Rails (`/configurations/email-senders`)
 
-- [ ] Campo `Host` — eliminado el filtro de la vista en
-      `app/views/configurations/email_senders/index.html.erb` (select `filterHost`).
-      Aún se envía en el payload del fetch de `email_senders_controller.js` (`#fetchPage`)
-      con valor por defecto `''` (= todos), porque la búsqueda sigue siendo necesaria para
-      la vista y `Host` es solo uno de sus parámetros.
-      **Pendiente API:** quitar `Host` del body una vez el endpoint
-      `POST /api/EmailConfig/SearchEmailConfig` deje de requerirlo.
+La pantalla ya no toca el .NET: `GET|POST /api/email_configs`, `PATCH /api/email_configs/:id`,
+`GET /api/email_configs/assignable` y `POST /api/email_credential_validations` son nativos y
+leen/escriben la tabla propia `email_configs`. Notas y pendientes:
 
-> Nota: `GET /api/EmailConfig/GetHost` y `#loadHosts()` se eliminaron por completo en este
-> mismo cambio — su único propósito era alimentar el dropdown de Host, así que no son deuda
+- [x] **Campo `Host` del filtro — resuelto, ya no es deuda.** Se había eliminado de la vista
+      pero seguía viajando con valor por defecto `''` porque el `POST SearchEmailConfig` del
+      .NET lo exigía. `GET /api/email_configs` acepta solo `email`, `ssl`, `page` y `per_page`,
+      así que el campo desapareció del payload junto con el endpoint viejo.
+
+- [x] **⚠️ CAMBIO DE UI: el tab "Asignación de bandejas a compañías" desapareció.** Era el
+      segundo tab de la pantalla y asignaba N bandejas a una compañía contra la tabla puente
+      `CompanyEmailConfig` del .NET. **No se migra:** el envío del legacy resolvía la bandeja de
+      un documento con un `FirstOrDefault` (`GetData.getEmailConfigs`), o sea que de las N
+      asignadas usaba una arbitraria y las demás eran adorno. En Rails la relación es
+      `companies.email_config_id` —UNA bandeja por compañía— y se elige en el select "Bandeja
+      de Correo" de la sección "Datos Generales" del formulario de la compañía, al lado de la
+      conexión de SAP. No hay nada pendiente: es la misma información, dicha sin ambigüedad y
+      en el lugar donde se administra la compañía.
+
+- [x] **⚠️ La columna `companies.email_config_id` no la escribía NADIE.** Existía desde
+      `20260907150000_add_email_config_to_companies.rb` pero ninguna pantalla la llenaba, así
+      que toda compañía quedaba con `NULL` y `Documents::ReceiptMailer` levantaba
+      `MissingConfiguration` en el primer correo. El select nuevo del formulario de compañías
+      es lo que cierra ese hueco.
+
+- [x] **La contraseña de la bandeja dejó de viajar al browser.** El `SearchEmailConfig` del
+      .NET la devolvía en cada fila del listado. Ahora es de solo escritura: la respuesta trae
+      `HasPassword` (booleano) y nada más, igual que `connections.sap_license_password` y que
+      los ajustes con `is_visible: false` (`CLAUDE.md` §36).
+
+- [ ] **La tabla `email_configs` está vacía.** Igual que `connections` y `companies`: hasta que
+      se importen los datos, el listado sale sin filas y el selector "Bandeja de Correo" del
+      formulario de compañías solo ofrece "sin bandeja asignada". La fuente es la tabla
+      `EmailConfig` del SQL Server del servidor de sincronización.
+      **Pendiente:** incluirla en la tarea de importación con el mapeo `Email → email`,
+      `Password → password`, `Host → host`, `Port → port`, `SSL → ssl`,
+      `SenderAddress → sender_address`. Dos cuidados:
+      **(1)** `password` está cifrada con ActiveRecord Encryption y `encrypts` solo actúa al
+      ESCRIBIR por el modelo — una fila insertada con SQL directo queda en texto plano y
+      `support_unencrypted_data = false` la hace levantar al leerla (`CLAUDE.md` §29). La
+      contraseña del origen viene cifrada con el esquema del .NET, así que hay que descifrarla
+      con la llave vieja y reescribirla por el modelo.
+      **(2)** `email` es único entre las bandejas activas; si el origen trae repetidos hay que
+      decidir el desempate antes de importar.
+
+- [ ] **La relación compañía → bandeja hay que derivarla al importar.** El origen la guarda en
+      la tabla puente `CompanyEmailConfig` (N a N) y el destino es una columna
+      (`companies.email_config_id`). **Pendiente:** al importar, tomar para cada compañía la
+      bandeja que el legacy realmente habría usado —la primera de su lista, que es lo que hacía
+      el `FirstOrDefault`— y registrar en el log de la importación las compañías que tenían más
+      de una, para que alguien confirme cuál corresponde.
+
+> Nota: `GET /api/EmailConfig/GetHost` y `#loadHosts()` se eliminaron por completo en un cambio
+> anterior — su único propósito era alimentar el dropdown de Host, así que no son deuda
 > pendiente (ver criterio en CLAUDE.md §24).
 
 ## Bandejas de recepción — filtro de búsqueda (`/configurations/mail-parser`)
@@ -658,6 +702,20 @@ controller en `app/controllers/api/companies/`. Faltan las tres restantes:
 
 - [ ] `PATCH .../additional` — sección "Adicional". Solo tendría `email_cc`:
       `AdditionalInformation` se eliminó por no tener consumidor.
+- [ ] **El ALTA de la compañía sigue yendo al .NET, y por eso "Bandeja de Correo" y "Enviar
+      los documentos rechazados por Hacienda" están ocultas ahí.** `POST /api/Companies`
+      (`#buildCompanyFormData`) es el único camino que queda al .NET en esta pantalla, y no
+      conoce `email_config_id` ni `send_rejected_documents`: si los campos se mostraran en el
+      alta, el usuario los llenaría y el guardado los descartaría sin ningún error.
+      `#setupMode()` los muestra solo en edición (`emailConfigField`,
+      `sendRejectedDocumentsField`).
+      **Pendiente:** al migrar `POST /api/companies`, aceptar `EmailConfigId` y
+      `SendRejectedDocuments` en el alta y quitar el `hidden` de los dos campos en
+      `_form.html.erb` junto con los `classList.remove` de `#setupMode()`. Mientras tanto se
+      configuran entrando a editar la compañía recién creada — el default de
+      `send_rejected_documents` es `false`, que es el comportamiento conservador (avisar solo
+      de lo aceptado), así que una compañía nueva no empieza a mandar correos de rechazo sin
+      que alguien lo encienda.
 - [x] `PATCH .../tax_authority` — sección "Hacienda (ATV)". Hecho. Se llamó
       `tax_authority` y no `tax_authority_credentials` porque la sección guarda además el
       certificado y su vencimiento, no solo las credenciales del ATV.

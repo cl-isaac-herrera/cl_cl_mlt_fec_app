@@ -14,12 +14,13 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
                     purchase_invoice_series: 7, default_warehouse: 'PRIN')
   end
 
-  # Las once claves de la sección. Son el contrato entre la lectura
+  # Las trece claves de la sección. Son el contrato entre la lectura
   # (`GET /api/companies/:id`) y este PATCH: si una se agrega en un lado y no en
   # el otro, el formulario muestra un campo que el guardado ignora y el usuario no
   # se entera. Los dos ejemplos de "contrato" de más abajo lo verifican.
   GENERAL_KEYS = %w[
-    Name Active ConnectionId SapDb EmailSenderType FreightType
+    Name Active SendRejectedDocuments ConnectionId EmailConfigId SapDb
+    EmailSenderType FreightType
     EmsrNombre EmsrIdeTipo EmsrIdeNumero CodigoActividad EmsrRegistroFiscal8707
   ].freeze
 
@@ -79,11 +80,12 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
   describe 'guardado' do
     before { sign_in_with('Configurations_Companies_Update') }
 
-    it 'actualiza los once campos de la sección' do
+    it 'actualiza los campos de la sección' do
       otra = Connection.create!(name: 'SAP Prod', sl_url: 'https://prod.test:50000/b1s/v1')
 
       patch_section(
-        Name: 'ACME Global', Active: false, ConnectionId: otra.id, SapDb: 'SBO_NUEVA',
+        Name: 'ACME Global', Active: false, SendRejectedDocuments: true,
+        ConnectionId: otra.id, SapDb: 'SBO_NUEVA',
         EmailSenderType: 2, FreightType: 2, EmsrNombre: 'ACME Global S.A.',
         EmsrIdeTipo: '01', EmsrIdeNumero: '123456789', CodigoActividad: '620100',
         EmsrRegistroFiscal8707: '999'
@@ -91,11 +93,25 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
 
       expect(response).to have_http_status(:ok)
       expect(acme.reload).to have_attributes(
-        name: 'ACME Global', is_active: false, connection_id: otra.id, sap_db: 'SBO_NUEVA',
+        name: 'ACME Global', is_active: false, send_rejected_documents: true,
+        connection_id: otra.id, sap_db: 'SBO_NUEVA',
         email_sender_type: 2, freight_type: 2, issuer_legal_name: 'ACME Global S.A.',
         issuer_id_type: '01', issuer_id_number: '123456789',
         economic_activity_code: '620100', tax_registry_8707: '999'
       )
+    end
+
+    # El default de la columna es `false`: avisar solo de lo aceptado. Apagar el
+    # check tiene que poder volver a ese estado, no quedarse encendido porque
+    # `false` "parece vacío".
+    it 'vuelve a excluir los rechazados al apagar el check' do
+      acme.update!(send_rejected_documents: true)
+
+      patch_section(SendRejectedDocuments: false)
+
+      expect(response).to have_http_status(:ok)
+      expect(acme.reload.send_rejected_documents).to be(false)
+      expect(body_data['SendRejectedDocuments']).to be(false)
     end
 
     it 'devuelve la sección como quedó guardada, con el mensaje' do
@@ -196,21 +212,75 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
     end
   end
 
-  # Los dos endpoints tienen que hablar de los mismos once campos. No es
+  # La bandeja de correo es de dónde SALEN los correos de la compañía
+  # (`companies.email_config_id`). Antes de este campo la columna no la escribía
+  # nadie y toda compañía quedaba sin poder enviar.
+  describe 'bandeja de correo' do
+    let(:inbox) do
+      EmailConfig.create!(email: 'ventas@acme.com', host: 'smtp.test', port: 587,
+                          password: 's3cr3t')
+    end
+
+    before { sign_in_with('Configurations_Companies_Update') }
+
+    it 'asigna la bandeja' do
+      patch_section(EmailConfigId: inbox.id)
+
+      expect(response).to have_http_status(:ok)
+      expect(acme.reload.email_config_id).to eq(inbox.id)
+      expect(body_data['EmailConfigId']).to eq(inbox.id)
+    end
+
+    # Vaciar el select ES desasignar: "sin bandeja" es un estado válido, la
+    # compañía simplemente no envía todavía.
+    it 'desasigna la bandeja con null' do
+      acme.update!(email_config: inbox)
+
+      patch_section(EmailConfigId: nil)
+
+      expect(response).to have_http_status(:ok)
+      expect(acme.reload.email_config_id).to be_nil
+    end
+
+    # Sin la validación del modelo esto sería un 500 de la llave foránea.
+    it 'rechaza una bandeja inexistente con un mensaje, no con un 500' do
+      patch_section(EmailConfigId: 999_999)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('La bandeja de correo no corresponde a una bandeja de correo activa')
+    end
+
+    # Asignar una dada de baja dejaría a la compañía sin poder enviar en
+    # silencio: `Company#email_config` devuelve nil por el default_scope.
+    it 'rechaza una bandeja dada de baja' do
+      inbox.update!(is_active: false)
+
+      patch_section(EmailConfigId: inbox.id)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(acme.reload.email_config_id).to be_nil
+    end
+  end
+
+  # Los dos endpoints tienen que hablar de los mismos trece campos. No es
   # automático —la lista de arriba se mantiene a mano— pero deja el contrato en un
   # solo lugar y falla si alguno de los dos lados deja de exponer un campo.
   describe 'contrato con la lectura' do
     before { sign_in_with('Configurations_Companies_Update') }
 
-    it 'GET /api/companies/:id devuelve las once claves de la sección' do
+    it 'GET /api/companies/:id devuelve las trece claves de la sección' do
       get "/api/companies/#{acme.id}"
 
       expect(body_data.keys).to include(*GENERAL_KEYS)
     end
 
-    it 'el PATCH acepta y devuelve esas mismas once claves' do
+    it 'el PATCH acepta y devuelve esas mismas trece claves' do
+      inbox = EmailConfig.create!(email: 'ventas@acme.com', host: 'smtp.test',
+                                  port: 587, password: 's3cr3t')
       payload = {
-        'Name' => 'ACME Global', 'Active' => true, 'ConnectionId' => sap.id,
+        'Name' => 'ACME Global', 'Active' => true, 'SendRejectedDocuments' => true,
+        'ConnectionId' => sap.id,
+        'EmailConfigId' => inbox.id,
         'SapDb' => 'SBO_NUEVA', 'EmailSenderType' => 2, 'FreightType' => 2,
         'EmsrNombre' => 'ACME Global S.A.', 'EmsrIdeTipo' => '01',
         'EmsrIdeNumero' => '123456789', 'CodigoActividad' => '620100',

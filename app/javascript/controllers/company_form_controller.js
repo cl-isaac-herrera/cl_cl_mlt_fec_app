@@ -53,8 +53,10 @@ export default class extends Controller {
     'registrofiscal8707',
     'sapConnectionId',
     'btnAddConnection',
+    'emailConfigId', 'emailConfigHint', 'emailConfigField',
     'dbSap',
     'active',
+    'sendRejectedDocuments', 'sendRejectedDocumentsField',
     'btnSaveGeneralContainer', 'btnSaveGeneral', 'btnSaveGeneralWrap',
 
     // Sección 2 - Adicional
@@ -200,6 +202,20 @@ export default class extends Controller {
       this.btnSaveSapTarget.classList.remove('hidden');
       this.btnRegisterContainerTarget.classList.add('hidden');
 
+      // "Bandeja de Correo" solo en edición: el alta todavía va al
+      // `POST /api/Companies` del .NET, que no conoce `email_config_id`, así que
+      // en el alta el select se vería pero no guardaría nada (TODOS.md →
+      // Compañías). `flex` y no `block`: el contenedor es `flex-col gap-1` como
+      // los demás campos de la grilla.
+      this.emailConfigFieldTarget.classList.remove('hidden');
+      this.emailConfigFieldTarget.classList.add('flex');
+
+      // "Enviar los documentos rechazados por Hacienda", por lo mismo: el alta
+      // del .NET no conoce `send_rejected_documents`, así que en creación el
+      // check se marcaría y el guardado lo descartaría sin error.
+      this.sendRejectedDocumentsFieldTarget.classList.remove('hidden');
+      this.sendRejectedDocumentsFieldTarget.classList.add('flex');
+
       if (this.#hasPerm('Configurations_Connections_Create')) {
         this.btnAddConnectionTarget.classList.remove('hidden');
       }
@@ -259,6 +275,12 @@ export default class extends Controller {
     this.element
       .querySelectorAll('[data-action*="triggerLogoUpload"], [data-action*="triggerPrintFormatUpload"]')
       .forEach(el => this.#attachTooltip(el));
+
+    // Los íconos de ayuda (`?`) que reemplazaron a los textos de hint debajo de
+    // los campos. Se buscan por atributo y no uno por uno: agregar un hint nuevo
+    // es poner el `<span data-help data-tooltip="…">` en la vista, sin tocar
+    // esta lista.
+    this.element.querySelectorAll('[data-help]').forEach(el => this.#attachTooltip(el));
   }
 
   /**
@@ -321,7 +343,10 @@ export default class extends Controller {
       // El .NET pedía además `GET /api/Group/GetGroups` para el select "Cuenta".
       // No se migró: no hay grupos en esta versión (CLAUDE.md §31), así que el
       // campo se eliminó junto con la consulta que lo alimentaba (§24).
-      const sapResp = await this.#apiFetch('/api/connections/assignable');
+      // Las bandejas de correo NO se piden acá: el campo está oculto en el alta
+      // (ver `#setupMode`), así que sería una consulta para un select que nadie
+      // ve.
+      const sapResp = await this.#railsFetch('/api/connections/assignable');
 
       if (sapResp.Data) this.#fillSapConnectionsSelect(sapResp.Data);
 
@@ -355,6 +380,13 @@ export default class extends Controller {
       .then(resp => { if (resp.Data) this.#fillSapConnectionsSelect(resp.Data); })
       .catch(err => showToast(`No se pudieron cargar las conexiones de SAP: ${err.message}`, 'error'));
 
+    // El select de bandejas también es de la sección general: mismo tratamiento
+    // que las conexiones, y tiene que estar poblado antes de aplicarle el valor
+    // de la compañía.
+    const inboxes = this.#railsFetch('/api/email_configs/assignable')
+      .then(resp => { if (resp.Data) this.#fillEmailConfigsSelect(resp.Data); })
+      .catch(err => showToast(`No se pudieron cargar las bandejas de correo: ${err.message}`, 'error'));
+
     const general = this.#railsFetch(`/api/companies/${companyId}`)
       .then((resp) => {
         if (!resp.Data) throw new Error(resp.Message || 'Error desconocido');
@@ -372,7 +404,7 @@ export default class extends Controller {
       // El orden importa: las conexiones tienen que estar en el <select> antes de
       // aplicarle el valor de la compañía, o el `select.value = …` no encuentra
       // la opción y queda en blanco.
-      await Promise.all([connections, general]);
+      await Promise.all([connections, inboxes, general]);
       if (this.#companyData) {
         this.#fillGeneralSection(this.#companyData);
         this.#fillAtvSection(this.#companyData);
@@ -421,7 +453,17 @@ export default class extends Controller {
     this.freightChargesTarget.value = String(data.FreightType ?? 1);
     this.activeTarget.checked       = data.Active !== false;
 
+    // `=== true` y no `!== false`: el default de la columna es `false` —avisar
+    // solo de lo aceptado—, así que la ausencia del dato tiene que dejar el
+    // check apagado, no encendido.
+    this.sendRejectedDocumentsTarget.checked = data.SendRejectedDocuments === true;
+
     if (data.ConnectionId) this.sapConnectionIdTarget.value = String(data.ConnectionId);
+
+    // Sin bandeja asignada queda en la opción vacía, que es un estado legítimo:
+    // la compañía todavía no envía correos.
+    this.emailConfigIdTarget.value = data.EmailConfigId ? String(data.EmailConfigId) : '';
+    this.#refreshEmailConfigHint();
 
     // `EmsrNombreComercial` llega en la respuesta pero no se pinta: es el mismo
     // valor que `Name`, que ya está en el campo "Nombre".
@@ -454,8 +496,10 @@ export default class extends Controller {
       nameToEmail:        this.nameToEmailTarget.value,
       freightCharges:     this.freightChargesTarget.value,
       sapConnectionId:    this.sapConnectionIdTarget.value,
+      emailConfigId:      this.emailConfigIdTarget.value,
       dbSap:              this.dbSapTarget.value.trim(),
       active:             String(this.activeTarget.checked),
+      sendRejected:       String(this.sendRejectedDocumentsTarget.checked),
     };
   }
 
@@ -785,6 +829,61 @@ export default class extends Controller {
     if (current) select.value = current;
   }
 
+  /**
+   * Bandejas de correo disponibles (`GET /api/email_configs/assignable`, solo las
+   * activas).
+   *
+   * A diferencia del select de conexiones, este SÍ lleva una opción vacía: la
+   * bandeja es opcional y "sin bandeja" es un estado válido —la compañía
+   * todavía no envía correos—, no un campo a medio llenar. Sin esa opción, abrir
+   * el formulario de una compañía sin bandeja seleccionaría la primera de la
+   * lista y el primer guardado se la asignaría sin que nadie lo pidiera.
+   */
+  #fillEmailConfigsSelect(emailConfigs) {
+    const select  = this.emailConfigIdTarget;
+    const current = select.value;
+    select.innerHTML = '<option value="">-- sin bandeja asignada --</option>';
+    emailConfigs.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = String(c.Id);
+      // La dirección es la que identifica la bandeja; el nombre visible del
+      // remitente se agrega cuando lo hay, porque dos bandejas del mismo dominio
+      // solo se distinguen por él.
+      opt.textContent = c.SenderAddress ? `${c.Email} (${c.SenderAddress})` : c.Email;
+      select.appendChild(opt);
+    });
+    if (current) select.value = current;
+    this.#refreshEmailConfigHint();
+  }
+
+  /**
+   * El ícono de ayuda del select de bandejas. El texto vive en su `data-tooltip`
+   * (lo pinta `#attachTooltip`), no debajo del campo.
+   *
+   * Sin bandeja el mensaje NO es neutro: es la explicación de por qué esa
+   * compañía no va a mandar ningún correo, que es justamente lo que nadie
+   * descubría hasta que un comprobante no llegaba
+   * (`Documents::ReceiptMailer::MissingConfiguration`). Por eso ese caso NO se
+   * queda detrás de un `?` gris —habría que pasar por encima para enterarse—:
+   * el ícono pasa a `warning` en ámbar, que se ve sin interactuar, y el tooltip
+   * explica el motivo (§26: el aviso se muestra, el detalle va en el tooltip).
+   */
+  #refreshEmailConfigHint() {
+    if (!this.hasEmailConfigHintTarget) return;
+
+    const assigned = !!this.emailConfigIdTarget.value;
+    const icon     = this.emailConfigHintTarget;
+
+    icon.dataset.tooltip = assigned
+      ? 'Bandeja desde la que se envían los correos de esta compañía.'
+      : 'Sin bandeja asignada esta compañía no puede enviar correos.';
+    // `textContent` y no una clase: en Material Icons el nombre del ícono ES el
+    // contenido del elemento (ligadura).
+    icon.textContent = assigned ? 'help_outline' : 'warning';
+    icon.classList.toggle('text-amber-600', !assigned);
+    icon.classList.toggle('text-gray-400',   assigned);
+  }
+
   #fillTaxSelect() {
     const select  = this.defaultTaxForXmlTarget;
     const current = select.value;
@@ -813,7 +912,10 @@ export default class extends Controller {
 
   // ── Acciones formulario ────────────────────────────────────────────────────
 
-  onFormChange() { this.#validateForm(); }
+  onFormChange() {
+    this.#refreshEmailConfigHint();
+    this.#validateForm();
+  }
 
   onIdentificationTypeChange() {
     this.#applyIdentificationRules(this.identificationTypeTarget.value);
@@ -1648,7 +1750,12 @@ export default class extends Controller {
     return {
       Name:                   this.nameTarget.value.trim(),
       Active:                 this.activeTarget.checked,
+      SendRejectedDocuments:  this.sendRejectedDocumentsTarget.checked,
       ConnectionId:           this.sapConnectionIdTarget.value || null,
+      // `null` y no `''`: vaciar el select ES desasignar la bandeja, y el
+      // servidor guarda NULL. La cadena vacía se convertiría en 0 y la
+      // validación la rechazaría como bandeja inexistente.
+      EmailConfigId:          this.emailConfigIdTarget.value || null,
       SapDb:                  this.dbSapTarget.value.trim(),
       EmailSenderType:        this.nameToEmailTarget.value,
       FreightType:            this.freightChargesTarget.value,

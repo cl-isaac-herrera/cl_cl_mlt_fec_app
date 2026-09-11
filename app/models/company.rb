@@ -56,6 +56,17 @@ class Company < ApplicationRecord
   # siendo una referencia válida — es la que ya tenía la compañía.
   validate :sap_connection_must_exist
 
+  # Mismo motivo que arriba: `optional: true` no valida nada cuando el id SÍ
+  # viene, y una bandeja inexistente la rechazaría la llave foránea como un 500.
+  #
+  # A diferencia de la conexión, acá NO se usa `unscoped`: asignarle a una
+  # compañía una bandeja dada de baja la dejaría sin poder enviar en silencio
+  # (`Company#email_config` devuelve `nil` por el `default_scope`). La bandeja
+  # que ya tenía asignada tampoco se puede dar de baja mientras la use
+  # (`EmailConfig#not_in_use_when_deactivating`), así que no hay forma de que una
+  # compañía guardada apunte a una inactiva.
+  validate :email_config_must_be_available
+
   # Los largos replican el `Size` que estos campos tenían como UDFs de `OADM`,
   # que es el límite con el que se venían guardando. La validación mira el texto
   # original; el `limit:` de la columna es la otra mitad (ver la migración).
@@ -148,6 +159,13 @@ class Company < ApplicationRecord
     return if Connection.unscoped.exists?(id: connection_id)
 
     errors.add(:connection_id, 'no corresponde a una conexión existente')
+  end
+
+  def email_config_must_be_available
+    return if email_config_id.blank?
+    return if EmailConfig.exists?(id: email_config_id)
+
+    errors.add(:email_config_id, 'no corresponde a una bandeja de correo activa')
   end
 
   # El texto del toast. Se arma en el servidor —y no en el JS— porque es el mismo

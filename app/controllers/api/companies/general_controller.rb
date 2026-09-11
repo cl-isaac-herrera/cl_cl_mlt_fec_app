@@ -6,8 +6,8 @@ module Api
     #
     # Es un endpoint por sección, a propósito: en la pantalla cada sección tiene
     # su propio botón "Actualizar" y su propio loader, así que a nivel de proceso
-    # también son independientes. Este PATCH escribe **solo** los once campos que
-    # nombra `general_params` y no puede tocar el certificado, el token de
+    # también son independientes. Este PATCH escribe **solo** los trece campos
+    # que nombra `general_params` y no puede tocar el certificado, el token de
     # Hacienda ni los adjuntos ni siquiera si vinieran en el cuerpo.
     #
     # Reemplaza el `PATCH /api/Companies?groupId=N&action=1` del .NET, que mandaba
@@ -47,7 +47,7 @@ module Api
         @company = find_visible_company(params[:company_id])
       end
 
-      # Los once campos de la sección, y nada más. Lo que venga de otras secciones
+      # Los trece campos de la sección, y nada más. Lo que venga de otras secciones
       # se ignora en silencio: es lo que hace que los botones sean independientes
       # de verdad y no solo en la pantalla.
       #
@@ -58,19 +58,26 @@ module Api
       # Un campo de texto que llega vacío se guarda como `NULL`, no como `''`: son
       # la misma cosa para el negocio y tener las dos representaciones obliga a
       # preguntar por ambas en cada consulta.
+      # `send_rejected_documents` decide si el correo de recepción electrónica
+      # sale también para los comprobantes que Hacienda RECHAZA. Lo lee
+      # `Sap::MailDocumentInfo`: en `false` le suma `U_CL_FEC_Status eq 6` al
+      # `$filter`, así que el job marca el documento `Omitido` en vez de mandarle
+      # el correo al receptor.
       def general_params
         attrs = {}
-        attrs[:name]                   = text(:Name)                   if params.key?(:Name)
-        attrs[:sap_db]                 = text(:SapDb)                  if params.key?(:SapDb)
-        attrs[:issuer_legal_name]      = text(:EmsrNombre)             if params.key?(:EmsrNombre)
-        attrs[:issuer_id_type]         = text(:EmsrIdeTipo)            if params.key?(:EmsrIdeTipo)
-        attrs[:issuer_id_number]       = text(:EmsrIdeNumero)          if params.key?(:EmsrIdeNumero)
-        attrs[:economic_activity_code] = text(:CodigoActividad)        if params.key?(:CodigoActividad)
-        attrs[:tax_registry_8707]      = text(:EmsrRegistroFiscal8707) if params.key?(:EmsrRegistroFiscal8707)
-        attrs[:connection_id]          = number(:ConnectionId)         if params.key?(:ConnectionId)
-        attrs[:email_sender_type]      = number(:EmailSenderType)      if params.key?(:EmailSenderType)
-        attrs[:freight_type]           = number(:FreightType)          if params.key?(:FreightType)
-        attrs[:is_active]              = boolean(:Active)              if params.key?(:Active)
+        attrs[:name]                    = text(:Name)                   if params.key?(:Name)
+        attrs[:sap_db]                  = text(:SapDb)                  if params.key?(:SapDb)
+        attrs[:issuer_legal_name]       = text(:EmsrNombre)             if params.key?(:EmsrNombre)
+        attrs[:issuer_id_type]          = text(:EmsrIdeTipo)            if params.key?(:EmsrIdeTipo)
+        attrs[:issuer_id_number]        = text(:EmsrIdeNumero)          if params.key?(:EmsrIdeNumero)
+        attrs[:economic_activity_code]  = text(:CodigoActividad)        if params.key?(:CodigoActividad)
+        attrs[:tax_registry_8707]       = text(:EmsrRegistroFiscal8707) if params.key?(:EmsrRegistroFiscal8707)
+        attrs[:connection_id]           = number(:ConnectionId)         if params.key?(:ConnectionId)
+        attrs[:email_config_id]         = number(:EmailConfigId)        if params.key?(:EmailConfigId)
+        attrs[:email_sender_type]       = number(:EmailSenderType)      if params.key?(:EmailSenderType)
+        attrs[:freight_type]            = number(:FreightType)          if params.key?(:FreightType)
+        attrs[:is_active]               = boolean(:Active)              if params.key?(:Active)
+        attrs[:send_rejected_documents] = boolean(:SendRejectedDocuments) if params.key?(:SendRejectedDocuments)
         attrs
       end
 
@@ -83,7 +90,7 @@ module Api
       # necesita el estado real para volver a marcar la sección como "sin
       # cambios".
       #
-      # ⚠️ Estas once claves tienen que ser las mismas que devuelve
+      # ⚠️ Estas trece claves tienen que ser las mismas que devuelve
       # `Api::CompaniesController#serialize_detail` para esta sección. Si una se
       # agrega en un lado y no en el otro, el formulario muestra un campo que este
       # PATCH ignora: el usuario lo edita, guarda, y no pasa nada — sin error.
@@ -92,7 +99,9 @@ module Api
         {
           Name:                   company.name,
           Active:                 company.is_active,
+          SendRejectedDocuments:  company.send_rejected_documents,
           ConnectionId:           company.connection_id,
+          EmailConfigId:          company.email_config_id,
           SapDb:                  company.sap_db,
           EmailSenderType:        company.email_sender_type,
           FreightType:            company.freight_type,

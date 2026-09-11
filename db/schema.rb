@@ -63,13 +63,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_10_160000) do
 
   create_table "email_configs", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.string "created_by"
     t.string "email", limit: 160, null: false
     t.string "host", limit: 50, null: false
+    t.boolean "is_active", default: true, null: false
     t.text "password"
     t.integer "port", null: false
     t.string "sender_address", limit: 160
     t.boolean "ssl", default: true, null: false
     t.datetime "updated_at", null: false
+    t.string "updated_by"
   end
 
   create_table "permissions", force: :cascade do |t|

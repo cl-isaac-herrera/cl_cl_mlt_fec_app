@@ -150,6 +150,7 @@ module Api
       serialize(company).merge(
         # ── Sección "Datos Generales" ────────────────────────────────────────
         ConnectionId:           company.connection_id,
+        EmailConfigId:          company.email_config_id,
         SapDb:                  company.sap_db,
         EmailSenderType:        company.email_sender_type,
         FreightType:            company.freight_type,
@@ -158,6 +159,10 @@ module Api
         EmsrIdeNumero:          company.issuer_id_number,
         CodigoActividad:        company.economic_activity_code,
         EmsrRegistroFiscal8707: company.tax_registry_8707,
+
+        # ¿El correo de recepción electrónica sale también para lo que Hacienda
+        # RECHAZA? Lo evalúa `Sap::MailDocumentInfo` al armar el `$filter`.
+        SendRejectedDocuments:  company.send_rejected_documents,
 
         # El nombre comercial ES `name`: no hay columna aparte, a propósito.
         EmsrNombreComercial: company.name,
