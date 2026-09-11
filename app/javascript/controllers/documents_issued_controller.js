@@ -981,43 +981,37 @@ export default class extends TabulatorController {
 
   // ── Panel lateral Información ─────────────────────────────────────────────
 
-  async #openInfoModal(row) {
+  // El panel se muestra de INMEDIATO, con lo que ya trae la fila (Clave y
+  // Fecha de Emisión), y cada sección que depende de una consulta se pinta
+  // sola cuando su respuesta llega. Este método NO es `async` a propósito:
+  // ningún `await` puede colarse entre la acción del usuario y la apertura.
+  //
+  // Son tres consultas independientes — Detalles, Respuesta Hacienda y
+  // Detalles de intentos — y cada una tiene su propio loader dentro de su
+  // sección: la más lenta no retrasa a las otras dos.
+  #openInfoModal(row) {
     this.#activeInfoDocId = row.Id;
 
     this.infoClaveTarget.textContent        = row.Clave || '';
     this.infoFechaEmisionTarget.textContent = this.#formatDateTime(row.FechaEmision);
 
+    this.infoPanelBackdropTarget.classList.remove('hidden');
+    this.infoModalTarget.classList.remove('translate-x-full');
+    document.body.style.overflow = 'hidden';
+
     // "Detalles" (antes "Error interno") — expandida por defecto en cada
     // apertura (§ ver #toggleErrorSection); el usuario puede colapsarla, pero
-    // cada documento nuevo arranca igual. La sección misma queda oculta hasta
-    // que responda #loadErrorDetails: recién ahí se sabe si hay algo que mostrar.
+    // cada documento nuevo arranca igual.
     this.infoErrorTarget.classList.remove('hidden');
     this.infoErrorChevronTarget.textContent = 'expand_less';
     this.#loadErrorDetails(row);
 
-    // "Detalles de intentos" — colapsada por defecto. Arranca acá, ANTES del
-    // await de Hacienda de abajo, para que la consulta corra en segundo plano
-    // mientras el resto del panel termina de armarse (no bloquea la apertura).
+    // "Detalles de intentos" — colapsada por defecto.
     this.infoAttemptsBodyTarget.classList.add('hidden');
     this.infoAttemptsChevronTarget.textContent = 'expand_more';
     this.#loadAttempts(row);
 
-    this.infoErrorHaciendaSectionTarget.classList.add('hidden');
-    if (row.Status === 7) { // Rechazado (`U_CL_FEC_Status`) — ver #statusLabel
-      try {
-        const json = await this.#apiFetch(`/api/Documents/issued/${row.Id}/xml-response-message`);
-        if (json.Data?.HrRespuestaXml) {
-          this.infoErrorHaciendaTarget.innerHTML = this.#formatHaciendaError(json.Data.HrRespuestaXml);
-          this.infoErrorHaciendaSectionTarget.classList.remove('hidden');
-        }
-      } catch {
-        // No bloquear el panel por esto
-      }
-    }
-
-    this.infoPanelBackdropTarget.classList.remove('hidden');
-    this.infoModalTarget.classList.remove('translate-x-full');
-    document.body.style.overflow = 'hidden';
+    this.#loadHaciendaResponse(row);
   }
 
   // "Detalles" (antes "Error interno"). Consulta `GET /api/documents/:id`
@@ -1032,23 +1026,60 @@ export default class extends TabulatorController {
   // El color acompaña el estado FRESCO que trae la misma respuesta: rojo para
   // cualquier estado distinto de Aceptado (6), amarillo suave cuando el
   // documento SÍ quedó aceptado (una observación de Hacienda, no un error).
+  // La sección se muestra DESDE YA con su loader: si quedara oculta hasta que
+  // responda, el usuario no tendría cómo saber que falta algo por llegar. Solo
+  // se oculta al final, cuando ya se sabe que no hay detalle que mostrar.
   async #loadErrorDetails(row) {
-    this.infoErrorSectionTarget.classList.add('hidden');
-    this.infoErrorTarget.innerHTML = '';
+    this.infoErrorSectionTarget.classList.remove('hidden');
+    this.infoErrorTarget.innerHTML = this.#sectionLoaderHtml('Cargando detalles...');
 
     try {
       const json = await this.#apiFetch(`/api/documents/${row.Id}?doc_type=${encodeURIComponent(row.DocType)}`);
       if (this.#activeInfoDocId !== row.Id) return; // el usuario ya abrió otro documento
 
       const details = json.Data?.ErrorDetails;
-      if (!details) return;
+      if (!details) { this.#hideErrorSection(); return; }
 
       const tone = json.Data?.Status === 6 ? 'amber' : 'red'; // 6 = Aceptado, ver #statusLabel
       this.infoErrorTarget.innerHTML = this.#formatHaciendaError(details, tone);
-      this.infoErrorSectionTarget.classList.remove('hidden');
     } catch {
-      // No bloquear el panel por esto
+      if (this.#activeInfoDocId !== row.Id) return;
+      this.#hideErrorSection(); // No bloquear el panel por esto
     }
+  }
+
+  #hideErrorSection() {
+    this.infoErrorSectionTarget.classList.add('hidden');
+    this.infoErrorTarget.innerHTML = '';
+  }
+
+  // "Respuesta Hacienda" — solo existe para los documentos rechazados, y por
+  // eso antes se consultaba con `await` ANTES de abrir el panel: era la causa
+  // de que el panel tardara en aparecer justo en los documentos que más se
+  // consultan. Ahora corre como las demás, con su loader en la sección.
+  async #loadHaciendaResponse(row) {
+    this.#hideHaciendaSection();
+    if (row.Status !== 7) return; // Rechazado (`U_CL_FEC_Status`) — ver #statusLabel
+
+    this.infoErrorHaciendaSectionTarget.classList.remove('hidden');
+    this.infoErrorHaciendaTarget.innerHTML = this.#sectionLoaderHtml('Cargando respuesta de Hacienda...');
+
+    try {
+      const json = await this.#apiFetch(`/api/Documents/issued/${row.Id}/xml-response-message`);
+      if (this.#activeInfoDocId !== row.Id) return; // el usuario ya abrió otro documento
+
+      if (!json.Data?.HrRespuestaXml) { this.#hideHaciendaSection(); return; }
+
+      this.infoErrorHaciendaTarget.innerHTML = this.#formatHaciendaError(json.Data.HrRespuestaXml);
+    } catch {
+      if (this.#activeInfoDocId !== row.Id) return;
+      this.#hideHaciendaSection(); // No bloquear el panel por esto
+    }
+  }
+
+  #hideHaciendaSection() {
+    this.infoErrorHaciendaSectionTarget.classList.add('hidden');
+    this.infoErrorHaciendaTarget.innerHTML = '';
   }
 
   toggleErrorSection() {
@@ -1077,7 +1108,7 @@ export default class extends TabulatorController {
   // único que hay que mostrar es ese loader — no hace falta coordinar con
   // #toggleAttemptsSection.
   async #loadAttempts(row) {
-    this.infoAttemptsBodyTarget.innerHTML = this.#attemptsLoaderHtml();
+    this.infoAttemptsBodyTarget.innerHTML = this.#sectionLoaderHtml('Cargando intentos...');
 
     try {
       const json = await this.#apiFetch(`/api/documents/${row.Id}/attempts?doc_type=${encodeURIComponent(row.DocType)}`);
@@ -1095,14 +1126,17 @@ export default class extends TabulatorController {
     }
   }
 
-  #attemptsLoaderHtml() {
+  // Loader de UNA sección del panel. Las tres secciones que dependen de una
+  // consulta comparten este molde: el panel ya está abierto y cada sección
+  // avisa por su cuenta que todavía está cargando.
+  #sectionLoaderHtml(label) {
     return `
       <div class="flex items-center justify-center gap-2 py-6 text-sm text-gray-500">
         <svg class="animate-spin h-4 w-4 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
         </svg>
-        Cargando intentos...
+        ${label}
       </div>`;
   }
 

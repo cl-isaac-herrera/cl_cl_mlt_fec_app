@@ -350,9 +350,9 @@
             más abajo, en rojo o amarillo suave según el estado ACTUAL del
             documento (ver #loadErrorDetails). %>
         <%# Expandible (chevron), expandida por defecto — ver #toggleErrorSection.
-            Arranca oculta: #loadErrorDetails la consulta fresca (GET
-            /api/documents/:id) cada vez que se abre el panel y la muestra
-            solo si SAP devolvió un detalle. %>
+            #loadErrorDetails la consulta fresca (GET /api/documents/:id) cada
+            vez que se abre el panel: arranca visible con su propio loader y se
+            oculta al final solo si SAP no devolvió ningún detalle. %>
         <div data-documents-issued-target="infoErrorSection" class="hidden">
           <button type="button"
                   data-action="click->documents-issued#toggleErrorSection"
@@ -364,6 +364,9 @@
           </button>
           <div data-documents-issued-target="infoError" data-testid="info-error" class="mt-2"></div>
         </div>
+        <%# Solo para documentos rechazados. Igual que "Detalles": arranca
+            visible con su loader (#loadHaciendaResponse) y se oculta si no
+            hay respuesta que mostrar. %>
         <div data-documents-issued-target="infoErrorHaciendaSection" class="hidden">
           <p class="text-xs font-medium text-gray-500 mb-2">Respuesta Hacienda</p>
           <div data-documents-issued-target="infoErrorHacienda" data-testid="info-error-hacienda"></div>
