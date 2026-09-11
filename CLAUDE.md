@@ -2079,11 +2079,16 @@ La estructura (UDTs y UDFs) que este producto necesita en SAP se declara en
 `config/sap_schemas/*.json` y se aplica con las rake tasks del submódulo
 `vendor/clavisco/sap_udfs`. Es la regla de CLAVISCO-PLATFORM-STANDARDS §2.8:
 
-> **Estado:** el submódulo está cableado y las tasks corren, pero **no hay ningún schema
-> declarado** — `config/sap_schemas/` solo tiene la subcarpeta `delete/`. Hubo uno
-> (`oadm_company_config.json`, diez UDFs de configuración de FE sobre `OADM`) y se
-> **revirtió**: esos campos volvieron a la tabla `companies` de la base de la aplicación.
-> El manifiesto que los borró de SAP quedó en `config/sap_schemas/delete/` como rastro.
+> **Estado:** hay cinco schemas declarados — `marketing_documents.json` y `payments.json`
+> (UDFs sobre tablas nativas) y tres UDTs propias: `outgoing_mails_udt.json`,
+> `doc_sync_attempts_udt.json` y `sucursales_udt.json`. La subcarpeta `delete/` está
+> **vacía**: hoy no hay ninguna instalación con estos schemas creados, así que un
+> manifiesto de borrado no documenta nada que haya pasado en ningún lado (ver la regla de
+> más abajo).
+>
+> **Hubo un sexto schema y se revirtió:** `oadm_company_config.json`, diez UDFs de
+> configuración de FE sobre `OADM`. Esos campos volvieron a la tabla `companies` de la base
+> de la aplicación.
 >
 > **La lección de ese ida y vuelta:** un UDF solo deduplica cuando SAP **ya usa** ese dato
 > por su cuenta. Diez parámetros de la facturación electrónica de Costa Rica, que nadie más
@@ -2214,9 +2219,14 @@ Cuatro cosas que hay que saber antes de correrlo:
   compañía del archivo de conexiones. Correr `diff` antes para ver qué existe realmente.
 - **No toca el `config/sync.lock`.** Si el campo seguía declarado en un schema, el próximo
   `sync` lo vuelve a crear: primero se quita del schema, después se borra de SAP.
-- **Los manifiestos se conservan, no se borran.** `delete_field` reporta `:not_found` en vez
-  de fallar cuando el objetivo ya no existe, así que volver a correr uno viejo es seguro y
-  sirve de auditoría de qué se quitó y cuándo.
+- **Un manifiesto se conserva cuando ya se corrió contra una instalación real.**
+  `delete_field` reporta `:not_found` en vez de fallar cuando el objetivo ya no existe, así
+  que volver a correr uno viejo siempre es seguro, y sirve de auditoría de qué se quitó y
+  cuándo.
+  **Mientras no haya ninguna instalación con los schemas creados, esa auditoría no
+  documenta nada** y el manifiesto es ruido: se borra junto con el campo que salió del
+  schema. Es el criterio por el que `delete/` está vacía hoy. Desde el primer cliente en
+  productivo la regla se invierte y pasan a conservarse.
 
 ---
 

@@ -8,11 +8,22 @@ quitaron de SAP. Los consume `rake "sap:schema:delete[<manifiesto>,<conexiones>]
 > trataría un manifiesto como si fuera un schema de creación, fallando para siempre en
 > cada corrida posterior.
 
-## Por qué se conservan después de usarlos
+## Hoy esta carpeta está vacía, y es a propósito
 
-`delete_field` / `delete_table` reportan `:not_found` en vez de fallar cuando el objetivo
-ya no existe, así que volver a correr un manifiesto viejo siempre es seguro. Sirven de dos
-cosas: comprobar si algo sigue en SAP, y dejar el rastro de qué se borró y cuándo.
+Todavía no hay ninguna instalación con estos schemas creados en SAP. Un manifiesto de
+borrado sirve para dos cosas —comprobar si algo sigue en SAP y dejar el rastro de qué se
+quitó y cuándo—, y **las dos suponen que el borrado ocurrió en algún lado**. Sin clientes,
+no documenta nada: es un archivo que describe una limpieza que nadie necesitó correr.
+
+Por eso, mientras eso siga así, un campo que sale de un schema sale también sin dejar
+manifiesto detrás.
+
+### Cuándo cambia
+
+Desde la primera instalación en productivo. Ahí sí se conservan después de usarlos:
+`delete_field` / `delete_table` reportan `:not_found` en vez de fallar cuando el objetivo ya
+no existe, así que volver a correr un manifiesto viejo siempre es seguro, y pasa a ser la
+única constancia de qué estructura se quitó de las bases de los clientes.
 
 ## Convenciones
 
@@ -30,9 +41,14 @@ La tarea es interactiva: exige escribir el nombre exacto de cada objetivo antes 
 borrarlo, y **nunca toca el `config/sync.lock`**. Borrar un UDF se lleva los datos de esa
 columna en todas las filas de la tabla, en cada compañía del archivo de conexiones.
 
-## Historial
+## Un caso que va a volver: cambiar el `Type` de un UDF
 
-| Manifiesto | Qué quitó | Por qué |
-|---|---|---|
-| `oadm_company_config.json` | Los 10 UDFs `CL_FEC_*` de `OADM` | La configuración de FE de la compañía pasó a vivir en la base de la aplicación (tabla `companies`), no en SAP. |
-| `mailsqueue_email_field.json` | `Email` de `@CL_FEC_MAILSQUEUE` | **Borrar para recrear**, no una baja: el campo pasó de `db_Memo` a `db_Alpha(160)` —guarda un remitente, no el cuerpo del correo— y SAP no deja cambiar el `Type` de un UDF existente (ODBC -1029). Después de correr este manifiesto, `sap:schema:sync` lo vuelve a crear con el tipo nuevo. |
+SAP no deja cambiar el `Type` de un UDF existente (ODBC -1029), así que la salida no es
+editar el schema y correr `sync` —el campo queda en `update_failed` y encima no se escribe
+el `config/sync.lock`— sino **borrar para recrear**: un manifiesto que quita el campo, y
+después `sync`, que lo vuelve a crear con el tipo nuevo.
+
+Ya pasó una vez, con `Email` de la UDT de correos (pasó de `db_Memo` a `db_Alpha(160)`:
+guarda un remitente, no el cuerpo del correo). Se resolvió así y el manifiesto se borró
+después, por lo de arriba. El `Size`, en cambio, sí se puede aumentar por `PATCH` — nunca
+reducir.

@@ -1,7 +1,7 @@
 {
-  "table_name": "@CL_FEC_MAILSQUEUE",
+  "table_name": "@CL_FEC_MAILSDETAILS",
   "IsUDT": true,
-  "table_description": "Cola envío de comprobantes",
+  "table_description": "Detalles envío de comprobantes",
   "table_type": "bott_NoObjectAutoIncrement",
   "columns": [
     { "Name": "DocEntry", "Description": "FEC · DocEntry del comprobante asociado al correo",

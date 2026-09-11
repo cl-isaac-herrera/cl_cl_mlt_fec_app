@@ -1,8 +1,0 @@
-[
-  {
-    "table_name": "@CL_FEC_MAILSQUEUE",
-    "delete_fields": [
-      "Email"
-    ]
-  }
-]

@@ -672,16 +672,16 @@ SL_RESOURCES_DOCUMENT_QUERIES = [
    'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0]
 ].freeze
 
-# ── Cola de correos de recepción electrónica (UDT `@CL_FEC_MAILSQUEUE`) ──────
+# ── Cola de correos de recepción electrónica (UDT `@CL_FEC_MAILSDETAILS`) ───
 # Las tres consultas que `Sap::MailQueue` necesita para leer/crear/actualizar
 # filas de la UDT declarada en `config/sap_schemas/outgoing_mails_udt.json`
 # (ver `SyncIssuedDocumentsJob#queue_receipt_mail` y `SendElectronicReceiptJob`).
 #
 # ── La UDT tiene DOS nombres, y acá va el de OData ───────────────────────────
-# `@CL_FEC_MAILSQUEUE` es el nombre SQL/DI-API: el que declara el schema y el
+# `@CL_FEC_MAILSDETAILS` es el nombre SQL/DI-API: el que declara el schema y el
 # que usa `UserTablesMD` (la metadata, `vendor/clavisco/sap_udfs`). Los DATOS
 # de una UDT los expone el Service Layer como un entity set aparte, con el
-# prefijo `U_` — `U_CL_FEC_MAILSQUEUE` —, igual que a los UDFs de un documento
+# prefijo `U_` — `U_CL_FEC_MAILSDETAILS` —, igual que a los UDFs de un documento
 # los expone como `U_CL_FEC_Clave`. Mandar el nombre con `@` devuelve
 # `SL error: Service Not Found`, que es lo que dejó sin fila en la UDT a los
 # documentos emitidos el 2026-09-10 (`db/migrate/20260910123000_*`).
@@ -708,17 +708,26 @@ SL_RESOURCES_DOCUMENT_QUERIES = [
 # `code` viejo, y `db/migrate/20260907162000_rename_mail_queue_sl_resource.rb`
 # la renombra EN EL LUGAR (mismo `id`) para no perder una personalización de
 # `query_params` hecha desde la pantalla de mantenimiento.
+#
+# ── La UDT se llamaba `@CL_FEC_MAILSQUEUE` ──────────────────────────────────
+# Pasó a `@CL_FEC_MAILSDETAILS` porque lo que guarda es el DETALLE del correo
+# (destinatarios, remitente, estado visible en SAP) y no la cola: cuándo
+# reintentar lo decide la cola externa (`Documents::MailQueue`, `CLAUDE.md`
+# §37). Acá queda el nombre nuevo, y
+# `db/migrate/20260911150000_rename_mail_udt_sl_resources.rb` corrige las filas
+# de una instalación ya sembrada — sin la migración, el seed no alcanza: se
+# saltea las consultas que el cliente personalizó (`is_standard = false`).
 SL_RESOURCES_MAIL_QUEUE = [
   ['getMailInformation',
    'Detalle pendiente de envío en la cola de correos de recepción electrónica (UDT)',
-   'U_CL_FEC_MAILSQUEUE',
+   'U_CL_FEC_MAILSDETAILS',
    '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and U_Status ne 4 and U_Status ne 5)', 0],
   ['createMailQueue',
    'Crea una fila en la cola de correos de recepción electrónica (UDT)',
-   'U_CL_FEC_MAILSQUEUE', nil, 0],
+   'U_CL_FEC_MAILSDETAILS', nil, 0],
   ['updateMailQueue',
    'Actualiza el estado de una fila de la cola de correos de recepción electrónica (UDT)',
-   'U_CL_FEC_MAILSQUEUE(#Code#)', nil, 0]
+   'U_CL_FEC_MAILSDETAILS(#Code#)', nil, 0]
 ].freeze
 
 # ── Datos del comprobante para el correo de recepción electrónica ───────────

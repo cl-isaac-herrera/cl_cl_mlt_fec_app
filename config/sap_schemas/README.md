@@ -18,7 +18,7 @@ Los manifiestos de **borrado** van en `delete/` y tienen su propio README.
 |---|---|---|---|
 | `marketing_documents.json` | `OINV` — SAP replica solo al resto del grupo Documentos de Marketing (`ORIN`, `OPCH`, …) | no | Los 7 UDFs `CL_FEC_*` del comprobante electrónico. |
 | `payments.json` | `ORCT` | no | Los **mismos** 7 UDFs: `ORCT` es categoría Banking y NO recibe la replicación de `OINV`. |
-| `outgoing_mails_udt.json` | `@CL_FEC_MAILSQUEUE` | sí | Detalle del correo de recepción electrónica (destinatarios, remitente, estado del envío). La escribe `Sap::MailQueue`. |
+| `outgoing_mails_udt.json` | `@CL_FEC_MAILSDETAILS` | sí | Detalle del correo de recepción electrónica (destinatarios, remitente, estado del envío). La escribe `Sap::MailQueue`. |
 | `doc_sync_attempts_udt.json` | `@CL_FEC_DOCSYNCATTMP` | sí | Historial de intentos de sincronización de un documento: con qué estado terminó cada intento y por qué. La escribe y la lee `Sap::DocSyncAttempts`. |
 | `sucursales_udt.json` | `@CL_FEC_SUCURSALES` | sí | Sucursales del emisor ante Hacienda. |
 
@@ -40,9 +40,10 @@ todavía no existe no tiene con qué comparar el largo.
 ### Consecuencias prácticas al nombrar
 
 - **El nombre de UDT es el que aprieta.** El prefijo de la convención `CL_<PRODUCTO>_<MODULO>`
-  ya gasta 7 (`CL_FEC_`), así que para el módulo quedan **12**. `CL_FEC_MAILSQUEUE` (17) y
-  `CL_FEC_SUCURSALES` (17) entran; un nombre "descriptivo" como
-  `CL_FEC_DOCSYNCATTEMPTS` (22) no — hay que abreviar el módulo, no el prefijo.
+  ya gasta 7 (`CL_FEC_`), así que para el módulo quedan **12**. `CL_FEC_SUCURSALES` (17)
+  entra con holgura y `CL_FEC_MAILSDETAILS` (19) entra **justo**, sin un carácter de
+  sobra; un nombre "descriptivo" como `CL_FEC_DOCSYNCATTEMPTS` (22) no — hay que abreviar
+  el módulo, no el prefijo.
 - **La descripción de UDT es el otro cuello:** 30 caracteres, y el `FEC · ` obligatorio se
   lleva 6. Quedan 24 para decir qué guarda la tabla.
 - **En el UDF sobra nombre y falta descripción.** 50 caracteres de nombre nunca molestaron
@@ -164,7 +165,7 @@ constante y el `ValidValues`. En una instalación viva el CHECK necesita un `ALT
 
 ## 4. `DocEntry` + `DocType` es la llave del documento en las dos UDTs
 
-`@CL_FEC_MAILSQUEUE` y `@CL_FEC_DOCSYNCATTMP` identifican el documento con el par
+`@CL_FEC_MAILSDETAILS` y `@CL_FEC_DOCSYNCATTMP` identifican el documento con el par
 `U_DocEntry` + `U_DocType`, y nunca con el `Id` de la cola externa: ese `Id` es de otra
 base y adentro de SAP no se puede resolver. `SAPDB` tampoco viaja — la compañía la
 determina la base de SAP contra la que se consulta.

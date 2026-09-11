@@ -1113,6 +1113,25 @@ puede funcionar:
       `ALTER TABLE ... DROP/ADD CONSTRAINT CK_OutgoingMailsQueue_Status CHECK (... IN
       (1,2,3,4,5))` a mano en la base externa de cada instalación (SQL Server confirmado;
       la sintaxis de HANA no se probó contra una base real).
+- [ ] **UDT de correos renombrada (`@CL_FEC_MAILSQUEUE` → `@CL_FEC_MAILSDETAILS`) —
+      pendiente de aplicar en SAP.** El lado de la aplicación ya está: el schema, el
+      catálogo (`db/seeds.rb` → `SL_RESOURCES_MAIL_QUEUE`) y la migración
+      `20260911150000_rename_mail_udt_sl_resources.rb` para las instalaciones ya sembradas.
+      Lo que falta es SAP, y no lo resuelve un `sync`: **`sap:schema:sync` nunca renombra**
+      (`CLAUDE.md` §32), así que crea una UDT nueva y vacía y deja la vieja en su lugar.
+      Hoy la única base afectada es la de pruebas (`TST_CL_DEVDEMOCR`) — no hay clientes
+      con estos schemas creados —, y ahí el orden es:
+      1. **Drenar la UDT vieja ANTES de cambiar el catálogo.** Las filas con `U_Status`
+         1/2/3 son correos pendientes; después del rename `getMailInformation` consulta la
+         tabla nueva y esas filas quedan invisibles. El síntoma es el `sin_udt` de
+         `SendElectronicReceiptJob` ("SAP no tiene un registro pendiente en la UDT"), y la
+         fila de la cola externa se marca `Error` y reintenta con backoff para siempre.
+      2. `rake "sap:schema:diff[...]"` y después `sync` para crear `@CL_FEC_MAILSDETAILS`.
+      3. Dar de baja `@CL_FEC_MAILSQUEUE` con un manifiesto `delete_table: true` en
+         `config/sap_schemas/delete/`, una vez confirmado que no quedan filas sin enviar.
+         Es interactivo e irreversible. El manifiesto **se borra después de correrlo**
+         mientras no haya instalaciones en productivo (§32) — la tarea lo necesita para
+         saber qué borrar, pero no hay auditoría que conservar.
 - [ ] **`Azure::BlobStorage#download`/`Documents::XmlArchive.fetch` sin probar contra una
       cuenta de Azure real.** Mismo aviso que ya existe para `#upload` (más arriba,
       "`U_CL_FEC_XmlSentUrl`"): el algoritmo de firma Shared Key para `Get Blob` está
