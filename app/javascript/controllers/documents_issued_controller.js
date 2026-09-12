@@ -21,8 +21,8 @@ import { relativeDate } from 'vendor/clavisco/format/dates';
  *
  * ⚠️ Fuera de alcance de esta migración (siguen pegándole al proxy .NET, con un
  * `Id` de fila que ya no existe en un resultado que viene de SAP — anotado en
- * `TODOS.md` → Emisión de documentos): Ver/Descargar PDF, Ver/Descargar XML
- * Hacienda, Descargar Doc XML, Correos, Omitir Validaciones, Anulación Interna,
+ * `TODOS.md` → Emisión de documentos): Ver/Descargar comprobante, Ver/Descargar
+ * XML respuesta, Descargar XML comprobante, Correos, Omitir Validaciones, Anulación Interna,
  * Descarga Masiva, y el gráfico "Más Información" (dependía de
  * `DocumentQtyList`, que el .NET calculaba y SAP no).
  *
@@ -45,7 +45,8 @@ export default class extends TabulatorController {
     'btnChart', 'btnBulkDownload', 'btnBulkDownloadWrap',
 
     // Panel lateral correos
-    'emailModal', 'emailPanelBackdrop', 'emailLoader', 'emailTable', 'emailEmpty',
+    'emailModal', 'emailPanelBackdrop', 'emailLoader', 'emailTable', 'emailEmpty', 'emailError',
+    'emailDocNumber',
     'otherEmailsForm', 'inputEmailTo', 'errorEmailTo', 'inputEmailCC', 'errorEmailCC', 'btnResend',
 
     // Panel lateral info
@@ -90,8 +91,16 @@ export default class extends TabulatorController {
    */
   #quantities = {};
 
-  /** Id del documento activo en el modal de correos */
-  #activeEmailDocId = null;
+  /**
+   * Fila del documento activo en el panel de correos. Se guarda la fila entera
+   * y no solo el id porque la consulta necesita también el `DocType`: la UDT
+   * identifica el correo con el par `DocEntry` + `DocType`, no con el `docId`
+   * de la base local que usaba el `.NET`.
+   *
+   * `#loadEmails` la compara al terminar: si el usuario ya abrió el panel de
+   * otro documento, la respuesta vieja no debe pisar el contenido nuevo.
+   */
+  #activeEmailRow = null;
 
   /**
    * DocEntry del documento activo en el panel "Información del documento".
@@ -378,26 +387,26 @@ export default class extends TabulatorController {
     document.getElementById('cl-row-dropdown')?.remove();
 
     const options = [
-      { label: 'Ver PDF',               icon: 'picture_as_pdf', action: 'view-pdf'     },
-      { label: 'Descargar PDF',         icon: 'download',       action: 'download-pdf' },
+      { label: 'Ver comprobante',       icon: 'picture_as_pdf', action: 'view-pdf'     },
+      { label: 'Descargar comprobante', icon: 'download',       action: 'download-pdf' },
       {
         // Códigos de `U_CL_FEC_Status`: 6 Aceptado, 7 Rechazado (ver #statusLabel).
-        label: 'Ver XML (Resp Hacienda)', icon: 'terminal', action: 'view-xml',
+        label: 'Ver XML respuesta', icon: 'terminal', action: 'view-xml',
         disabled: row.Status !== 6 && row.Status !== 7,
         disabledReason: 'Solo disponible para documentos en estado Aceptado o Rechazado',
       },
       {
-        label: 'Descargar XML (Resp Hacienda)', icon: 'download', action: 'download-xml',
+        label: 'Descargar XML respuesta', icon: 'download', action: 'download-xml',
         disabled: row.Status !== 6 && row.Status !== 7,
         disabledReason: 'Solo disponible para documentos en estado Aceptado o Rechazado',
       },
       {
-        label: 'Descargar Doc XML', icon: 'description', action: 'download-doc-xml',
+        label: 'Descargar XML comprobante', icon: 'description', action: 'download-doc-xml',
         disabled: row.Status === 4,
         disabledReason: 'No disponible para documentos en estado Error',
       },
       { label: 'Correos',               icon: 'mail',     action: 'emails' },
-      { label: 'Consultar Información', icon: 'info',     action: 'info'   },
+      { label: 'Ver más detalles',      icon: 'info',     action: 'info'   },
       {
         label: 'Omitir Validaciones', icon: 'lock_open', action: 'skip-validations',
         disabled: row.Status !== 4,
@@ -485,7 +494,7 @@ export default class extends TabulatorController {
       case 'view-xml':         this.#viewXML(row.Id);          break;
       case 'download-xml':     this.#downloadXML(row.Id, row.NumeroConsecutivo); break;
       case 'download-doc-xml': this.#downloadDocXML(row.Id, row.NumeroConsecutivo); break;
-      case 'emails':           this.#openEmailModal(row.Id);   break;
+      case 'emails':           this.#openEmailModal(row);      break;
       case 'info':             this.#openInfoModal(row);        break;
       case 'skip-validations': this.#skipValidations(row.Id);  break;
       case 'internal-cancel':  this.#internalCancel(row);      break;
@@ -648,71 +657,117 @@ export default class extends TabulatorController {
     return this.#iconTooltip(s.icon, s.bg, s.color, s.label);
   }
 
-  // Ícono + tooltip para MessageStatus (Estado del correo)
+  // Ícono + tooltip para el estado del correo. Los códigos son los `ValidValues`
+  // de `U_Status` en la UDT (`config/sap_schemas/outgoing_mails_udt.json`), el
+  // mismo catálogo que `Documents::MailQueue::STATUS_*`.
   #emailStatusBadge(code) {
     const map = {
       1: { label: 'Pendiente', icon: 'schedule',     bg: '#f3f4f6', color: '#6b7280' },
       2: { label: 'Enviando',  icon: 'sync',         bg: '#e8f0fe', color: '#1a56db' },
       3: { label: 'Error',     icon: 'error',        bg: '#fdecea', color: '#c0392b' },
       4: { label: 'Enviado',   icon: 'check_circle', bg: '#e8f5ee', color: '#3a7d52' },
+      // 5 no existía en el enum del `.NET`: lo agregó la UDT para el documento
+      // que no se envía porque la compañía no manda los rechazados por Hacienda
+      // (`Documents::MailQueue::STATUS_SKIPPED`).
+      5: { label: 'Omitido',   icon: 'block',        bg: '#f5f3ff', color: '#6d28d9' },
     };
     const s = map[Number(code)] ?? { label: String(code ?? ''), icon: 'help', bg: '#f3f4f6', color: '#4b5563' };
     return this.#iconTooltip(s.icon, s.bg, s.color, s.label);
   }
 
-  async #openEmailModal(docId) {
-    this.#activeEmailDocId = docId;
+  // El panel se abre de INMEDIATO, con su loader, y la consulta corre después.
+  // Este método NO es `async` a propósito: ningún `await` puede colarse entre
+  // el click del usuario y la apertura — mismo criterio que `#openInfoModal`.
+  #openEmailModal(row) {
+    this.#activeEmailRow = row;
     this.otherEmailsFormTarget.classList.add('hidden');
     this.inputEmailToTarget.value = '';
     this.inputEmailCCTarget.value = '';
 
+    this.emailDocNumberTarget.textContent = this.#documentLabel(row);
+
     this.#openEmailPanel();
     this.#setEmailState('loading');
+    this.#loadEmails(row);
+  }
 
+  // Cómo se nombra el documento en el encabezado del panel.
+  //
+  // Los rótulos son los MISMOS que los de las columnas de la tabla ("N° FE" y
+  // "N° Ref"), para que se reconozca de dónde salió el número en vez de tener
+  // que deducirlo por la forma.
+  //
+  // El consecutivo de Hacienda (`N° FE`) está vacío hasta que el comprobante se
+  // acepta — es el estado normal de un documento en trámite, no un dato
+  // faltante (ver `getColumns`). Ahí se cae al número de referencia de SAP
+  // (`DocNum`), que existe desde que el documento se creó: un encabezado que
+  // dijera "—" no identificaría nada, que es justo lo que se quiere evitar.
+  #documentLabel(row) {
+    if (row.NumeroConsecutivo) return `N° FE ${row.NumeroConsecutivo}`;
+    if (row.Consecutivo)       return `N° Ref ${row.Consecutivo}`;
+    return '';
+  }
+
+  // Historial de correos del documento, desde la UDT `@CL_FEC_MAILSDETAILS` de
+  // SAP (`GET /api/documents/:id/mails`). Reemplaza
+  // `GET /api/Email/GetOutgoingMails?docId=N`, que leía la tabla `OutgoingMails`
+  // de la base propia del `.NET`: ese detalle ya no se escribe ahí.
+  //
+  // La llave es el par `DocEntry` + `DocType` —`row.Id` es el `DocEntry`, ver
+  // `#mapDocument`—, no el `docId` local que ya no existe en una fila que viene
+  // de SAP.
+  async #loadEmails(row) {
     try {
-      const json = await this.#apiFetch(`/api/Email/GetOutgoingMails?docId=${docId}`);
+      const json = await this.#apiFetch(
+        `/api/documents/${row.Id}/mails?doc_type=${encodeURIComponent(row.DocType)}`
+      );
+      if (this.#activeEmailRow !== row) return; // el usuario ya abrió otro documento
 
-      if (!json.Data?.length) {
-        this.#setEmailState('empty');
-        return;
-      }
-
-      const mails = json.Data.map(m => ({
-        ...m,
-        CreateDate: m.CreateDate ? m.CreateDate.replace('T', ' ').substring(0, 19) : '',
-      }));
+      const mails = json.Data?.Items || [];
+      if (!mails.length) { this.#setEmailState('empty'); return; }
 
       this.#buildEmailTable(mails);
       this.#setEmailState('table');
-      showToast('Datos obtenidos con éxito', 'success');
     } catch (err) {
-      this.#setEmailState('empty');
+      if (this.#activeEmailRow !== row) return;
+
+      // Estado propio y no 'empty': decirle "no hay correos" cuando la consulta
+      // falló es afirmar algo que no se sabe.
+      this.emailErrorTarget.textContent = err.message || 'No se pudieron consultar los correos.';
+      this.#setEmailState('error');
       showToast(err.message, 'error');
     }
   }
 
-  // Alterna entre los tres estados visuales del panel de correos
+  // Alterna entre los cuatro estados visuales del panel de correos
   #setEmailState(state) {
     this.emailLoaderTarget.classList.toggle('hidden', state !== 'loading');
     this.emailTableTarget.classList.toggle('hidden',  state !== 'table');
     this.emailEmptyTarget.classList.toggle('hidden',  state !== 'empty');
+    this.emailErrorTarget.classList.toggle('hidden',  state !== 'error');
     this.#updateResendButton();
   }
 
   // Habilita Reenviar según el contexto:
-  //   - Hay correos en tabla Y el form de otros destinatarios está cerrado
-  //   - El form de otros destinatarios está abierto Y tiene al menos un campo con valor válido
+  //   - Con el form de otros destinatarios ABIERTO: hace falta un "Para" válido
+  //     (el CC es opcional, pero si tiene algo tiene que ser válido).
+  //   - Con el form CERRADO: alcanza con que haya historial, porque los
+  //     destinatarios salen del correo de tipo Envío que el servidor busca solo.
+  //
+  // "Para" es obligatorio y no "Para o CC": el servidor rechaza un reenvío sin
+  // "Para" (`Api::Documents::MailsController#custom_recipients`), así que
+  // habilitar el botón con solo un CC ofrecería algo que después falla. El .NET
+  // lo resolvía peor — con "Para" vacío ignoraba en silencio el CC escrito y
+  // mandaba el correo a los destinatarios originales.
   #updateResendButton() {
     const hasTable        = !this.emailTableTarget.classList.contains('hidden');
     const otherEmailsOpen = !this.otherEmailsFormTarget.classList.contains('hidden');
     const toValue         = this.inputEmailToTarget.value.trim();
     const ccValue         = this.inputEmailCCTarget.value.trim();
-    const hasRecipient    = toValue.length > 0 || ccValue.length > 0;
-    const fieldsValid     = (toValue.length === 0 || this.#isValidEmail(toValue))
-                         && (ccValue.length === 0  || this.#isValidEmailList(ccValue));
+    const ccValid         = ccValue.length === 0 || this.#isValidEmailList(ccValue);
 
     const enabled = otherEmailsOpen
-      ? hasRecipient && fieldsValid
+      ? this.#isValidEmail(toValue) && ccValid
       : hasTable;
 
     this.btnResendTarget.disabled = !enabled;
@@ -843,7 +898,7 @@ export default class extends TabulatorController {
         <div class="flex-1 min-w-0 p-4">
           <div class="flex items-start justify-between gap-2">
             <div class="flex items-center flex-wrap gap-2">
-              ${this.#relativeDateSpan(m.CreateDate, 'text-sm font-semibold text-gray-800')}
+              ${this.#relativeDateSpan(m.CreatedAt, 'text-sm font-semibold text-gray-800')}
               ${this.#emailStatusBadge(m.Status)}
               ${this.#emailTypeBadge(m.Type)}
             </div>
@@ -930,53 +985,60 @@ export default class extends TabulatorController {
     this.#updateResendButton();
   }
 
+  // Registra un reenvío: `POST /api/documents/:id/mails`, que crea la fila de
+  // tipo Reenvío en la UDT y la encola. Reemplaza `POST /api/Email/` del .NET
+  // (`spResendDocEmail`), que insertaba en la tabla `OutgoingMails` de la base
+  // propia.
+  //
+  // El correo NO sale acá: lo manda `SendElectronicReceiptJob` en su próxima
+  // corrida. Por eso el mensaje dice "registrado" y no "enviado" — prometer un
+  // envío que todavía no ocurrió es lo que hacía el "Datos listos para el
+  // reenvío" del legacy, que además no decía nada útil.
+  //
+  // Sin "otros destinatarios" el cuerpo va vacío: los destinatarios los resuelve
+  // el servidor copiándolos del correo de tipo Envío (1) del documento. Mandar
+  // acá los del historial ya cargado sería adivinarle al servidor.
   async resendEmail() {
+    const row = this.#activeEmailRow;
+    if (!row) return;
     if (!this.#validateEmailFields()) return;
+
+    const otherEmails = !this.otherEmailsFormTarget.classList.contains('hidden');
+
     try {
-      const otherEmails = !this.otherEmailsFormTarget.classList.contains('hidden');
-      const mailTo = this.inputEmailToTarget.value.trim();
-      const mailCC = this.inputEmailCCTarget.value.trim();
+      const json = await this.#apiFetch(
+        `/api/documents/${row.Id}/mails?doc_type=${encodeURIComponent(row.DocType)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            OtherEmails: otherEmails,
+            MailTo:      otherEmails ? this.inputEmailToTarget.value.trim() : '',
+            MailCC:      otherEmails ? this.inputEmailCCTarget.value.trim() : '',
+          }),
+        },
+      );
+      showToast(json.Data?.Message || 'Reenvío registrado.', 'success');
 
-      await this.#apiFetch('/api/Email/', {
-        method: 'POST',
-        body: JSON.stringify({
-          DocId:       this.#activeEmailDocId,
-          OtherEmails: otherEmails,
-          MailTo:      mailTo,
-          MailCC:      mailCC,
-        }),
-      });
-      showToast('Datos listos para el reenvío', 'success');
-
-      // Limpiar campos y refrescar tabla
+      // Los campos se limpian y el formulario se cierra: lo que se pidió ya
+      // quedó registrado y aparece como una fila más del historial.
       this.inputEmailToTarget.value = '';
       this.inputEmailCCTarget.value = '';
+      this.otherEmailsFormTarget.classList.add('hidden');
+
       await this.#refreshEmailTable();
     } catch (err) {
       showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al reenviar correo', message: err.message });
     }
   }
 
+  // Vuelve a pedir el historial tras un reenvío. Es la misma consulta de la
+  // apertura, así que reusa `#loadEmails`: la única diferencia es que el panel
+  // ya estaba abierto.
   async #refreshEmailTable() {
+    if (!this.#activeEmailRow) return;
+
     this.#setEmailState('loading');
-    try {
-      const json = await this.#apiFetch(`/api/Email/GetOutgoingMails?docId=${this.#activeEmailDocId}`);
-
-      if (!json.Data?.length) {
-        this.#setEmailState('empty');
-        return;
-      }
-
-      const mails = json.Data.map(m => ({
-        ...m,
-        CreateDate: m.CreateDate ? m.CreateDate.replace('T', ' ').substring(0, 19) : '',
-      }));
-
-      this.#buildEmailTable(mails);
-      this.#setEmailState('table');
-    } catch {
-      this.#setEmailState('empty');
-    }
+    await this.#loadEmails(this.#activeEmailRow);
   }
 
   // ── Panel lateral Información ─────────────────────────────────────────────

@@ -8,8 +8,12 @@
 #
 #   1. `Documents::MailQueue.pending` → la cola externa, por ODBC (con el mismo
 #      backoff exponencial que `Documents::PendingQueue`)
-#   2. `Sap::MailQueue#find`          → el detalle del correo en la UDT de SAP
-#      (destinatarios, ver `config/sap_schemas/outgoing_mails_udt.json`)
+#   2. `Sap::MailQueue#fetch`         → el detalle del correo en la UDT de SAP
+#      (destinatarios, ver `config/sap_schemas/outgoing_mails_udt.json`), leído
+#      POR LLAVE con el `Code` que la fila de la cola trae en `UdtCode`. No se
+#      busca "el correo pendiente del documento": un documento con reenvíos
+#      tiene varias filas vivas a la vez y esa pregunta no tiene una sola
+#      respuesta
 #   3. `Sap::MailDocumentInfo`        → los datos del comprobante para el
 #      cuerpo del correo — `nil` cuando el documento Rechazado no debe
 #      notificarse (`company.send_rejected_documents?` en `false`), y ahí el
@@ -79,9 +83,17 @@ class SendElectronicReceiptJob < ApplicationJob
       return :sin_compania
     end
 
-    mail_row = Sap::MailQueue.new(client: client_for(company)).find(doc_entry: entry.doc_entry, doc_type: entry.doc_type)
+    if entry.udt_code.blank?
+      msg = 'La fila de la cola no dice qué correo de la UDT manda (UdtCode vacío); ' \
+            'se encoló antes de que la columna existiera.'
+      Rails.logger.warn("[SendElectronicReceipt] #{entry}: #{msg}")
+      mark_queue(entry, Documents::MailQueue::STATUS_ERROR)
+      return :sin_udt
+    end
+
+    mail_row = fetch_mail_row(company, entry)
     if mail_row.nil?
-      msg = 'SAP no tiene un registro pendiente en la UDT de correos para este documento.'
+      msg = "SAP no tiene el correo #{entry.udt_code} en la UDT."
       Rails.logger.warn("[SendElectronicReceipt] #{entry}: #{msg}")
       mark_queue(entry, Documents::MailQueue::STATUS_ERROR)
       return :sin_udt
@@ -102,6 +114,20 @@ class SendElectronicReceiptJob < ApplicationJob
     Rails.logger.error("[SendElectronicReceipt] #{entry}: #{e.class}: #{e.message}")
     failed(entry, company, mail_row, "#{e.class}: #{e.message}")
     :error
+  end
+
+  # El correo que esta fila de la cola manda, leído POR LLAVE. El `Code` lo
+  # guardó la fila al encolarse, así que no hay que adivinar cuál de los correos
+  # del documento es — con reenvíos puede haber varios vivos a la vez, cada uno
+  # con destinatarios distintos.
+  #
+  # Un `Code` que no existe en SAP devuelve 404 y se trata como "no está", no
+  # como una falla del enlace con SAP: la fila de la cola quedó apuntando a algo
+  # que alguien borró de la UDT, y eso es un error de este correo, no de la tanda.
+  def fetch_mail_row(company, entry)
+    Sap::MailQueue.new(client: client_for(company)).fetch(entry.udt_code)
+  rescue Clavisco::ServiceLayer::Client::NotFoundError
+    nil
   end
 
   def send_mail(entry, company, mail_row, info)

@@ -198,9 +198,18 @@ Rails.application.routes.draw do
     # `reprocess` reemplaza `PATCH /api/Documents/:id/Reprocess` del servidor de
     # sincronización .NET (`ApiFEUrl`): ya no se cae al proxy, la reencola
     # `Documents::PendingQueue#reprocess` (§37) contra la cola propia.
+    #
+    # `mails` son los correos de recepción electrónica del documento, en la UDT
+    # `@CL_FEC_MAILSDETAILS` (`Sap::MailQueue`). Es un recurso ANIDADO y no dos
+    # acciones más del documento porque reenviar no es una acción sobre el
+    # documento: crea un correo (§28 regla 4). Así, el panel "Correos" del
+    # listado se resuelve con el `index` y el `create` del mismo recurso, y
+    # reemplaza `GET /api/Email/GetOutgoingMails?docId=N` y `POST /api/Email/`.
     resources :documents, only: %i[index show] do
       get   :attempts,  on: :member
       patch :reprocess, on: :member
+
+      resources :mails, only: %i[index create], module: :documents
     end
   end
 

@@ -16,7 +16,7 @@ RSpec.describe SendElectronicReceiptJob do
   end
   let(:client) { instance_double(Clavisco::ServiceLayer::Client) }
   let(:mail_row) { Documents::Row.new('Code' => '7', 'U_OutputTo' => 'cliente@test.com', 'U_OutputCC' => nil) }
-  let(:mail_queue) { instance_double(Sap::MailQueue, find: mail_row, update_status: nil) }
+  let(:mail_queue) { instance_double(Sap::MailQueue, fetch: mail_row, update_status: nil) }
   let(:document_info) do
     Documents::Row.new(
       'U_CL_FEC_NumConsecutivo' => '00100001010000000001', 'CardName' => 'Cliente Test',
@@ -40,8 +40,9 @@ RSpec.describe SendElectronicReceiptJob do
     allow(Documents::MailQueue).to receive(:pending).and_return(entries)
   end
 
-  def entry(id: 1, doc_entry: 25, doc_type: DocType::FE, sap_db: 'SBO_ACME')
-    Documents::MailQueue::Entry.new(id: id, doc_entry: doc_entry, doc_type: doc_type, sap_db: sap_db)
+  def entry(id: 1, doc_entry: 25, doc_type: DocType::FE, sap_db: 'SBO_ACME', udt_code: 7)
+    Documents::MailQueue::Entry.new(id: id, doc_entry: doc_entry, doc_type: doc_type,
+                                    sap_db: sap_db, udt_code: udt_code)
   end
 
   describe 'cola vacía' do
@@ -55,12 +56,14 @@ RSpec.describe SendElectronicReceiptJob do
   end
 
   describe 'envío exitoso' do
-    it 'busca el detalle en la UDT por DocEntry y DocType' do
-      queue(entry)
+    # Por LLAVE y no por documento: el `Code` viaja en la fila de la cola, y un
+    # documento con reenvíos tiene varias filas vivas a la vez.
+    it 'lee el detalle de la UDT por el Code que trae la fila de la cola' do
+      queue(entry(udt_code: 42))
 
       described_class.perform_now
 
-      expect(mail_queue).to have_received(:find).with(doc_entry: 25, doc_type: DocType::FE)
+      expect(mail_queue).to have_received(:fetch).with(42)
     end
 
     it 'consulta los datos del comprobante por DocEntry y DocType' do
@@ -172,9 +175,11 @@ RSpec.describe SendElectronicReceiptJob do
   end
 
   describe 'sin fila en la UDT' do
-    it 'marca Error en la cola externa' do
+    # El `Code` apunta a una fila que ya no está: la del enlace se borró de la
+    # UDT. Es un error de ESTE correo, no una falla del enlace con SAP.
+    it 'marca Error en la cola externa cuando el Code no existe en SAP' do
       queue(entry)
-      allow(mail_queue).to receive(:find).and_return(nil)
+      allow(mail_queue).to receive(:fetch).and_raise(Clavisco::ServiceLayer::Client::NotFoundError, 'SL 404')
       allow(Rails.logger).to receive(:warn)
 
       described_class.perform_now
@@ -182,6 +187,22 @@ RSpec.describe SendElectronicReceiptJob do
       expect(mailer).not_to have_received(:call)
       expect(Documents::MailQueue).to have_received(:mark)
         .with(entry, status: Documents::MailQueue::STATUS_ERROR)
+    end
+
+    # Una fila encolada antes de que existiera `UdtCode`: no se puede saber qué
+    # correo manda, y adivinar buscando por documento es justo lo que se dejó de
+    # hacer. Se marca Error con un motivo que dice por qué, sin tocar SAP.
+    it 'marca Error sin consultar SAP cuando la fila no trae UdtCode' do
+      queue(entry(udt_code: nil))
+      allow(Rails.logger).to receive(:warn)
+
+      described_class.perform_now
+
+      expect(mail_queue).not_to have_received(:fetch)
+      expect(mailer).not_to have_received(:call)
+      expect(Documents::MailQueue).to have_received(:mark)
+        .with(anything, status: Documents::MailQueue::STATUS_ERROR)
+      expect(Rails.logger).to have_received(:warn).with(/UdtCode vacío/)
     end
   end
 

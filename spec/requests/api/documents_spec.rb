@@ -354,6 +354,336 @@ RSpec.describe 'GET /api/documents/:id/attempts', type: :request do
   end
 end
 
+RSpec.describe 'GET /api/documents/:id/mails', type: :request do
+  let(:user)    { User.create!(email: 'documentos-correos@example.com') }
+  let(:role)    { Role.create!(name: 'Configurador') }
+  let(:company) { Company.create!(name: 'ACME S.A.', sap_db: 'SBO_ACME') }
+  let(:client)  { instance_double(Clavisco::ServiceLayer::Client) }
+
+  def sign_in_with(*permission_names)
+    UsersByCompany.create!(user: user, company: company)
+    UserRole.create!(user: user, role: role, company: company)
+    permission_names.each do |name|
+      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
+    end
+    sign_in(user, company: company)
+  end
+
+  def body      = JSON.parse(response.body)
+  def body_data = body['Data']
+
+  def get_mails(id, params = {})
+    get "/api/documents/#{id}/mails", params: params
+  end
+
+  # El historial de correos vive en la UDT de SAP, no en la tabla `OutgoingMails`
+  # de la base propia que leía el .NET: la fuente es el Service Layer
+  # (`Sap::MailQueue#list`), con la consulta del catálogo — que ya viene en el
+  # esquema de test por su migración, así que se hace upsert.
+  before do
+    SlResource.unscoped.find_or_initialize_by(code: 'getDocumentMails').tap do |r|
+      r.update!(resource: 'U_CL_FEC_MAILSDETAILS',
+                query_params: '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType)' \
+                              '&$orderby=Code desc',
+                page_size: 0, is_active: true)
+    end
+    allow(Sap::CompanyClient).to receive(:for).and_return(client)
+  end
+
+  describe 'autorización' do
+    it 'responde 401 sin sesión' do
+      get_mails(25, doc_type: '01')
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'exige Documents_Issued_ViewDocuments' do
+      sign_in_with('Documents_Issued_ViewDocuments_Otro')
+      get_mails(25, doc_type: '01')
+
+      expect(response).to have_http_status(:forbidden)
+    end
+  end
+
+  describe 'con permiso' do
+    before { sign_in_with('Documents_Issued_ViewDocuments') }
+
+    # El `docId` del .NET era el id de la tabla local; la llave acá es el par
+    # `DocEntry` + `DocType`, que es con el que la UDT identifica el correo.
+    it 'consulta la UDT con el DocEntry del path y el DocType' do
+      allow(client).to receive(:get).and_return([])
+
+      get_mails(25, doc_type: '01')
+
+      expect(response).to have_http_status(:ok)
+      expect(client).to have_received(:get).with(
+        "U_CL_FEC_MAILSDETAILS?$filter=(U_DocEntry eq 25 and U_DocType eq '01')&$orderby=Code desc"
+      )
+    end
+
+    it 'devuelve los correos con las llaves en PascalCase' do
+      allow(client).to receive(:get).and_return(
+        [{ 'Code' => '8', 'U_CreatedAt' => '2026-09-11T10:03:12-06:00',
+           'U_LastAttempt' => '2026-09-11T10:04:00-06:00', 'U_Status' => 4, 'U_Type' => 1,
+           'U_OutputTo' => 'cliente@test.com', 'U_OutputCC' => 'copia@test.com', 'U_OutputBCC' => nil,
+           'U_Email' => 'bandeja@acme.test', 'U_Details' => nil }]
+      )
+
+      get_mails(25, doc_type: '01')
+
+      expect(body_data['Items']).to eq(
+        [{ 'Code' => '8', 'CreatedAt' => '2026-09-11T10:03:12-06:00',
+           'LastAttempt' => '2026-09-11T10:04:00-06:00', 'Status' => 4, 'Type' => 1,
+           'OutputTo' => 'cliente@test.com', 'OutputCC' => 'copia@test.com', 'OutputBCC' => nil,
+           'Sender' => 'bandeja@acme.test', 'Details' => nil }]
+      )
+    end
+
+    it 'devuelve una lista vacía cuando el documento no tiene correos' do
+      allow(client).to receive(:get).and_return([])
+
+      get_mails(25, doc_type: '01')
+
+      expect(body_data['Items']).to eq([])
+    end
+
+    it 'rechaza un tipo de documento inválido' do
+      get_mails(25, doc_type: 'XX')
+
+      expect(response).to have_http_status(:unprocessable_content)
+    end
+
+    it 'responde con un error claro si la compañía no tiene SAP configurado' do
+      allow(Sap::CompanyClient).to receive(:for)
+        .and_raise(Sap::CompanyClient::MissingConfiguration, 'ACME no tiene una conexión de SAP asignada.')
+
+      get_mails(25, doc_type: '01')
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('ACME no tiene una conexión de SAP asignada.')
+    end
+
+    # La consulta dada de baja desde la pantalla de mantenimiento no se ejecuta:
+    # el error tiene que decir eso y no llegar como un 500.
+    it 'responde 422 si la consulta no está en el catálogo' do
+      SlResource.unscoped.where(code: 'getDocumentMails').update_all(is_active: false)
+
+      get_mails(25, doc_type: '01')
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to include('getDocumentMails')
+    end
+
+    it 'responde 502 traduciendo el error del Service Layer' do
+      allow(client).to receive(:get).and_raise(
+        Clavisco::ServiceLayer::Client::ServiceLayerError.new('SL error: boom', sap_message: 'Sesión inválida')
+      )
+
+      get_mails(25, doc_type: '01')
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(body['Message']).to eq('Sesión inválida')
+    end
+  end
+end
+
+# El botón "Reenviar" del panel "Correos". Reemplaza `POST /api/Email/` del .NET
+# (`spResendDocEmail`), que insertaba en la tabla `OutgoingMails` de la base
+# propia. Acá son DOS escrituras: la fila de la UDT (el detalle) y la de la cola
+# externa (el disparador real del envío).
+RSpec.describe 'POST /api/documents/:id/mails', type: :request do
+  let(:user)    { User.create!(email: 'documentos-reenvio@example.com') }
+  let(:role)    { Role.create!(name: 'Configurador') }
+  let(:company) { Company.create!(name: 'ACME S.A.', sap_db: 'SBO_ACME') }
+  let(:client)  { instance_double(Clavisco::ServiceLayer::Client) }
+  let(:odbc_client) { instance_double(ExternalDb::Client) }
+
+  # El correo de tipo Envío (1) del documento: el original, del que se copian los
+  # destinatarios cuando no se indican otros.
+  let(:original_mail) do
+    { 'Code' => '8', 'U_CreatedAt' => '2026-09-11T10:03:12-06:00', 'U_Status' => 3, 'U_Type' => 1,
+      'U_OutputTo' => 'cliente@test.com', 'U_OutputCC' => 'copia@test.com',
+      'U_OutputBCC' => 'oculta@test.com', 'U_Details' => 'SMTP rechazó la conexión' }
+  end
+
+  def sign_in_with(*permission_names)
+    UsersByCompany.create!(user: user, company: company)
+    UserRole.create!(user: user, role: role, company: company)
+    permission_names.each do |name|
+      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
+    end
+    sign_in(user, company: company)
+  end
+
+  def body = JSON.parse(response.body)
+
+  def resend(id, params = {})
+    post "/api/documents/#{id}/mails", params: { doc_type: '01' }.merge(params)
+  end
+
+  before do
+    SlResource.unscoped.find_or_initialize_by(code: 'getDocumentMails').tap do |r|
+      r.update!(resource: 'U_CL_FEC_MAILSDETAILS',
+                query_params: '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType)&$orderby=Code desc',
+                page_size: 0, is_active: true)
+    end
+    SlResource.unscoped.find_or_initialize_by(code: 'createDocumentMail').tap do |r|
+      r.update!(resource: 'U_CL_FEC_MAILSDETAILS', query_params: nil, page_size: 0, is_active: true)
+    end
+
+    allow(Sap::CompanyClient).to receive(:for).and_return(client)
+    allow(client).to receive(:get).and_return([original_mail])
+    allow(client).to receive(:post).and_return({ 'Code' => '9' })
+    allow(ExternalDb::Pool).to receive(:with).with(Documents::MailQueue::GROUP_CODE).and_yield(odbc_client)
+    allow(odbc_client).to receive(:call).and_return([])
+  end
+
+  describe 'autorización' do
+    it 'responde 401 sin sesión' do
+      resend(25)
+
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'exige Documents_Issued_ViewDocuments' do
+      sign_in_with('Documents_Issued_ViewDocuments_Otro')
+      resend(25)
+
+      expect(response).to have_http_status(:forbidden)
+    end
+  end
+
+  describe 'con permiso' do
+    before { sign_in_with('Documents_Issued_ViewDocuments') }
+
+    context 'con otros destinatarios' do
+      it 'crea la fila con lo que se escribió, en tipo Reenvío y estado Pendiente' do
+        resend(25, OtherEmails: true, MailTo: 'otro@test.com', MailCC: 'otrocc@test.com')
+
+        expect(response).to have_http_status(:ok)
+        expect(client).to have_received(:post).with('U_CL_FEC_MAILSDETAILS', body: hash_including(
+          'U_DocEntry' => 25,
+          'U_DocType' => '01',
+          'U_Status' => Documents::MailQueue::STATUS_PENDING,
+          'U_Type' => Sap::MailQueue::TYPE_RESEND,
+          'U_OutputTo' => 'otro@test.com',
+          'U_OutputCC' => 'otrocc@test.com'
+        ))
+      end
+
+      # Los destinatarios escritos REEMPLAZAN a los originales; no se mezclan con
+      # ellos ni se arrastra la copia oculta del envío anterior, que iría a
+      # alguien que quien reenvía no eligió y no puede ver.
+      it 'no arrastra la copia oculta del correo original' do
+        resend(25, OtherEmails: true, MailTo: 'otro@test.com')
+
+        expect(client).to have_received(:post).with(anything, body: hash_including(
+          'U_OutputCC' => nil, 'U_OutputBCC' => nil
+        ))
+      end
+
+      it 'rechaza el reenvío sin "Para"' do
+        resend(25, OtherEmails: true, MailTo: '', MailCC: 'solocc@test.com')
+
+        expect(response).to have_http_status(:unprocessable_content)
+        expect(body['Message']).to eq('Indique al menos un destinatario en "Para".')
+        expect(client).not_to have_received(:post)
+      end
+    end
+
+    context 'sin otros destinatarios' do
+      # Los TRES campos del correo de tipo Envío: el reenvío es el mismo correo
+      # saliendo de nuevo, y dejar afuera la copia oculta cambiaría en silencio
+      # quién lo recibe.
+      it 'copia los destinatarios del correo de tipo Envío' do
+        resend(25, OtherEmails: false)
+
+        expect(response).to have_http_status(:ok)
+        expect(client).to have_received(:post).with(anything, body: hash_including(
+          'U_Type' => Sap::MailQueue::TYPE_RESEND,
+          'U_OutputTo' => 'cliente@test.com',
+          'U_OutputCC' => 'copia@test.com',
+          'U_OutputBCC' => 'oculta@test.com'
+        ))
+      end
+
+      # Sin el original no hay de dónde copiar, y mandar un correo sin
+      # destinatario no es una opción: se dice qué hacer en su lugar.
+      it 'responde 422 si el documento no tiene un correo de tipo Envío' do
+        allow(client).to receive(:get).and_return([original_mail.merge('U_Type' => 2)])
+
+        resend(25, OtherEmails: false)
+
+        expect(response).to have_http_status(:unprocessable_content)
+        expect(body['Message']).to include('no tiene un correo de envío original')
+        expect(client).not_to have_received(:post)
+      end
+    end
+
+    # La fila de la UDT es el DETALLE; la de la cola externa es lo que hace que
+    # `SendElectronicReceiptJob` mire este documento. Sin la segunda, el reenvío
+    # queda registrado y no lo manda nadie.
+    # La fila de la cola lleva el `Code` que devolvió el POST a la UDT: es el
+    # enlace por el que el job sabe qué correo manda. Y va con tipo Reenvío, que
+    # es lo que hace que el procedimiento NO aplique su dedupe.
+    it 'encola el envío en la cola externa con el Code de la UDT y el tipo Reenvío' do
+      resend(25, OtherEmails: false)
+
+      expect(odbc_client).to have_received(:call).with(
+        Documents::MailQueue::CREATE_PROCEDURE,
+        ['SBO_ACME', 25, '01', 9, Sap::MailQueue::TYPE_RESEND], commit: true
+      )
+    end
+
+    # Sin `Code` no hay enlace, y una fila de cola que no dice qué mandar la
+    # termina marcando en Error el job. Mejor no encolar y decirlo.
+    it 'no encola si SAP no devolvió el Code del correo registrado' do
+      allow(client).to receive(:post).and_return({})
+
+      resend(25, OtherEmails: false)
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(odbc_client).not_to have_received(:call)
+    end
+
+    it 'rechaza un tipo de documento inválido' do
+      resend(25, doc_type: 'XX')
+
+      expect(response).to have_http_status(:unprocessable_content)
+    end
+
+    it 'responde con un error claro si la compañía no tiene SAP configurado' do
+      allow(Sap::CompanyClient).to receive(:for)
+        .and_raise(Sap::CompanyClient::MissingConfiguration, 'ACME no tiene una conexión de SAP asignada.')
+
+      resend(25, OtherEmails: false)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('ACME no tiene una conexión de SAP asignada.')
+    end
+
+    it 'responde 502 traduciendo el error del Service Layer' do
+      allow(client).to receive(:post).and_raise(
+        Clavisco::ServiceLayer::Client::ServiceLayerError.new('SL error: boom', sap_message: 'Sesión inválida')
+      )
+
+      resend(25, OtherEmails: false)
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(body['Message']).to eq('Sesión inválida')
+    end
+
+    it 'responde 502 si la cola externa no responde' do
+      allow(ExternalDb::Pool).to receive(:with).and_raise(ExternalDb::Error, 'la base no responde')
+
+      resend(25, OtherEmails: false)
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(body['Message']).to eq('la base no responde')
+    end
+  end
+end
+
 RSpec.describe 'PATCH /api/documents/:id/reprocess', type: :request do
   let(:user)    { User.create!(email: 'documentos-reprocess@example.com', name: 'Ana Pérez') }
   let(:role)    { Role.create!(name: 'Configurador') }

@@ -1113,25 +1113,22 @@ puede funcionar:
       `ALTER TABLE ... DROP/ADD CONSTRAINT CK_OutgoingMailsQueue_Status CHECK (... IN
       (1,2,3,4,5))` a mano en la base externa de cada instalación (SQL Server confirmado;
       la sintaxis de HANA no se probó contra una base real).
-- [ ] **UDT de correos renombrada (`@CL_FEC_MAILSQUEUE` → `@CL_FEC_MAILSDETAILS`) —
-      pendiente de aplicar en SAP.** El lado de la aplicación ya está: el schema, el
+- [x] **UDT de correos renombrada (`@CL_FEC_MAILSQUEUE` → `@CL_FEC_MAILSDETAILS`) —
+      aplicada en SAP (2026-09-12).** El lado de la aplicación ya estaba: el schema, el
       catálogo (`db/seeds.rb` → `SL_RESOURCES_MAIL_QUEUE`) y la migración
       `20260911150000_rename_mail_udt_sl_resources.rb` para las instalaciones ya sembradas.
-      Lo que falta es SAP, y no lo resuelve un `sync`: **`sap:schema:sync` nunca renombra**
+      Del lado de SAP no lo resolvía un `sync`: **`sap:schema:sync` nunca renombra**
       (`CLAUDE.md` §32), así que crea una UDT nueva y vacía y deja la vieja en su lugar.
-      Hoy la única base afectada es la de pruebas (`TST_CL_DEVDEMOCR`) — no hay clientes
-      con estos schemas creados —, y ahí el orden es:
-      1. **Drenar la UDT vieja ANTES de cambiar el catálogo.** Las filas con `U_Status`
-         1/2/3 son correos pendientes; después del rename `getMailInformation` consulta la
-         tabla nueva y esas filas quedan invisibles. El síntoma es el `sin_udt` de
-         `SendElectronicReceiptJob` ("SAP no tiene un registro pendiente en la UDT"), y la
-         fila de la cola externa se marca `Error` y reintenta con backoff para siempre.
-      2. `rake "sap:schema:diff[...]"` y después `sync` para crear `@CL_FEC_MAILSDETAILS`.
-      3. Dar de baja `@CL_FEC_MAILSQUEUE` con un manifiesto `delete_table: true` en
-         `config/sap_schemas/delete/`, una vez confirmado que no quedan filas sin enviar.
-         Es interactivo e irreversible. El manifiesto **se borra después de correrlo**
-         mientras no haya instalaciones en productivo (§32) — la tarea lo necesita para
-         saber qué borrar, pero no hay auditoría que conservar.
+      La única base afectada era la de pruebas (`TST_CL_DEVDEMOCR`) — no hay clientes con
+      estos schemas creados.
+
+      ⚠️ **Verificar que `@CL_FEC_MAILSQUEUE` haya quedado dada de baja.** El rename crea
+      la tabla nueva pero NO borra la vieja: eso es un manifiesto `delete_table: true` en
+      `config/sap_schemas/delete/`, interactivo e irreversible, y solo después de
+      confirmar que no le quedan filas con `U_Status` 1/2/3 (serían correos pendientes que
+      nadie va a mandar — el síntoma es el `sin_udt` de `SendElectronicReceiptJob`). El
+      manifiesto **se borra después de correrlo** mientras no haya instalaciones en
+      productivo (§32).
 - [ ] **`Azure::BlobStorage#download`/`Documents::XmlArchive.fetch` sin probar contra una
       cuenta de Azure real.** Mismo aviso que ya existe para `#upload` (más arriba,
       "`U_CL_FEC_XmlSentUrl`"): el algoritmo de firma Shared Key para `Get Blob` está
@@ -1703,7 +1700,7 @@ no para este listado — decisión del 2026-09-05). Lo que sigue sin migrar:
 
 - [ ] **Las acciones por fila siguen pegándole al proxy .NET con un `Id` que ya no
       existe.** Ver/Descargar PDF (`/api/Report/*InvoicePDF`), Ver/Descargar XML Hacienda
-      y Descargar Doc XML (`/api/Documents/*XML*`), Correos (`/api/Email/*`), Omitir
+      y Descargar Doc XML (`/api/Documents/*XML*`), Omitir
       Validaciones y Anulación Interna (`/api/Documents` PATCH) y Descarga Masiva
       (`/api/Report/BulkDownloadOfDocuments`). Todas asumían un `Id` de la base local del
       .NET (`spGetDocuments`); el listado nuevo viene de SAP y solo puede ofrecer
@@ -1714,6 +1711,69 @@ no para este listado — decisión del 2026-09-05). Lo que sigue sin migrar:
       una se resuelve por `DocEntry`+`DocType` contra SAP o necesita datos que hoy solo
       tiene el .NET (el PDF sale de un Crystal Report, el XML/envío a Hacienda depende del
       paso 4 de "Emisión de documentos" más arriba, que tampoco existe todavía).
+
+- [x] **Correos (el LISTADO del panel) — migrado a Rails (2026-09-12).**
+      `GET /api/documents/:id/mails?doc_type=` (`Api::DocumentsController#mails` +
+      `Sap::MailQueue#list`) lee el historial de la UDT `@CL_FEC_MAILSDETAILS` con la
+      consulta `getDocumentMails` del catálogo, filtrando por `U_DocEntry`+`U_DocType` y
+      ordenando por `Code desc`. Reemplaza `GET /api/Email/GetOutgoingMails?docId=N`, que
+      ejecutaba `spGetOutgoingMails` contra la tabla `OutgoingMails` de la base propia del
+      .NET — ese detalle ya no se escribe ahí: lo escribe `Sap::MailQueue` en la UDT,
+      junto al documento, igual que el historial de intentos.
+      Se pudo migrar sin esperar al resto porque la UDT identifica el correo con
+      `DocEntry`+`DocType`, no con el `Id` local (mismo motivo que Reprocesar).
+      La respuesta ya trae `OutputBCC` y `Sender` (el remitente, `U_Email`), que el panel
+      todavía no muestra: están disponibles si se quieren agregar a la tarjeta.
+
+- [x] **Correos — "Otros destinatarios" y "Reenviar" migrados a Rails (2026-09-12).**
+      `POST /api/documents/:id/mails?doc_type=` (`Api::Documents::MailsController#create`)
+      reemplaza `POST /api/Email/` (`spResendDocEmail`). Registra la fila de tipo Reenvío
+      (`U_Type = 2`) en la UDT y la encola en la cola externa (§37) — las dos cosas: la
+      primera es el detalle, la segunda el disparador de `SendElectronicReceiptJob`.
+      Con "otros destinatarios" usa lo que se escribió; sin ellos copia los tres campos
+      de destinatarios del correo de tipo Envío (1) del documento.
+
+      **Pendiente — permiso propio.** Hoy lo autoriza `Documents_Issued_ViewDocuments`,
+      el mismo que ver la pantalla. Es al menos tan estricto como el .NET (su
+      `EmailController` solo tenía `[Authorize]`, sin permiso), pero reenviar manda un
+      correo REAL a un cliente y merece su propio permiso —`Documents_Emission_ResendMail`,
+      al lado de `Documents_Emission_Reprocess`—. No se agregó ahora para no dejar a todos
+      los roles existentes sin poder reenviar hasta que alguien se lo conceda. Al agregarlo
+      toca: `db/seeds.rb`, una migración de catálogo (§28), el `PERMISSIONS` del controller,
+      el `#hasPerm` del JS que gatea el botón (§26) y `db/permission_name_map.yml`.
+
+- [ ] **`OutgoingMailsQueue` + sus dos procedimientos — aplicar los cambios a las bases YA
+      instaladas.** Los scripts (`db/external/sql_server/schema.sql` y
+      `db/external/hana/schema.sql`) son la referencia de una base NUEVA y **no se aplican
+      solos**. En una instalación viva hay que correr a mano, en este orden:
+
+      1. `ALTER TABLE OutgoingMailsQueue ADD Type TINYINT NOT NULL DEFAULT 1` + su
+         `CHECK (Type IN (1,2))`.
+      2. `ALTER TABLE OutgoingMailsQueue ADD UdtCode INT NULL` (nullable: las filas ya
+         encoladas no lo tienen). `INT` porque la UDT es `bott_NoObjectAutoIncrement` y
+         su `Code` es un consecutivo que asigna SAP — mismo tipo a los dos lados del
+         enlace.
+      3. Reemplazar `CL_D_CL_MLT_FEC_CRT_MAILTOQUEUE` — ahora recibe `@UdtCode` y `@Type`,
+         y el dedupe aplica SOLO cuando `@Type = 1`.
+      4. Reemplazar `CL_D_CL_MLT_FEC_SLT_PENDINGMAILS` — agrega `UdtCode` a la salida.
+
+      **Por qué el enlace explícito:** desde que existe el botón "Reenviar", un documento
+      puede tener varias filas vivas a la vez, cada una con sus propios destinatarios.
+      Resolver el detalle buscando "el correo pendiente de este documento" dejó de tener
+      una sola respuesta; ahora la fila de la cola guarda el `Code` de SU fila de la UDT y
+      `SendElectronicReceiptJob` la lee por llave (`Sap::MailQueue#fetch`).
+      El enlace va en esa dirección —y no un `QueueId` dentro de la UDT— porque así el
+      orden de escritura es seguro: primero la UDT (que devuelve el `Code` en el POST) y
+      después la fila de cola, que nace reclamable. Al revés habría una ventana en la que
+      `SLT_PENDINGMAILS` reclama una fila cuyo detalle todavía no existe.
+
+      **Por qué el dedupe cambió además de condicionarse:** los estados terminales son DOS
+      —4 Enviado y 5 Omitido— y con la condición vieja (`Status <> 4`) un correo que
+      terminó en Omitido contaba como "ya hay uno en curso". Los vivos son 1, 2 y 3.
+
+      ⚠️ **Las filas encoladas antes del cambio quedan sin `UdtCode`** y el job las marca
+      en Error con ese motivo, en vez de adivinar a cuál correo corresponden. Si al aplicar
+      esto quedara alguna pendiente, lo correcto es reenviarla desde el panel "Correos".
 
 - [x] **Reprocesar — migrado a Rails (2026-09-06), ya no pega al servidor de
       sincronización .NET (`ApiFEUrl`).** `PATCH /api/documents/:id/reprocess?doc_type=`

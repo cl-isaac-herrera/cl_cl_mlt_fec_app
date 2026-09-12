@@ -305,7 +305,7 @@ END;
 -- (`Documents::MailQueue` / `SendElectronicReceiptJob`). Analogía de
 -- DocumentsQueue para el correo, pero deliberadamente más chica: sin tabla de
 -- historial de intentos — el detalle de cada intento vive en la UDT de SAP
--- (`U_Details`, `@CL_FEC_MAILSQUEUE`), no acá. Mismas reglas de motor que el
+-- (`U_Details`, `@CL_FEC_MAILSDETAILS`), no acá. Mismas reglas de motor que el
 -- resto de este archivo (ver el encabezado).
 -- =====================================================================================
 
@@ -324,6 +324,18 @@ CREATE COLUMN TABLE "OutgoingMailsQueue" (
     -- mismo que `U_Status` de la UDT (`config/sap_schemas/outgoing_mails_udt.json`).
     "Status"    TINYINT      DEFAULT 1 NOT NULL,
     "Attempts"  TINYINT      DEFAULT 0 NOT NULL,
+    -- 1 Envío (automático) / 2 Reenvío (a pedido) — el mismo catálogo que
+    -- `U_Type` de la UDT. Lo único que decide acá es el dedupe de
+    -- CL_D_CL_MLT_FEC_CRT_MAILTOQUEUE: un reenvío SIEMPRE inserta.
+    "Type"      TINYINT      DEFAULT 1 NOT NULL,
+    -- `Code` de la fila de la UDT `@CL_FEC_MAILSDETAILS` que esta fila manda.
+    -- Enlace 1:1 en esta dirección a propósito: la cola es el disparador y
+    -- necesita saber QUÉ mandar. Ver el comentario extendido en
+    -- `db/external/sql_server/schema.sql`.
+    -- INTEGER y no `NVARCHAR`: la UDT es `bott_NoObjectAutoIncrement` y su
+    -- `Code` es un consecutivo numérico que asigna SAP.
+    -- NULL solo en las filas encoladas ANTES de este cambio.
+    "UdtCode"   INTEGER,
     "CreatedAt" TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "UpdatedAt" TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
@@ -331,7 +343,8 @@ CREATE COLUMN TABLE "OutgoingMailsQueue" (
     -- (1,2,3,4) a (1,2,3,4,5) — este script es la referencia para una base
     -- nueva, no se aplica solo (ver `TODOS.md` → Emisión de documentos).
     CONSTRAINT "PK_OutgoingMailsQueue" PRIMARY KEY ("Id"),
-    CONSTRAINT "CK_OutgoingMailsQueue_Status" CHECK ("Status" IN (1, 2, 3, 4, 5))
+    CONSTRAINT "CK_OutgoingMailsQueue_Status" CHECK ("Status" IN (1, 2, 3, 4, 5)),
+    CONSTRAINT "CK_OutgoingMailsQueue_Type" CHECK ("Type" IN (1, 2))
 );
 
 ALTER TABLE "OutgoingMailsQueue"
@@ -351,12 +364,27 @@ ON "OutgoingMailsQueue" ("SAPDB", "DocType", "DocEntry");
 -- =====================================================================================
 -- Procedimiento: CL_D_CL_MLT_FEC_CRT_MAILTOQUEUE
 -- Encola el envío del correo de recepción, después de registrar la fila en la UDT.
--- No duplica mientras exista una fila sin terminar (Status <> 4) para el mismo documento.
+-- IV_UDTCODE es el `Code` que devolvió ese POST: qué fila de la UDT manda esta.
+--
+-- El dedupe aplica SOLO al envío automático (IV_TYPE = 1). Un REENVÍO (2)
+-- SIEMPRE inserta: cada pedido trae su propia fila de la UDT con sus
+-- destinatarios, y sin fila de cola propia que la apunte, ese detalle no lo
+-- manda nadie. Ver el comentario extendido en `db/external/sql_server/schema.sql`.
+--
+-- ⚠️ La condición decía `Status <> 4` y eso bloqueaba el reenvío de un documento
+-- cuyo correo terminó en Omitido (5): la fila nueva no se insertaba y el correo
+-- quedaba registrado en la UDT sin que nadie lo mandara, sin ningún error. Los
+-- estados TERMINALES son dos (4 Enviado y 5 Omitido) y ninguno debe bloquear.
+--
+-- ⚠️ Una instalación YA viva necesita aplicar el reemplazo a mano: este script
+-- es la referencia de una base nueva, no se aplica solo. Ver `TODOS.md`.
 -- =====================================================================================
 CREATE PROCEDURE "CL_D_CL_MLT_FEC_CRT_MAILTOQUEUE" (
     IN IV_SAPDB    NVARCHAR(30),
     IN IV_DOCENTRY INTEGER,
-    IN IV_DOCTYPE  NVARCHAR(2)
+    IN IV_DOCTYPE  NVARCHAR(2),
+    IN IV_UDTCODE  INTEGER,
+    IN IV_TYPE     TINYINT
 )
 LANGUAGE SQLSCRIPT AS
 BEGIN
@@ -367,12 +395,13 @@ BEGIN
      WHERE "SAPDB"    = :IV_SAPDB
        AND "DocEntry" = :IV_DOCENTRY
        AND "DocType"  = :IV_DOCTYPE
-       AND "Status"  <> 4;
+       AND "Status" IN (1, 2, 3);
 
-    IF :lv_existing = 0 THEN
+    IF :IV_TYPE = 2 OR :lv_existing = 0 THEN
         INSERT INTO "OutgoingMailsQueue"
-               ("DocEntry", "DocType", "SAPDB", "Status", "Attempts", "CreatedAt", "UpdatedAt")
-        VALUES (:IV_DOCENTRY, :IV_DOCTYPE, :IV_SAPDB, 1, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+               ("DocEntry", "DocType", "SAPDB", "Status", "Attempts", "Type", "UdtCode", "CreatedAt", "UpdatedAt")
+        VALUES (:IV_DOCENTRY, :IV_DOCTYPE, :IV_SAPDB, 1, 0, :IV_TYPE, :IV_UDTCODE,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
     END IF;
 END;
 
@@ -389,7 +418,9 @@ CREATE PROCEDURE "CL_D_CL_MLT_FEC_SLT_PENDINGMAILS" (
         "Id"       BIGINT,
         "DocEntry" INTEGER,
         "DocType"  NVARCHAR(2),
-        "SAPDB"    NVARCHAR(30)
+        "SAPDB"    NVARCHAR(30),
+        -- Qué fila de la UDT manda esta: el job la lee por llave con este valor.
+        "UdtCode"  INTEGER
     )
 )
 LANGUAGE SQLSCRIPT AS
@@ -408,7 +439,7 @@ BEGIN
         OR ("Status" = 3 AND SECONDS_BETWEEN("UpdatedAt", :lv_now) >= POWER(2, "Attempts") * 60);
 
     ET_MAILS =
-        SELECT "Id", "DocEntry", "DocType", "SAPDB"
+        SELECT "Id", "DocEntry", "DocType", "SAPDB", "UdtCode"
           FROM "OutgoingMailsQueue"
          WHERE "Status"    = 2
            AND "UpdatedAt" = :lv_now;

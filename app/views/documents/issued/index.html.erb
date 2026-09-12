@@ -206,11 +206,19 @@
        class="fixed top-0 right-0 h-full w-full max-w-xl bg-white shadow-2xl z-50
               translate-x-full transition-transform duration-300 ease-in-out flex flex-col">
 
-    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-      <h3 class="text-base font-semibold text-gray-800">Historial de correos</h3>
+    <div class="flex items-start justify-between gap-3 px-6 py-4 border-b border-gray-100 flex-shrink-0">
+      <div class="min-w-0">
+        <h3 class="text-base font-semibold text-gray-800">Historial de correos</h3>
+        <%# De qué documento es el panel. Quien lo abrió lo sabe, pero el panel se
+            queda abierto y no hay nada más adentro que lo identifique. Lo llena
+            `#openEmailModal` con el mismo rótulo que la columna de la tabla
+            ("N° FE", o "N° Ref" mientras Hacienda no haya asignado el consecutivo). %>
+        <p data-documents-issued-target="emailDocNumber" data-testid="email-doc-number"
+           class="mt-0.5 text-xs text-gray-500 break-all"></p>
+      </div>
       <button type="button"
               data-action="click->documents-issued#closeEmailPanel"
-              class="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors">
+              class="p-1 -mt-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors flex-shrink-0">
         <span class="material-icons text-xl">close</span>
       </button>
     </div>
@@ -237,11 +245,20 @@
         <p class="text-sm text-gray-400">No hay correos para este documento</p>
       </div>
 
+      <%# Falla de la consulta. Es un estado aparte del anterior a propósito: %>
+      <%# decir "no hay correos" cuando SAP no respondió es afirmar algo que no se sabe. %>
+      <p data-documents-issued-target="emailError"
+         class="hidden flex-1 flex items-center justify-center text-center text-sm text-red-600"></p>
+
       <%# Form otros destinatarios — altura fija, empuja la tabla hacia arriba %>
       <div data-documents-issued-target="otherEmailsForm" class="hidden flex-shrink-0 p-4 border border-gray-200 rounded-lg">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1">Para</label>
+            <%# Obligatorio: un reenvío con otros destinatarios sin "Para" lo
+                rechaza el servidor (ver `#updateResendButton`). %>
+            <label class="block text-xs font-medium text-gray-600 mb-1">
+              Para <span class="text-red-500">*</span>
+            </label>
             <input type="text"
                    data-documents-issued-target="inputEmailTo"
                    data-action="input->documents-issued#onEmailRecipientInput"

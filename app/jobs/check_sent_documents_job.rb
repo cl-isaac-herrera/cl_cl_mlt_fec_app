@@ -139,7 +139,7 @@ class CheckSentDocumentsJob < ApplicationJob
     mark_queue(entry, status: status)
     record_attempt(entry, company, status: status, details: details)
     mark_sap(entry, company, status: status, details: details, xml_response_url: xml_response_url)
-    queue_receipt_mail(entry)
+    queue_receipt_mail(entry, company)
 
     result.accepted? ? :aceptado : :rechazado
   end
@@ -153,10 +153,40 @@ class CheckSentDocumentsJob < ApplicationJob
   # Hacienda RECIBIÓ el documento (`Sent`), antes de esta resolución — acá no
   # hace falta volver a leer la cabecera para eso.
   #
+  # Sí hay que buscar su `Code`: la fila de la cola lo guarda (`UdtCode`) para
+  # que `SendElectronicReceiptJob` sepa por llave qué correo manda. Se creó en
+  # OTRA corrida, así que lo único que hay acá para encontrarla es el documento
+  # — y en este momento hay una sola fila pendiente, antes de que exista ningún
+  # reenvío. Es el único lugar donde `#find` sigue siendo la pregunta correcta.
+  #
+  # Se lee como ENTERO: la UDT es `bott_NoObjectAutoIncrement` y la columna que
+  # lo guarda es `int` (ver `Documents::MailQueue::Entry`). Un `Code` que no sea
+  # numérico devuelve `nil` y cae en la misma rama que "no hay fila" — es lo
+  # correcto: no se puede encolar algo que no se va a poder leer por llave.
+  #
+  # Sin `Code` NO se encola: una fila de cola que no dice qué mandar la termina
+  # marcando en Error el job de envío, y eso gasta un intento y ensucia el
+  # monitoreo. Que no haya fila en la UDT significa que
+  # `SyncIssuedDocumentsJob` no pudo crearla (el documento no tenía correo del
+  # receptor), y ahí no hay correo que mandar.
+  #
   # Ni la cola externa puede tumbar la verificación del documento: es una
   # notificación aparte, no el desenlace que `#resolved` ya registró.
-  def queue_receipt_mail(entry)
-    Documents::MailQueue.create(sap_db: entry.sap_db, doc_entry: entry.doc_entry, doc_type: entry.doc_type)
+  def queue_receipt_mail(entry, company)
+    mail_row = Sap::MailQueue.new(client: client_for(company))
+                             .find(doc_entry: entry.doc_entry, doc_type: entry.doc_type)
+    udt_code = mail_row&.integer('Code')
+
+    if udt_code.blank?
+      Rails.logger.info(
+        "[CheckSentDocuments] #{entry}: sin correo pendiente en la UDT, no se encola el de recepción."
+      )
+      return
+    end
+
+    Documents::MailQueue.create(sap_db: entry.sap_db, doc_entry: entry.doc_entry,
+                                doc_type: entry.doc_type, udt_code: udt_code,
+                                type: Sap::MailQueue::TYPE_SEND)
   rescue StandardError => e
     Rails.logger.error("[CheckSentDocuments] #{entry}: no se pudo encolar el correo de recepción — #{e.message}")
     Sentry.capture_exception(e)

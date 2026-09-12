@@ -261,18 +261,45 @@ RSpec.describe CheckSentDocumentsJob do
   # EXTERNA (`Documents::MailQueue`, el disparador real de
   # `SendElectronicReceiptJob`), y sin condicionar por destinatario: eso ya se
   # decidió antes.
+  #
+  # Sí busca el `Code` de esa fila: la de la cola lo guarda para que el envío
+  # sepa por llave qué correo manda. Es el único lugar donde buscar por
+  # documento sigue siendo la pregunta correcta — todavía no existe ningún
+  # reenvío, así que hay una sola fila pendiente.
   describe 'correo de recepción' do
-    before { allow(Documents::MailQueue).to receive(:create) }
+    let(:sap_mail_queue) { instance_double(Sap::MailQueue, find: Documents::Row.new('Code' => '9')) }
 
-    it 'encola en la cola externa cuando Hacienda acepta' do
+    before do
+      allow(Documents::MailQueue).to receive(:create)
+      allow(Sap::MailQueue).to receive(:new).and_return(sap_mail_queue)
+    end
+
+    it 'encola en la cola externa cuando Hacienda acepta, con el Code de la UDT' do
       queue(entry)
       allow(hacienda).to receive(:check_status)
         .and_return(check_result(status: 'aceptado', xml_base64: Base64.strict_encode64('<Mensaje/>')))
 
       described_class.perform_now
 
+      expect(sap_mail_queue).to have_received(:find).with(doc_entry: 25, doc_type: DocType::FE)
       expect(Documents::MailQueue).to have_received(:create)
-        .with(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: DocType::FE)
+        .with(sap_db: 'SBO_ACME', doc_entry: 25, doc_type: DocType::FE,
+              udt_code: 9, type: Sap::MailQueue::TYPE_SEND)
+    end
+
+    # Sin fila en la UDT no hay correo que mandar: `SyncIssuedDocumentsJob` no
+    # la creó porque el documento no traía correo del receptor. Encolar igual
+    # dejaría una fila que el job de envío marca en Error, gastando un intento y
+    # ensuciando el monitoreo con algo que no es un fallo.
+    it 'no encola cuando la UDT no tiene el correo del documento' do
+      queue(entry)
+      allow(sap_mail_queue).to receive(:find).and_return(nil)
+      allow(hacienda).to receive(:check_status)
+        .and_return(check_result(status: 'aceptado', xml_base64: Base64.strict_encode64('<Mensaje/>')))
+
+      described_class.perform_now
+
+      expect(Documents::MailQueue).not_to have_received(:create)
     end
 
     it 'también encola cuando Hacienda rechaza' do

@@ -673,9 +673,15 @@ SL_RESOURCES_DOCUMENT_QUERIES = [
 ].freeze
 
 # ── Cola de correos de recepción electrónica (UDT `@CL_FEC_MAILSDETAILS`) ───
-# Las tres consultas que `Sap::MailQueue` necesita para leer/crear/actualizar
+# Las cinco consultas que `Sap::MailQueue` necesita para leer/crear/actualizar
 # filas de la UDT declarada en `config/sap_schemas/outgoing_mails_udt.json`
 # (ver `SyncIssuedDocumentsJob#queue_receipt_mail` y `SendElectronicReceiptJob`).
+#
+# Las DOS lecturas de una sola fila no son redundantes, resuelven preguntas
+# distintas: `getDocumentMailByCode` lee por llave y la usa el ENVÍO, que ya sabe
+# cuál correo manda (el `Code` viaja en la fila de la cola);
+# `getPendingDocumentMail` busca por documento y la usa el ENCOLADO, que todavía
+# no lo sabe. Ver el comentario de cada una más abajo.
 #
 # ── La UDT tiene DOS nombres, y acá va el de OData ───────────────────────────
 # `@CL_FEC_MAILSDETAILS` es el nombre SQL/DI-API: el que declara el schema y el
@@ -695,38 +701,74 @@ SL_RESOURCES_DOCUMENT_QUERIES = [
 # citarlo hace fallar la petición. Una UDT de las otras categorías, con `Code`
 # alfanumérico, sí las necesitaría.
 #
-# El `$filter` de la consulta excluye `U_Status = 4` (Enviado) y `= 5`
-# (Omitido, ver `Documents::MailQueue::STATUS_SKIPPED`): en el caso normal hay
-# a lo sumo una fila no terminada por documento, así que filtrar en SAP evita
-# traer filas ya resueltas y decidir acá cuál es "la vigente".
+# El `$filter` de `getPendingDocumentMail` excluye `U_Status = 4` (Enviado) y
+# `= 5` (Omitido, ver `Documents::MailQueue::STATUS_SKIPPED`): filtrar en SAP
+# evita traer filas ya resueltas y decidir acá cuál es "la vigente".
 #
-# `page_size: 0` en las tres: la de lectura filtra a lo sumo una fila y las
-# otras dos son escrituras — mismo criterio que `SL_RESOURCES_STATUS_UPDATES`.
+# ⚠️ Su `$orderby=Code desc` NO es decorativo. Desde que existe el botón
+# "Reenviar" (`Api::Documents::MailsController#create`) un documento puede tener
+# DOS filas sin terminar: el envío que quedó en Error y el reenvío que alguien
+# acaba de pedir. `Sap::MailQueue#find` se queda con la primera, y tiene que ser
+# la NUEVA — la que trae los destinatarios recién elegidos. Sin el orden, el
+# reintento le mandaba el correo al destinatario viejo y dejaba el reenvío
+# pendiente para siempre. Lo agrega `20260912140000` en una instalación ya
+# sembrada.
 #
-# ── El nombre `getMailInformation` (y no `qsGetMailQueueByDocument`) ─────────
-# Es un rename, no una fila nueva: una instalación ya migrada la trae con el
-# `code` viejo, y `db/migrate/20260907162000_rename_mail_queue_sl_resource.rb`
-# la renombra EN EL LUGAR (mismo `id`) para no perder una personalización de
-# `query_params` hecha desde la pantalla de mantenimiento.
+# ── `getDocumentMails` es lo contrario, y por eso es una fila aparte ─────────
+# Alimenta el panel "Correos" del listado de emitidos
+# (`documents_issued_controller.js`), que muestra el HISTORIAL: ahí las filas
+# que más importan son justamente las ya enviadas, las que
+# `getPendingDocumentMail` deja fuera. Reemplaza a `spGetOutgoingMails` del .NET,
+# que leía la tabla `OutgoingMails` de la base propia — ese detalle ahora vive en
+# la UDT, junto al documento, igual que el historial de intentos
+# (`SL_RESOURCES_DOC_SYNC_ATTEMPTS`).
 #
-# ── La UDT se llamaba `@CL_FEC_MAILSQUEUE` ──────────────────────────────────
-# Pasó a `@CL_FEC_MAILSDETAILS` porque lo que guarda es el DETALLE del correo
-# (destinatarios, remitente, estado visible en SAP) y no la cola: cuándo
-# reintentar lo decide la cola externa (`Documents::MailQueue`, `CLAUDE.md`
-# §37). Acá queda el nombre nuevo, y
-# `db/migrate/20260911150000_rename_mail_udt_sl_resources.rb` corrige las filas
-# de una instalación ya sembrada — sin la migración, el seed no alcanza: se
-# saltea las consultas que el cliente personalizó (`is_standard = false`).
+# Ordena por `Code` —la llave que SAP autoincrementa en la UDT— y no por
+# `U_CreatedAt`, que es texto (`db_Alpha(25)`); `desc` deja arriba el correo más
+# reciente, como el `ORDER BY Om.CreateDate desc` del SP que reemplaza.
+#
+# `page_size: 0` en las cuatro: las dos lecturas devuelven el puñado de filas de
+# un solo documento y las otras dos son escrituras — mismo criterio que
+# `SL_RESOURCES_STATUS_UPDATES`.
+#
+# ── Ni la UDT ni estos `code` dicen ya "cola" ───────────────────────────────
+# La UDT se llamaba `@CL_FEC_MAILSQUEUE` y pasó a `@CL_FEC_MAILSDETAILS` porque
+# lo que guarda es el DETALLE del correo (destinatarios, remitente, estado
+# visible en SAP) y no la cola: cuándo reintentar lo decide la cola externa
+# (`Documents::MailQueue`, `CLAUDE.md` §37). Los `code` arrastraron el nombre
+# viejo un tiempo más —`getMailInformation`, `createMailQueue`,
+# `updateMailQueue`— y también se corrigieron.
+#
+# Acá quedan los nombres nuevos; las tres migraciones corrigen una instalación
+# ya sembrada, porque el seed NO alcanza: se saltea las consultas que el cliente
+# personalizó desde la pantalla de mantenimiento (`is_standard = false`), y ahí
+# la fila se quedaría con el nombre viejo — el `resource` respondería
+# `Service Not Found` y el `code` levantaría `UnknownResource`.
+#
+#   20260907162000  qsGetMailQueueByDocument → getMailInformation
+#   20260911150000  el `resource`: MAILSQUEUE → MAILSDETAILS
+#   20260912110000  los `code`: → getPendingDocumentMail / create… / update…
+#
+# Las tres renombran EN EL LUGAR (mismo `id`) para no perder una personalización
+# de `query_params`. Un delete + insert la borraría sin avisar.
 SL_RESOURCES_MAIL_QUEUE = [
-  ['getMailInformation',
-   'Detalle pendiente de envío en la cola de correos de recepción electrónica (UDT)',
+  ['getPendingDocumentMail',
+   'Correo de recepción electrónica pendiente de envío de un documento (UDT)',
    'U_CL_FEC_MAILSDETAILS',
-   '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and U_Status ne 4 and U_Status ne 5)', 0],
-  ['createMailQueue',
-   'Crea una fila en la cola de correos de recepción electrónica (UDT)',
+   '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType and U_Status ne 4 and U_Status ne 5)' \
+   '&$orderby=Code desc', 0],
+  ['createDocumentMail',
+   'Registra el correo de recepción electrónica de un documento (UDT)',
    'U_CL_FEC_MAILSDETAILS', nil, 0],
-  ['updateMailQueue',
-   'Actualiza el estado de una fila de la cola de correos de recepción electrónica (UDT)',
+  ['updateDocumentMail',
+   'Actualiza el estado del correo de recepción electrónica de un documento (UDT)',
+   'U_CL_FEC_MAILSDETAILS(#Code#)', nil, 0],
+  ['getDocumentMails',
+   'Historial de correos de recepción electrónica de un documento (UDT)',
+   'U_CL_FEC_MAILSDETAILS',
+   '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType)&$orderby=Code desc', 0],
+  ['getDocumentMailByCode',
+   'Correo de recepción electrónica de un documento, por su Code (UDT)',
    'U_CL_FEC_MAILSDETAILS(#Code#)', nil, 0]
 ].freeze
 

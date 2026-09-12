@@ -12,23 +12,37 @@ module Api
   #
   # ── Alcance de esta migración ────────────────────────────────────────────────
   # La BÚSQUEDA/listado, la consulta puntual de un documento (`show`, para
-  # refrescar el panel de información) y la acción "Reprocesar". El resto de
-  # las acciones por fila del legacy (ver/descargar PDF, ver/descargar XML,
-  # reenviar correo, anulación interna, omitir validaciones, descarga masiva)
-  # siguen sin migrar y sin consumidor coherente con esta forma de fila —usaban
-  # un `Id` de la base local que ya no existe en un resultado que viene de
-  # SAP—. Anotado en `TODOS.md` → Emisión de documentos.
+  # refrescar el panel de información) y la acción "Reprocesar". El panel
+  # "Correos" —listar y reenviar— vive en `Api::Documents::MailsController`, que
+  # cuelga de este recurso. El resto de las acciones por fila del legacy
+  # (ver/descargar PDF, ver/descargar XML, anulación interna, omitir
+  # validaciones, descarga masiva) siguen sin migrar y sin consumidor coherente
+  # con esta forma de fila —usaban un `Id` de la base local que ya no existe en
+  # un resultado que viene de SAP—. Anotado en `TODOS.md` → Emisión de
+  # documentos.
   #
   # `reprocess` SÍ se puede resolver con lo que da SAP (`DocEntry`+`DocType`) más
   # la compañía activa (`SAPDB`): no depende del `Id` local ni de ningún dato que
   # solo tenga el .NET, así que no comparte el bloqueo del resto.
+  #
+  # ⚠️ Los servicios del namespace `Documents` se nombran con `::` adelante
+  # (`::Documents::PendingQueue`, `::Documents::Row`). Desde que existe
+  # `Api::Documents` (el controller de correos), un `Documents::X` a secas se
+  # resuelve por alcance léxico contra `Api::Documents` —que SÍ existe— y muere
+  # con `uninitialized constant Api::Documents::X`, sin seguir buscando en el
+  # nivel superior. Vale para cualquier clase bajo `module Api`.
   #
   # ── Por qué no hay `Total` en la respuesta ──────────────────────────────────
   # Ver `Sap::IssuedDocumentsSearch`: el Service Layer no permite pedir más de 20
   # filas por respuesta sin un header que el submódulo no soporta, así que no hay
   # forma honesta de contar el total. Se manda `HasMore` en su lugar.
   class DocumentsController < AuthorizedController
+    # El orden importa: primero el permiso (401/403), después los datos del
+    # pedido (403 de compañía y 422 de tipo). Un usuario sin permiso no tiene
+    # por qué enterarse de si mandó bien los parámetros.
     before_action :authorize_action
+    before_action :require_company!
+    before_action :require_doc_type!
 
     MAX_PER_PAGE = Sap::IssuedDocumentsSearch::MAX_PAGE_SIZE
     DEFAULT_PER_PAGE = 10
@@ -44,19 +58,6 @@ module Api
     #                    &consecutivo_fe=&receptor=&cedula=&clave=&codigo_moneda=
     #                    &page=1&per_page=10
     def index
-      unless company
-        render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
-               status: :forbidden
-        return
-      end
-
-      doc_type = DocType.normalize(params[:doc_type])
-      if doc_type.nil? || DocType.receiver_message?(doc_type)
-        render json: ApiResponse.error('Debe indicar un tipo de documento válido.').to_h,
-               status: :unprocessable_content
-        return
-      end
-
       result = Sap::IssuedDocumentsSearch.new(
         doc_type: doc_type,
         client: Sap::CompanyClient.for(company),
@@ -97,20 +98,7 @@ module Api
     # `CheckSentDocumentsJob#header_for` aplica a las vistas, no a las entidades
     # OData nativas.
     def show
-      unless company
-        render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
-               status: :forbidden
-        return
-      end
-
-      doc_type = DocType.normalize(params[:doc_type])
-      if doc_type.nil? || DocType.receiver_message?(doc_type)
-        render json: ApiResponse.error('Debe indicar un tipo de documento válido.').to_h,
-               status: :unprocessable_content
-        return
-      end
-
-      row = fetch_error_details(doc_type: doc_type, doc_entry: params[:id].to_i)
+      row = fetch_error_details(doc_type: doc_type, doc_entry: doc_entry)
       if row.to_h.empty?
         render json: ApiResponse.error('SAP no devolvió el documento solicitado.').to_h, status: :not_found
         return
@@ -138,22 +126,9 @@ module Api
     # Antes lo leía `Documents::AttemptDetails` por ODBC, contra una tabla que
     # ya no existe.
     def attempts
-      unless company
-        render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
-               status: :forbidden
-        return
-      end
-
-      doc_type = DocType.normalize(params[:doc_type])
-      if doc_type.nil? || DocType.receiver_message?(doc_type)
-        render json: ApiResponse.error('Debe indicar un tipo de documento válido.').to_h,
-               status: :unprocessable_content
-        return
-      end
-
       items = Sap::DocSyncAttempts
               .new(client: Sap::CompanyClient.for(company))
-              .list(doc_entry: params[:id].to_i, doc_type: doc_type)
+              .list(doc_entry: doc_entry, doc_type: doc_type)
 
       render json: ApiResponse.success({ Items: items.map { |a| serialize_attempt(a) } }).to_h
     rescue Sap::CompanyClient::MissingConfiguration, Sap::ResourceQuery::UnknownResource => e
@@ -188,22 +163,7 @@ module Api
     # `Sap::CompanyClient` (licencia) — ese queda para procesos de fondo sin
     # usuario, como `SyncIssuedDocumentsJob`.
     def reprocess
-      unless company
-        render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
-               status: :forbidden
-        return
-      end
-
-      doc_type = DocType.normalize(params[:doc_type])
-      if doc_type.nil? || DocType.receiver_message?(doc_type)
-        render json: ApiResponse.error('Debe indicar un tipo de documento válido.').to_h,
-               status: :unprocessable_content
-        return
-      end
-
-      doc_entry = params[:id].to_i
-
-      reprocessed = Documents::PendingQueue.reprocess(
+      reprocessed = ::Documents::PendingQueue.reprocess(
         sap_db: company.sap_db,
         doc_entry: doc_entry,
         doc_type: doc_type
@@ -226,6 +186,36 @@ module Api
     end
 
     private
+
+    # Las cinco acciones operan sobre un documento de la compañía activa y todas
+    # necesitan lo mismo antes de empezar: que la compañía sea del usuario y que
+    # el tipo de comprobante sea uno que este producto emite. Vive acá y no
+    # repetido en cada acción para que una acción nueva no pueda nacer sin los
+    # dos controles — que es justo lo que pasa cuando el guard es copia y pega.
+    def require_company!
+      return if company
+
+      render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
+             status: :forbidden
+    end
+
+    # Los tres mensajes de receptor (`05`, `06`, `07`) no son comprobantes
+    # emitidos: no los devuelve ninguna de estas consultas, así que pedirlos es
+    # un error del llamador y no una búsqueda sin resultados.
+    def require_doc_type!
+      @doc_type = DocType.normalize(params[:doc_type])
+      return if @doc_type && !DocType.receiver_message?(@doc_type)
+
+      render json: ApiResponse.error('Debe indicar un tipo de documento válido.').to_h,
+             status: :unprocessable_content
+    end
+
+    # El tipo ya normalizado por `#require_doc_type!`.
+    attr_reader :doc_type
+
+    # `:id` del path. Es el `DocEntry` de SAP, no un id de la base de la app
+    # (ver la cabecera de la clase).
+    def doc_entry = params[:id].to_i
 
     def reprocess_details
       "Reprocesamiento solicitado por #{Current.user.name.presence || Current.user.email}"
@@ -253,12 +243,12 @@ module Api
       Sap::DocSyncAttempts.new(client: client).create(
         doc_entry: doc_entry,
         doc_type: doc_type,
-        status: Documents::PendingQueue::STATUS_REPROCESS,
+        status: ::Documents::PendingQueue::STATUS_REPROCESS,
         details: reprocess_details
       )
 
       Sap::DocumentStatus.new(client: client, doc_type: doc_type, doc_entry: doc_entry)
-                         .update_status_only(Documents::PendingQueue::STATUS_REPROCESS)
+                         .update_status_only(::Documents::PendingQueue::STATUS_REPROCESS)
     rescue Sap::UserClient::MissingConfiguration, Sap::ResourceQuery::UnknownResource,
            Clavisco::ServiceLayer::Client::ServiceLayerError => e
       Rails.logger.error(
@@ -280,7 +270,7 @@ module Api
     def fetch_error_details(doc_type:, doc_entry:)
       query = Sap::ResourceQuery.new("getDocumentErrorDetails#{doc_type}", bindings: { DocEntry: doc_entry })
 
-      Documents::Row.new(Sap::CompanyClient.for(company).get(query.path))
+      ::Documents::Row.new(Sap::CompanyClient.for(company).get(query.path))
     end
 
     def serialize_attempt(attempt)

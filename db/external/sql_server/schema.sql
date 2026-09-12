@@ -17,7 +17,7 @@ GO
 -- La tabla `DocumentAttemptDetails` se eliminó de este script: el historial de
 -- cada intento de sincronización de un documento pasó a la UDT de SAP
 -- `@CL_FEC_DOCSYNCATTMP` (`config/sap_schemas/doc_sync_attempts_udt.json`),
--- igual que el detalle del correo de recepción vive en `@CL_FEC_MAILSQUEUE` y
+-- igual que el detalle del correo de recepción vive en `@CL_FEC_MAILSDETAILS` y
 -- no acá. Así el operador ve la trazabilidad desde SAP, donde está el
 -- documento, sin depender de esta base.
 --
@@ -195,7 +195,7 @@ GO
 -- Ya NO recibe `@Details` ni registra el historial: el detalle de cada intento
 -- se guarda en la UDT `@CL_FEC_DOCSYNCATTMP` (lo escribe Rails por Service
 -- Layer), igual que `CL_D_CL_MLT_FEC_UPT_MAIL` deja el suyo en
--- `@CL_FEC_MAILSQUEUE`. Esta base solo decide cuándo reintentar.
+-- `@CL_FEC_MAILSDETAILS`. Esta base solo decide cuándo reintentar.
 --
 -- `@DocEntry`/`@DocType`/`@SAPDB` quedan en la firma aunque `@Id` ya identifique
 -- la fila, por compatibilidad con la firma existente.
@@ -275,7 +275,7 @@ GO
 -- (`Documents::MailQueue` / `SendElectronicReceiptJob`). Analogía de
 -- `DocumentsQueue` para el correo, con el mismo reparto que esa: acá vive
 -- CUÁNDO reintentar (`Status` + `Attempts`) y el detalle de cada intento vive
--- en la UDT de SAP (`U_Details`, `@CL_FEC_MAILSQUEUE`) — la de documentos usa
+-- en la UDT de SAP (`U_Details`, `@CL_FEC_MAILSDETAILS`) — la de documentos usa
 -- `@CL_FEC_DOCSYNCATTMP` para lo mismo.
 SET ANSI_NULLS ON
 GO
@@ -288,6 +288,32 @@ CREATE TABLE [dbo].[OutgoingMailsQueue](
 	[SAPDB] [nvarchar](30) NOT NULL,
 	[Status] [tinyint] NOT NULL,
 	[Attempts] [tinyint] NOT NULL,
+	-- 1 Envío (automático) / 2 Reenvío (a pedido desde el panel "Correos") — el
+	-- mismo catálogo que `U_Type` de la UDT y que `Sap::MailQueue::TYPE_*`.
+	-- Lo único que decide acá es el dedupe de `CL_D_CL_MLT_FEC_CRT_MAILTOQUEUE`:
+	-- un reenvío SIEMPRE inserta, un envío automático no se duplica.
+	[Type] [tinyint] NOT NULL,
+	-- `Code` de la fila de la UDT `@CL_FEC_MAILSDETAILS` que esta fila manda:
+	-- los destinatarios y el estado que ve el operador en SAP.
+	--
+	-- Es el enlace 1:1 entre las dos tablas y va en ESTA dirección a propósito.
+	-- La fila de la cola es el disparador y necesita saber QUÉ mandar; la de la
+	-- UDT es el detalle y no necesita saber quién la va a tomar. Además el orden
+	-- de escritura queda seguro: primero la UDT (que devuelve su `Code` en el
+	-- POST del Service Layer) y después esta fila, que nace reclamable. Al revés
+	-- —encolar primero y anotar el id en la UDT— habría una ventana en la que
+	-- `CL_D_CL_MLT_FEC_SLT_PENDINGMAILS` reclama una fila cuyo detalle todavía
+	-- no existe.
+	--
+	-- INT y no `nvarchar`: la UDT es `bott_NoObjectAutoIncrement`
+	-- (`config/sap_schemas/outgoing_mails_udt.json`), así que su `Code` es un
+	-- consecutivo que asigna SAP. Guardarlo con el MISMO tipo que tiene allá
+	-- evita que dos valores que son el mismo correo se vean distintos acá
+	-- (`'07'` vs `'7'`) y que una fila apunte a algo que no es un `Code`.
+	--
+	-- NULL solo en las filas encoladas ANTES de este cambio; una fila nueva
+	-- siempre lo trae (ver `SendElectronicReceiptJob`, que no adivina).
+	[UdtCode] [int] NULL,
 	[CreatedAt] [datetime2](3) NOT NULL,
 	[UpdatedAt] [datetime2](3) NOT NULL,
  CONSTRAINT [PK_OutgoingMailsQueue] PRIMARY KEY CLUSTERED
@@ -299,6 +325,8 @@ GO
 ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_Status] DEFAULT ((1)) FOR [Status]
 GO
 ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_Attempts] DEFAULT ((0)) FOR [Attempts]
+GO
+ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_Type] DEFAULT ((1)) FOR [Type]
 GO
 ALTER TABLE [dbo].[OutgoingMailsQueue] ADD  CONSTRAINT [DF_OutgoingMailsQueue_CreatedAt] DEFAULT (sysdatetime()) FOR [CreatedAt]
 GO
@@ -312,6 +340,11 @@ GO
 ALTER TABLE [dbo].[OutgoingMailsQueue] WITH CHECK ADD CONSTRAINT [CK_OutgoingMailsQueue_Status] CHECK ([Status] IN (1,2,3,4,5))
 GO
 ALTER TABLE [dbo].[OutgoingMailsQueue] CHECK CONSTRAINT [CK_OutgoingMailsQueue_Status]
+GO
+-- Catálogo (1 Envío, 2 Reenvío) — el mismo que `U_Type` de la UDT.
+ALTER TABLE [dbo].[OutgoingMailsQueue] WITH CHECK ADD CONSTRAINT [CK_OutgoingMailsQueue_Type] CHECK ([Type] IN (1,2))
+GO
+ALTER TABLE [dbo].[OutgoingMailsQueue] CHECK CONSTRAINT [CK_OutgoingMailsQueue_Type]
 GO
 ALTER TABLE [dbo].[OutgoingMailsQueue]  WITH CHECK ADD  CONSTRAINT [FK_OutgoingMailsQueue_DocTypes] FOREIGN KEY([DocType])
 REFERENCES [dbo].[DocTypes] ([Code])
@@ -341,25 +374,51 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 -- Encola el envío del correo de recepción, DESPUÉS de registrar la fila en la
--- UDT (`Sap::MailQueue#create`, ver `CheckSentDocumentsJob#queue_receipt_mail`).
--- No duplica mientras exista una fila sin terminar (Status <> 4) para el mismo
--- documento — un documento solo se resuelve una vez, pero la validación queda
--- acá igual que `CL_D_CL_MLT_FEC_CRT_DOCUMENTTOQUEUE` se protege por su cuenta.
+-- UDT (`Sap::MailQueue#create`, ver `CheckSentDocumentsJob#queue_receipt_mail`
+-- y `Api::Documents::MailsController#create`). `@UdtCode` es el `Code` que
+-- devolvió ese POST: qué fila de la UDT manda esta fila de la cola.
+--
+-- ── El dedupe aplica SOLO al envío automático (@Type = 1) ──────────────────
+-- Un envío automático no se debe duplicar: el documento se resuelve una vez y
+-- si ya hay una fila viva (Status 1, 2 o 3) no hace falta otra — la validación
+-- queda acá, igual que `CL_D_CL_MLT_FEC_CRT_DOCUMENTTOQUEUE` se protege por su
+-- cuenta.
+--
+-- Un REENVÍO (@Type = 2) SIEMPRE inserta, y tiene que ser así: cada pedido trae
+-- su propia fila de la UDT (sus destinatarios), y sin una fila de cola propia
+-- que la apunte, ese detalle no lo manda nadie. Saltarse el INSERT porque el
+-- intento anterior sigue vivo dejaría el reenvío registrado y mudo.
+--
+-- Consecuencia: un documento puede tener VARIAS filas vivas a la vez. Por eso
+-- el enlace es explícito (`UdtCode`) y no se resuelve buscando "el correo
+-- pendiente de este documento", que con más de una fila es ambiguo.
+--
+-- ⚠️ La condición decía `Status <> 4`, y eso dejaba afuera los reenvíos de un
+-- documento cuyo correo terminó en Omitido (5): 5 no es 4, así que contaba como
+-- "ya hay una en curso" y la fila nueva no se insertaba. El correo quedaba
+-- registrado en la UDT y no lo mandaba nadie, sin ningún error. Los estados
+-- TERMINALES son dos —4 Enviado y 5 Omitido— y ninguno de los dos debe
+-- bloquear un pedido nuevo; los vivos son 1, 2 y 3.
+--
+-- ⚠️ Una instalación YA viva necesita aplicar este ALTER a mano: este script es
+-- la referencia de una base nueva, no se aplica solo. Ver `TODOS.md`.
 CREATE PROCEDURE [dbo].[CL_D_CL_MLT_FEC_CRT_MAILTOQUEUE]
 	@SAPDB NVARCHAR(30),
 	@DocEntry INT,
-	@DocType NVARCHAR(2)
+	@DocType NVARCHAR(2),
+	@UdtCode INT,
+	@Type TINYINT = 1
 AS
 BEGIN
 	SET NOCOUNT ON;
 
-	IF NOT EXISTS (
+	IF @Type = 2 OR NOT EXISTS (
 		SELECT 1 FROM dbo.OutgoingMailsQueue
-		WHERE SAPDB = @SAPDB AND DocEntry = @DocEntry AND DocType = @DocType AND Status <> 4
+		WHERE SAPDB = @SAPDB AND DocEntry = @DocEntry AND DocType = @DocType AND Status IN (1, 2, 3)
 	)
 	BEGIN
-		INSERT dbo.OutgoingMailsQueue (DocEntry, DocType, SAPDB, Status, Attempts, CreatedAt, UpdatedAt)
-		VALUES (@DocEntry, @DocType, @SAPDB, 1, 0, GETDATE(), GETDATE());
+		INSERT dbo.OutgoingMailsQueue (DocEntry, DocType, SAPDB, Status, Attempts, Type, UdtCode, CreatedAt, UpdatedAt)
+		VALUES (@DocEntry, @DocType, @SAPDB, 1, 0, @Type, @UdtCode, GETDATE(), GETDATE());
 	END
 END
 GO
@@ -384,7 +443,11 @@ BEGIN
 		inserted.Id,
 		inserted.DocEntry,
 		inserted.DocType,
-		inserted.SAPDB
+		inserted.SAPDB,
+		-- Qué fila de la UDT manda esta: `SendElectronicReceiptJob` la lee por
+		-- llave con este valor, en vez de buscar "el correo pendiente de este
+		-- documento" — que con reenvíos puede devolver más de uno.
+		inserted.UdtCode
 	WHERE Status = 1
 		OR (Status = 2 AND UpdatedAt <= DATEADD(MINUTE, -10, GETDATE()))
 		OR (Status = 3 AND DATEDIFF(MINUTE, UpdatedAt, GETDATE()) >= POWER(2, Attempts))
