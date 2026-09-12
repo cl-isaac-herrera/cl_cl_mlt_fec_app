@@ -56,9 +56,9 @@ RSpec.describe SyncIssuedDocumentsJob do
     # El documento de prueba no pasa las reglas de FE (la cabecera que devuelve
     # el doble de SAP trae solo la clave), así que el validador se dobla en los
     # ejemplos que no lo están probando.
-    allow(Hacienda::InvoiceValidator).to receive(:new).and_return(
-      instance_double(Hacienda::InvoiceValidator,
-                      call: Hacienda::InvoiceValidator::Result.new(errors: []))
+    allow(Hacienda::DocumentValidator).to receive(:new).and_return(
+      instance_double(Hacienda::DocumentValidator,
+                      call: Hacienda::DocumentValidator::Result.new(errors: []))
     )
   end
 
@@ -279,10 +279,10 @@ RSpec.describe SyncIssuedDocumentsJob do
   describe 'desenlaces del envío' do
     it 'marca Error con todas las reglas incumplidas cuando el documento no cuadra' do
       queue(entry)
-      allow(Hacienda::InvoiceValidator).to receive(:new).and_return(
-        instance_double(Hacienda::InvoiceValidator, call: Hacienda::InvoiceValidator::Result.new(
-          errors: [Hacienda::InvoiceValidationError.new(message: 'Falta el CABYS.'),
-                   Hacienda::InvoiceValidationError.new(message: 'El total no cuadra.')]
+      allow(Hacienda::DocumentValidator).to receive(:new).and_return(
+        instance_double(Hacienda::DocumentValidator, call: Hacienda::DocumentValidator::Result.new(
+          errors: [Hacienda::DocumentValidationError.new(message: 'Falta el CABYS.'),
+                   Hacienda::DocumentValidationError.new(message: 'El total no cuadra.')]
         ))
       )
 
@@ -296,9 +296,9 @@ RSpec.describe SyncIssuedDocumentsJob do
 
     it 'no firma ni envía un documento que no pasó las validaciones' do
       queue(entry)
-      allow(Hacienda::InvoiceValidator).to receive(:new).and_return(
-        instance_double(Hacienda::InvoiceValidator, call: Hacienda::InvoiceValidator::Result.new(
-          errors: [Hacienda::InvoiceValidationError.new(message: 'Falta el CABYS.')]
+      allow(Hacienda::DocumentValidator).to receive(:new).and_return(
+        instance_double(Hacienda::DocumentValidator, call: Hacienda::DocumentValidator::Result.new(
+          errors: [Hacienda::DocumentValidationError.new(message: 'Falta el CABYS.')]
         ))
       )
 
@@ -339,9 +339,9 @@ RSpec.describe SyncIssuedDocumentsJob do
     # archivarse: `xml_sent_url` tiene que quedar en `nil`, no inventado.
     it 'no manda xml_sent_url cuando el documento no pasó la validación' do
       queue(entry)
-      allow(Hacienda::InvoiceValidator).to receive(:new).and_return(
-        instance_double(Hacienda::InvoiceValidator, call: Hacienda::InvoiceValidator::Result.new(
-          errors: [Hacienda::InvoiceValidationError.new(message: 'Falta el CABYS.')]
+      allow(Hacienda::DocumentValidator).to receive(:new).and_return(
+        instance_double(Hacienda::DocumentValidator, call: Hacienda::DocumentValidator::Result.new(
+          errors: [Hacienda::DocumentValidationError.new(message: 'Falta el CABYS.')]
         ))
       )
 

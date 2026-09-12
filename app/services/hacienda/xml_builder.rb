@@ -8,7 +8,7 @@ module Hacienda
   # Es el punto 11 de `docs/sync-documents-flow.md` y la pieza que le faltaba a
   # `Hacienda::XmlSigner`, que recibe justamente esto.
   #
-  #   Documents::UnifiedBuilder → Hacienda::InvoiceValidator → XmlBuilder → XmlSigner
+  #   Documents::UnifiedBuilder → Hacienda::DocumentValidator → XmlBuilder → XmlSigner
   #
   # @param payload [Hash] lo que devuelve `Documents::UnifiedBuilder#call`
   #   COMPLETO (con `DocType` y `Document`), no solo el documento: el tipo elige

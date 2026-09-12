@@ -31,17 +31,17 @@ RSpec.describe Hacienda::XmlBuilder do
     TotalIVADevuelto TotalOtrosCargos TotalComprobante
   ].freeze
 
-  def build(document = valid_invoice_document, doc_type: DocType::FE)
+  def build(document = valid_unified_document, doc_type: DocType::FE)
     described_class.new('DocType' => doc_type, 'Document' => document).call
   end
 
-  def parse(document = valid_invoice_document, doc_type: DocType::FE)
+  def parse(document = valid_unified_document, doc_type: DocType::FE)
     Nokogiri::XML(build(document, doc_type: doc_type))
   end
 
   # Se quita el namespace por defecto para poder consultar con XPath sin
   # prefijos en todo el spec. La presencia del namespace se verifica aparte.
-  def doc_without_ns(document = valid_invoice_document, doc_type: DocType::FE)
+  def doc_without_ns(document = valid_unified_document, doc_type: DocType::FE)
     parse(document, doc_type: doc_type).tap(&:remove_namespaces!)
   end
 
@@ -100,7 +100,7 @@ RSpec.describe Hacienda::XmlBuilder do
     end
 
     it 'pone MedioPago entre TotalOtrosCargos y TotalComprobante' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['ResumenFactura'] = valid_resumen_factura(
         'MedioPago' => [{ 'TipoMedioPago' => '01', 'MedioPagoOtros' => nil,
                           'TotalMedioPago' => BigDecimal(226) }]
@@ -113,7 +113,7 @@ RSpec.describe Hacienda::XmlBuilder do
     # Los opcionales que el documento de prueba no trae: cuando SÍ vienen, van
     # en su lugar del `xs:sequence` y no al final.
     it 'intercala los opcionales en su posición del xs:sequence' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['CondicionVenta'] = '99'
       document['CondicionVentaOtros'] = 'Permuta'
       document['InformacionReferencia'] = [
@@ -143,7 +143,7 @@ RSpec.describe Hacienda::XmlBuilder do
   # sueltos y repetidos. Confundirlo es un rechazo.
   describe 'listas envueltas y sueltas' do
     it 'envuelve las líneas en DetalleServicio/LineaDetalle' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['DetalleServicio'] = [valid_line, valid_line('NumeroLinea' => 2)]
       doc = doc_without_ns(document)
 
@@ -152,7 +152,7 @@ RSpec.describe Hacienda::XmlBuilder do
     end
 
     it 'repite OtrosCargos suelto, sin envoltorio' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['OtrosCargos'] = [
         { 'TipoDocumentoOC' => '01', 'TipoDocumentoOTROS' => nil,
           'IdentificacionTercero' => { 'Tipo' => nil, 'Numero' => nil },
@@ -176,7 +176,7 @@ RSpec.describe Hacienda::XmlBuilder do
 
     # El código va como ATRIBUTO y el texto como contenido del elemento.
     it 'emite Otros con el código como atributo de OtroTexto' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['Otros'] = [{ 'Codigo' => 'Observaciones', 'Texto' => 'Entrega en sitio' }]
       other = doc_without_ns(document).at_xpath('//Otros/OtroTexto')
 
@@ -185,7 +185,7 @@ RSpec.describe Hacienda::XmlBuilder do
     end
 
     it 'omite Otros cuando ningún renglón tiene texto' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['Otros'] = [{ 'Codigo' => 'Observaciones', 'Texto' => '  ' }]
 
       expect(doc_without_ns(document).at_xpath('//Otros')).to be_nil
@@ -196,7 +196,7 @@ RSpec.describe Hacienda::XmlBuilder do
     # `xs:fractionDigits` es un MÁXIMO, no un largo fijo: se emite la
     # representación más corta y nunca notación científica.
     it 'recorta los ceros de más en los montos' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['ResumenFactura'] = valid_resumen_factura('TotalComprobante' => BigDecimal('226.50000'))
 
       expect(doc_without_ns(document).at_xpath('//TotalComprobante').text).to eq('226.5')
@@ -213,14 +213,14 @@ RSpec.describe Hacienda::XmlBuilder do
     end
 
     it 'redondea al tope de decimales del esquema' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['DetalleServicio'] = [valid_line('PrecioUnitario' => BigDecimal('100.1234567'))]
 
       expect(doc_without_ns(document).at_xpath('//PrecioUnitario').text).to eq('100.12346')
     end
 
     it 'no usa notación científica en montos grandes' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['ResumenFactura'] = valid_resumen_factura('TotalComprobante' => BigDecimal('1e12'))
 
       expect(doc_without_ns(document).at_xpath('//TotalComprobante').text).to eq('1000000000000')
@@ -234,7 +234,7 @@ RSpec.describe Hacienda::XmlBuilder do
 
     # SAP puede devolver la fecha sin zona; el comprobante la necesita.
     it 'le pone el offset de la aplicación a una fecha sin zona' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['FechaEmision'] = '2026-09-05 10:00:00'
 
       expect(doc_without_ns(document).at_xpath('//FechaEmision').text)
@@ -244,7 +244,7 @@ RSpec.describe Hacienda::XmlBuilder do
     # Mejor cortar acá que mandar un `xs:dateTime` inválido: el rechazo de
     # Hacienda no dice qué campo fue.
     it 'corta con el nombre del campo si la fecha no se puede interpretar' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['FechaEmision'] = 'el jueves pasado'
 
       expect { build(document) }
@@ -256,14 +256,14 @@ RSpec.describe Hacienda::XmlBuilder do
   # FE/TE no define. Emitirlos es un rechazo.
   describe 'campos que NO pertenecen al esquema de FE/TE' do
     it 'no emite IdentificacionExtranjero del receptor' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['Receptor']['IdentificacionExtranjero'] = 'A-123456'
 
       expect(doc_without_ns(document).at_xpath('//IdentificacionExtranjero')).to be_nil
     end
 
     it 'no emite PorcentajeDescuento' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['DetalleServicio'] = [valid_line(
         'Descuento' => { 'MontoDescuento' => BigDecimal(10), 'NaturalezaDescuento' => 'Promoción',
                          'CodigoDescuento' => '01', 'CodigoDescuentoOTRO' => nil,
@@ -277,7 +277,7 @@ RSpec.describe Hacienda::XmlBuilder do
     end
 
     it 'no emite MontoExportacion del impuesto' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['DetalleServicio'] = [valid_line(
         'Impuesto' => valid_impuesto('MontoExportacion' => BigDecimal(50))
       )]
@@ -300,7 +300,7 @@ RSpec.describe Hacienda::XmlBuilder do
     end
 
     it 'omite la ubicación cuando no trae ningún dato' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['Receptor']['Ubicacion'] = { 'Provincia' => nil, 'Canton' => nil, 'Distrito' => nil,
                                             'Barrio' => nil, 'OtrasSenas' => nil }
 

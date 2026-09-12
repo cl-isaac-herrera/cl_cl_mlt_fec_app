@@ -13,7 +13,7 @@ module Documents
   # Es el paso 4 de `docs/sync-documents-flow.md` y son cinco operaciones en
   # este orden, que no es negociable:
   #
-  #   1. validar el objeto unificado  (`Hacienda::InvoiceValidator`)
+  #   1. validar el objeto unificado  (`Hacienda::DocumentValidator`)
   #   2. generar el XML 4.4           (`Hacienda::XmlBuilder`)
   #   3. firmarlo con XAdES-EPES      (`Hacienda::XmlSigner`)
   #   4. archivarlo en Azure          (`Documents::XmlArchive`)
@@ -112,21 +112,22 @@ module Documents
 
     def send_info = payload['SendDocumentHacienda'] || {}
 
-    # ── Solo la factura electrónica se valida, y es a propósito ───────────────
-    # `Hacienda::InvoiceValidator` migró únicamente las reglas de FE
-    # (`Validations.cs#OwnValidations`) y al menos una de ellas NO aplica al
-    # tiquete: `HeaderValidator#validate_receptor` exige identificación del
-    # receptor, y un tiquete a un cliente sin cédula es el caso NORMAL.
+    # ── Se valida todo lo que este producto sabe emitir ──────────────────────
+    # El legacy corre `Validations.cs#OwnValidations` para TODOS los tipos y
+    # excluye reglas puntuales según el `DocType`; acá se replica esa forma, así
+    # que la pregunta no es "¿qué tipo se valida?" sino "¿qué regla no aplica a
+    # este tipo?" — y eso lo resuelve cada validador (CLAUDE.md §39).
     #
-    # Correrlo sobre un tiquete rechazaría documentos correctos, que es peor que
-    # no validarlo: sin validación local el comprobante igual pasa por el
-    # validador de Hacienda, que es la autoridad de todas formas. Cuando las
-    # reglas de TE estén revisadas una por una se extiende acá — ver `TODOS.md`
-    # → Emisión de documentos.
+    # `VALIDATED_DOC_TYPES` coincide con lo que `Hacienda::XmlBuilder` sabe
+    # generar (FE y TE), de modo que ningún comprobante se firme y se envíe sin
+    # pasar antes por las reglas. Un tipo fuera de esa lista no llega a este
+    # método: `XmlBuilder` lo corta con `UnsupportedDocType` un paso después.
+    # El guard queda igual para que agregar un tipo al builder sin revisar sus
+    # exclusiones no lo deje emitiéndose a ciegas.
     def validate!
-      return unless doc_type == DocType::FE
+      return unless Hacienda::DocumentValidator.validates?(doc_type)
 
-      result = Hacienda::InvoiceValidator.new(document).call
+      result = Hacienda::DocumentValidator.new(document, doc_type: doc_type).call
       return if result.valid?
 
       raise ValidationFailed, result.errors

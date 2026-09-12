@@ -7,19 +7,19 @@ RSpec.describe Hacienda::Validations::SalesConditionValidator do
   def fields_for(document) = errors_for(document).map(&:field)
 
   it 'no reporta nada para un documento a crédito consistente' do
-    expect(errors_for(valid_invoice_document)).to eq([])
+    expect(errors_for(valid_unified_document)).to eq([])
   end
 
   describe 'crédito' do
     it 'exige el plazo de crédito' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['PlazoCredito'] = 0
 
       expect(fields_for(document)).to include('PlazoCredito')
     end
 
     it 'rechaza que el medio de pago cubra el total: no sería una venta a crédito' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['ResumenFactura']['MedioPago'] = [
         { 'TipoMedioPago' => '01', 'MedioPagoOtros' => nil, 'TotalMedioPago' => BigDecimal(226) }
       ]
@@ -30,7 +30,7 @@ RSpec.describe Hacienda::Validations::SalesConditionValidator do
 
   describe 'contado' do
     def contado_document
-      document = valid_invoice_document
+      document = valid_unified_document
       document['CondicionVenta'] = '01'
       document['PlazoCredito'] = 0
       document['ResumenFactura']['MedioPago'] = [
@@ -69,7 +69,7 @@ RSpec.describe Hacienda::Validations::SalesConditionValidator do
 
   describe 'condición de venta 99 (Otros)' do
     it 'exige el detalle de "condición de venta otros"' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['CondicionVenta'] = '99'
       document['CondicionVentaOtros'] = nil
 

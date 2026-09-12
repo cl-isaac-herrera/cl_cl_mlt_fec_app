@@ -11,7 +11,7 @@ module Hacienda
         @document = document
       end
 
-      # @return [Array<Hacienda::InvoiceValidationError>]
+      # @return [Array<Hacienda::DocumentValidationError>]
       def call
         codigo = document.dig('ResumenFactura', 'CodigoTipoMoneda', 'CodigoMoneda')
 
@@ -48,7 +48,7 @@ module Hacienda
       end
 
       def error(message, field:)
-        InvoiceValidationError.new(message: message, field: field)
+        DocumentValidationError.new(message: message, field: field)
       end
     end
   end

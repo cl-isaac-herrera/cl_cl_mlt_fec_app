@@ -5,8 +5,10 @@ module Hacienda
     # Reglas de un elemento de `OtrosCargos`. Origen: `Validations.cs`,
     # bloque de otros cargos (reglas #42, #45-48 del reporte de la migración).
     #
-    # La regla #43 (bloquear tercero en FEE/FEC) no aplica: este validador es
-    # solo para Factura Electrónica.
+    # No depende del tipo de comprobante: el legacy corre este bloque para
+    # todos menos Recibo de Pago (`Validations.cs` L630), así que factura y
+    # tiquete lo comparten tal cual. La regla #43 (bloquear tercero) sí es por
+    # tipo, pero solo aplica a FEE/FEC, que este producto todavía no emite.
     class OtherChargeValidator
       include Catalogs
 
@@ -14,7 +16,7 @@ module Hacienda
         @charge = charge
       end
 
-      # @return [Array<Hacienda::InvoiceValidationError>]
+      # @return [Array<Hacienda::DocumentValidationError>]
       def call
         [
           tipo_documento_valido,
@@ -89,7 +91,7 @@ module Hacienda
       end
 
       def error(message, field:)
-        InvoiceValidationError.new(message: message, field: field)
+        DocumentValidationError.new(message: message, field: field)
       end
     end
   end

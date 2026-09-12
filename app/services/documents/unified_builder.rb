@@ -20,11 +20,9 @@ module Documents
   # legacy .NET las procesa con el mismo código. Este armado debería servir para
   # TE (`DocType::TE`) sin cambios de forma.
   #
-  # Lo que SÍ es específico de FE y no se migró para TE todavía es
-  # `Hacienda::InvoiceValidator` — al menos `HeaderValidator#validate_receptor`
-  # exige identificación del receptor incondicionalmente, y el legacy la exime
-  # para TE (además de ND y NC). Ver `TODOS.md` → Emisión de documentos → "Estado
-  # general" antes de dar TE por cubierto.
+  # `Hacienda::DocumentValidator` también cubre las dos: comparten todas las
+  # reglas menos la identificación del receptor, que el legacy exime para TE
+  # (además de ND y NC) y que resuelve `HeaderValidator::RECEPTOR_OPCIONAL`.
   #
   # Las consultas iniciales son las mismas para todos los tipos; lo que cambia
   # por tipo es justamente este armado (aclaración final del documento). Por eso

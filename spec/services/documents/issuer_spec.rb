@@ -10,7 +10,7 @@ RSpec.describe Documents::Issuer do
   let(:hacienda) { instance_double(Hacienda::Client) }
   let(:receipt) { Hacienda::Client::Receipt.new(location: 'https://api.test/recepcion/1', duplicate: false) }
   let(:payload) do
-    { 'DocType' => DocType::FE, 'Document' => valid_invoice_document,
+    { 'DocType' => DocType::FE, 'Document' => valid_unified_document,
       'SendDocumentHacienda' => { 'fecha' => '2026-09-06T10:00:00-06:00',
                                  'emisor' => {}, 'receptor' => {} } }
   end
@@ -84,7 +84,7 @@ RSpec.describe Documents::Issuer do
 
   describe 'validación' do
     it 'valida factura electrónica y no llega a firmar si no cumple' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['CondicionVenta'] = nil
       payload['Document'] = document
 
@@ -94,7 +94,7 @@ RSpec.describe Documents::Issuer do
     end
 
     it 'xml_sent_url queda en nil cuando la validación falla' do
-      document = valid_invoice_document
+      document = valid_unified_document
       document['CondicionVenta'] = nil
       payload['Document'] = document
       result = issuer
@@ -103,14 +103,25 @@ RSpec.describe Documents::Issuer do
       expect(result.xml_sent_url).to be_nil
     end
 
-    # El tiquete no pasa por el validador de FE: al menos una de sus reglas
-    # (identificación de receptor obligatoria) rechazaría tiquetes correctos.
-    it 'no valida el tiquete electrónico' do
-      document = valid_invoice_document
+    # El tiquete SÍ se valida: comparte todas las reglas de la factura menos la
+    # identificación del receptor, que el legacy le exime (CLAUDE.md §39).
+    it 'acepta un tiquete sin identificación del receptor' do
+      document = valid_unified_document
       document['Receptor']['Identificacion'] = { 'Tipo' => nil, 'Numero' => nil }
+      payload['Document'] = document
 
       expect { issuer(doc_type: DocType::TE).call }.not_to raise_error
       expect(signer).to have_received(:sign)
+    end
+
+    it 'valida el tiquete con las reglas que sí le aplican y no llega a firmar' do
+      document = valid_unified_document
+      document['Receptor']['Identificacion'] = { 'Tipo' => nil, 'Numero' => nil }
+      document['CondicionVenta'] = nil
+      payload['Document'] = document
+
+      expect { issuer(doc_type: DocType::TE).call }.to raise_error(described_class::ValidationFailed)
+      expect(signer).not_to have_received(:sign)
     end
   end
 end

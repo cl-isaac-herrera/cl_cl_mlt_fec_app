@@ -32,7 +32,7 @@ module Hacienda
         @line_number = line_number
       end
 
-      # @return [Array<Hacienda::InvoiceValidationError>]
+      # @return [Array<Hacienda::DocumentValidationError>]
       def call
         [
           cabys_requerido,
@@ -372,7 +372,7 @@ module Hacienda
       end
 
       def error(message, field:)
-        InvoiceValidationError.new(message: message, field: field, line_number: line_number)
+        DocumentValidationError.new(message: message, field: field, line_number: line_number)
       end
     end
   end

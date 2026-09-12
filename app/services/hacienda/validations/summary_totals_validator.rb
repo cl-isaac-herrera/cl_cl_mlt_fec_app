@@ -23,7 +23,7 @@ module Hacienda
         @lines = document['DetalleServicio'] || []
       end
 
-      # @return [Array<Hacienda::InvoiceValidationError>]
+      # @return [Array<Hacienda::DocumentValidationError>]
       def call
         return [] if lines.empty?
 
@@ -198,7 +198,7 @@ module Hacienda
       end
 
       def error(message, field:)
-        InvoiceValidationError.new(message: message, field: field)
+        DocumentValidationError.new(message: message, field: field)
       end
     end
   end

@@ -1141,8 +1141,8 @@ puede funcionar:
 
 | Tipo | Cola / detalle SAP (pasos 2-3) | Objeto unificado | Validador | Generador de XML | Firma | `sl_resource` de actualización |
 |---|---|---|---|---|---|---|
-| **FE** (`01`) | ✅ | ✅ | ✅ (`Hacienda::InvoiceValidator`, 87 specs) | ✅ `FacturaElectronica` | ✅ (agnóstica al tipo) | ✅ `updateDocument01` |
-| **TE** (`04`) | ✅ (genérico, no distingue tipo) | 🟡 probablemente sí — ver nota abajo | ❌ **se omite a propósito** | ✅ `TiqueteElectronico` (mismo esquema que FE) | ✅ (agnóstica al tipo) | ✅ `updateDocument04` |
+| **FE** (`01`) | ✅ | ✅ | ✅ (`Hacienda::DocumentValidator`, 87 specs) | ✅ `FacturaElectronica` | ✅ (agnóstica al tipo) | ✅ `updateDocument01` |
+| **TE** (`04`) | ✅ (genérico, no distingue tipo) | ✅ | ✅ (`Hacienda::DocumentValidator`, mismas reglas que FE salvo el receptor) | ✅ `TiqueteElectronico` (mismo esquema que FE) | ✅ (agnóstica al tipo) | ✅ `updateDocument04` |
 | **ND** (`02`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument02` |
 | **NC** (`03`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument03` (UDF replicado a `ORIN` desde `OINV`, misma categoría Marketing Documents) |
 | **FEC** (`08`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument08` (UDF replicado a `OPCH` desde `OINV`, misma categoría Marketing Documents) |
@@ -1153,23 +1153,28 @@ puede funcionar:
 job: `Hacienda::XmlBuilder::UnsupportedDocType` dice "este producto todavía no sabe armar
 el XML de …" y eso llega a `Details` de la cola y a `U_CL_FEC_ErrorDetails`.
 
-**Por qué TE se envía SIN validar:** `Documents::Issuer#validate!` corre el validador solo
-para FE, a propósito. Correrlo sobre un tiquete rechazaría documentos correctos (la regla
-del receptor, abajo), y eso es peor que no validarlo: sin validación local el comprobante
-igual pasa por el validador de Hacienda, que es la autoridad de todas formas.
+**TE ya se valida** (antes se omitía a propósito). El XSD real de Hacienda define un ÚNICO
+esquema para FE y TE (`DocumentoFETE` en `FacturaElectronica_V4.4.xsd` — el nombre mismo es
+"Factura Electrónica / Tiquete Electrónico"), el legacy .NET las procesa con el mismo código
+(`Transactions.cs#createDocument` las manda a `SyncDocumentFETE`) y `OwnValidations` es UN
+SOLO método para todos los tipos, que excluye reglas puntuales según el `DocType` en vez de
+saltarse el bloque entero. Ver CLAUDE.md §39.
 
-**Por qué TE queda en 🟡 y no en ✅:** el XSD real de Hacienda define un ÚNICO esquema
-para FE y TE (`DocumentoFETE` en `FacturaElectronica_V4.4.xsd` — el nombre mismo es
-"Factura Electrónica / Tiquete Electrónico"), y el legacy .NET las procesa con el mismo
-código. `Documents::UnifiedBuilder` no debería necesitar cambios de forma para TE.
-Pero `Hacienda::InvoiceValidator` **sí tiene al menos una regla escrita asumiendo FE**:
-`HeaderValidator#validate_receptor` exige identificación del receptor
-incondicionalmente, y el reporte de la migración del legacy dice explícitamente que esa
-regla **no aplica** a TE (ni a ND ni a NC) — un tiquete a un cliente sin cédula es el
-caso normal. Antes de dar TE por cubierto hay que:
-- Revisar las ~72 reglas migradas una por una contra las exclusiones de TE del legacy
-  (no solo esta), no asumir que "aplica igual porque comparten XSD".
-- Correr `Hacienda::InvoiceValidator` contra un Tiquete real de la cola y ver qué revienta.
+De las reglas migradas, las únicas que el legacy exime a TE son:
+
+- **Identificación del receptor** (`Validations.cs` L324, L329): un tiquete a un cliente sin
+  cédula es el caso normal. Vive en `Validations::HeaderValidator::RECEPTOR_OPCIONAL`. Lo que
+  se exime es EXIGIRLA: si el tiquete la trae, el formato y la longitud se revisan igual.
+- **`InformacionReferencia`** (`Validations.cs` L817): el legacy nunca corre ese bloque para
+  TE. Vive en `DocumentValidator::REFERENCIAS_NO_VALIDADAS`.
+
+Todo lo demás aplica idéntico — incluida la regla del medio de pago en contado, que era el
+rechazo que aparecía recién en Hacienda por no validarse localmente.
+
+Pendiente de confirmación en campo:
+- [ ] Correr la emisión contra Tiquetes reales de la cola y revisar que ninguna regla esté
+      rechazando documentos que Hacienda sí acepta. Es el único punto que no se puede cerrar
+      leyendo el legacy.
 
 **ND, NC, FEC, FEE, REP quedan en ❓** porque nadie llegó a construir un objeto unificado
 real para ninguno de ellos —ni con datos de prueba, mucho menos reales— y el legacy sí
@@ -1222,7 +1227,7 @@ clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo p
       igual. 9 ejemplos.
 
 - [x] **Validador de reglas de negocio — implementado para Factura Electrónica (2026-09-05).**
-      `Hacienda::InvoiceValidator` (`app/services/hacienda/invoice_validator.rb` +
+      `Hacienda::DocumentValidator` (`app/services/hacienda/document_validator.rb` +
       `app/services/hacienda/validations/*`) migra las reglas de
       `Validations.cs#OwnValidations` del .NET (`legacy/apis/clvsfesync4.3/CLVS_FE.DAO/
       Validations.cs`), **no como port literal** sino como siete colaboradores por
@@ -1243,9 +1248,15 @@ clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo p
         cero del legacy cuando `Tarifa` es 0 — usa el monto total sin ajustar en ese caso.
       **No tiene quién lo invoque todavía.** Como el signer, es una pieza para el punto
       11 del flujo (validar → generar XML → firmar → enviar), que sigue sin empezar.
-      Cuando se cablee: `Hacienda::InvoiceValidator.new(payload['Document']).call`,
+      Cuando se cablee: `Hacienda::DocumentValidator.new(payload['Document']).call`,
       antes de generar el XML — un documento con errores no debería ni intentar
       firmarse.
+      **⚠️ Actualizado después:** ya lo invoca `Documents::Issuer#validate!`, ya cubre
+      también Tiquete Electrónico (`VALIDATED_DOC_TYPES`), el constructor pide
+      `doc_type:` y la clase pasó a llamarse `DocumentValidator` (antes
+      `DocumentValidator`, que hacía leer "factura" donde ya no aplica). Las dos
+      frases de arriba sobre el alcance y el cableado quedaron obsoletas — ver
+      "Estado por tipo de documento" y CLAUDE.md §39.
       **No verificado contra el XSD real todavía.** Los catálogos (`Hacienda::
       Validations::Catalogs`) salen del reporte de la migración del XSD 4.4, pero
       nadie corrió el validador contra un documento real de producción con toda la

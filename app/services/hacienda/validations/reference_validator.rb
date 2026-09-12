@@ -21,7 +21,7 @@ module Hacienda
         @reference = reference
       end
 
-      # @return [Array<Hacienda::InvoiceValidationError>]
+      # @return [Array<Hacienda::DocumentValidationError>]
       def call
         [
           tipo_documento_valido,
@@ -78,7 +78,7 @@ module Hacienda
       end
 
       def error(message, field:)
-        InvoiceValidationError.new(message: message, field: field)
+        DocumentValidationError.new(message: message, field: field)
       end
     end
   end

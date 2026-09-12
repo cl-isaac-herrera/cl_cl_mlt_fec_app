@@ -27,7 +27,7 @@ module Hacienda
   #
   # ── Lo que NO hace ──────────────────────────────────────────────────────────
   # Solo firma. No valida el documento contra el XSD de negocio (eso es
-  # `Hacienda::InvoiceValidator`), no habla con los web services de Hacienda
+  # `Hacienda::DocumentValidator`), no habla con los web services de Hacienda
   # (token/envío/consulta — ver los ajustes `HACIENDA_FE_URI_*` de `settings`,
   # todavía sin cliente que los use) y no incluye la cadena de certificación:
   # solo el certificado hoja en `KeyInfo/X509Data`. Si Hacienda llegara a
@@ -72,7 +72,7 @@ module Hacienda
     end
 
     # @param xml_input [String, IO] el XML del comprobante, YA VALIDADO contra
-    #   el XSD de negocio (`Hacienda::InvoiceValidator`) y sin firmar.
+    #   el XSD de negocio (`Hacienda::DocumentValidator`) y sin firmar.
     # @return [String] Base64 (strict, sin saltos de línea) del XML firmado —
     #   es literalmente el `comprobanteXml` que espera el envío a Hacienda.
     # @raise [Nokogiri::XML::SyntaxError] si el XML de entrada no es válido.

@@ -2674,3 +2674,81 @@ queda deshabilitado hasta que la prueba pase. El estado "verificada" se invalida
 **huella** de los campos que afectan el resultado (`#fingerprint`), no escuchando cada campo:
 así un campo nuevo no se olvida de resetear el estado. La huella va con `JSON.stringify` y no
 con un `join` — cualquier separador puede aparecer dentro de una contraseña.
+
+---
+
+## 39. Emisión por tipo de documento — la referencia es `Transactions.cs#createDocument`
+
+Al migrar la emisión de un tipo de comprobante nuevo (ND, NC, FEC, FEE, REP), **el punto de
+partida es el despachador del .NET**, no reinventar el flujo desde el XSD:
+
+| Qué | Dónde |
+|---|---|
+| **Despachador por tipo** | `legacy/apis/clvsfesync4.3/CLVS_FE.ProcessRequest/Transactions.cs` **L114-224** (`createDocument`) |
+| Las validaciones de negocio | `legacy/apis/clvsfesync4.3/CLVS_FE.DAO/Validations.cs` **L282+** (`OwnValidations`) |
+
+`createDocument` registra el documento en la base local y, si quedó en `Procesando`, lo manda
+al método de sincronización que le toca. Son **cinco ramas para diez tipos**, y la agrupación
+es la que hay que respetar al migrar:
+
+| Rama | Tipos | Método (`Transactions.cs`) |
+|---|---|---|
+| `SyncDocumentFETE` | **FE (`01`) y TE (`04`) — el MISMO método** | L1325 |
+| `SyncDocumentFEE`  | FEE (`09`) | L1532 |
+| `SyncDocumentFEC`  | FEC (`08`) | L1737 |
+| `SyncDocumentNCND` | NC (`03`) y ND (`02`) | L1943 |
+| `SyncDocumentREP`  | REP (`10`) | L2139 |
+
+Los mensajes de receptor (`05`/`06`/`07`) no pasan por acá: entran por `receptMessage` y se
+validan con `OwnValidationsRecept` (`Validations.cs` L272), que es otro flujo.
+
+Hay **tres despachadores con el mismo `if/else` copiado**, así que un tipo nuevo se cablea en
+los tres: `createDocument` (L154-175), `SyncDocsFromService` (L1219-1236 — el análogo del
+`SyncIssuedDocumentsJob` de este producto) y `createDocumentManual` (L2770-2787).
+
+### ⚠️ Las validaciones NO se saltan por tipo — se excluye la REGLA que no aplica
+
+`OwnValidations` es **un solo método que corre para TODOS los tipos**. Recibe el `DocType` y lo
+usa para excluir reglas puntuales con una condición en el `if`, nunca para saltarse el bloque
+entero:
+
+```csharp
+// Identificación del receptor: NO aplica a TE, ND ni NC (Validations.cs L324, L329)
+if (string.IsNullOrEmpty(Documento.RcprIdeTipo) && DocType != DocTypesString.TE &&
+    Documento.DocType != DocTypesString.ND && Documento.DocType != DocTypesString.NC)
+
+// Medio de pago en Contado: aplica a TODOS menos REP → FE y TE incluidos (L375)
+if (Documento.CondicionVenta == SalesConditions.Cash && DocType != DocTypesString.REP)
+```
+
+> **Regla al migrar:** una regla que no aplica a un tipo se excluye **dentro del validador**,
+> con el tipo como condición — igual que el legacy. **No** se saltea `DocumentValidator`
+> completo para ese tipo: eso deja pasar sin verificar las reglas que sí aplicaban.
+
+`REP` es el tipo que más exclusiones acumula (no lleva líneas de detalle ni cuadre de totales
+como los demás): al migrarlo, revisar todos los `!= DocTypesString.REP` de `Validations.cs`.
+
+### Cómo está cableado hoy — FE y TE
+
+`Documents::Issuer#validate!` pregunta `Hacienda::DocumentValidator.validates?(doc_type)`, y
+esa lista (`VALIDATED_DOC_TYPES`) coincide con lo que `Hacienda::XmlBuilder` sabe generar. Es
+a propósito: un tipo que se pueda emitir sin poder validarse iría a Hacienda a ciegas.
+
+Las dos exclusiones por tipo que existen hoy, cada una donde corresponde:
+
+| Regla exenta | Tipos | Dónde vive | Legacy |
+|---|---|---|---|
+| Exigir identificación del receptor | TE, ND, NC | `Validations::HeaderValidator::RECEPTOR_OPCIONAL` | L324, L329 |
+| Validar `InformacionReferencia` | TE | `DocumentValidator::REFERENCIAS_NO_VALIDADAS` | L817 |
+
+Todo lo demás corre igual para factura y tiquete, la regla del medio de pago incluida.
+
+> **Lo que se exime es EXIGIR el dato, no revisarlo.** Un tiquete puede no traer receptor,
+> pero si lo trae, el formato y la longitud se validan igual — el legacy hace esas dos
+> comprobaciones con un `if` que no excluye a ningún tipo (L334, L339, L344). Copiar la
+> exclusión al bloque entero dejaría pasar una cédula con formato inválido.
+
+Al sumar un tipo: revisar sus exclusiones en `Validations.cs`, agregarlas al validador que
+corresponda, y recién entonces meterlo en `VALIDATED_DOC_TYPES`. `RECEPTOR_OPCIONAL` ya
+lista ND y NC porque el legacy los exime — la lista describe la regla, no lo que hoy se
+puede emitir.

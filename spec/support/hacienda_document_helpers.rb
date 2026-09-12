@@ -1,16 +1,20 @@
 # frozen_string_literal: true
 
-# Un objeto unificado de factura electrónica, MATEMÁTICAMENTE CONSISTENTE de
-# punta a punta: pasa las siete reglas de cuadre de `SummaryTotalsValidator` y
-# todas las demás. Sirve de punto de partida para los specs de
-# `Hacienda::InvoiceValidator` y sus colaboradores: cada ejemplo rompe UN dato
+# Un objeto unificado de comprobante, MATEMÁTICAMENTE CONSISTENTE de punta a
+# punta: pasa las siete reglas de cuadre de `SummaryTotalsValidator` y todas
+# las demás. Sirve de punto de partida para los specs de
+# `Hacienda::DocumentValidator` y sus colaboradores: cada ejemplo rompe UN dato
 # puntual con `deep_merge`/reasignación y verifica que aparezca (y solo
 # aparezca) el error esperado.
+#
+# Sirve igual para factura y para tiquete: comparten el mismo esquema y todas
+# las reglas menos la identificación del receptor (CLAUDE.md §39). Para un
+# tiquete, los specs vacían `Receptor.Identificacion` sobre esta misma base.
 #
 # Los números están elegidos para que el cuadre sea exacto (sin depender de la
 # tolerancia ±0.5): 2 unidades × 100 = 200, IVA 13% = 26.00.
 module HaciendaDocumentHelpers
-  def valid_invoice_document
+  def valid_unified_document
     {
       'NumeroConsecutivo' => '00100001010000000001',
       'Clave' => '5' * 50,
