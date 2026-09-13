@@ -1964,6 +1964,38 @@ quedó sin limpiar:
 
 ---
 
+## Logs y Asistente de configuración — nodos de menú ocultados (2026-09-13)
+
+Decisión de producto: los dos nodos dejan de ofrecerse. Se quitaron de
+`app/javascript/data/menu.js` — `textFilesLogs` ("Logs", `/logs`) y `wizardSetup`
+("Asistente de configuración", `/wizard-setup`).
+
+Ninguna de las dos pantallas se había migrado: **no existe ruta en Rails para `/logs` ni
+para `/wizard-setup`**, así que los nodos llevaban a un error de ruteo. Ocultarlos no
+quita nada que funcionara.
+
+> ⚠️ **`visible: false` en `menu.js` NO oculta nada.** `menu_controller.js#buildVisibleNodes`
+> recalcula ese campo en cada render (`visible: parentVisible`) y pisa lo que diga el dato.
+> La visibilidad la decide el permiso; para ocultar un nodo hay que sacarlo del arreglo,
+> que es lo que se hizo acá.
+
+- [ ] **`Logs_Access` (Id 53), `Configurations_WizardSetup_Access` (57) y
+      `Configurations_WizardSetup_CompleteSteps` (58) siguen ACTIVOS en el catálogo**
+      aunque ya no los evalúe nadie. No se dan de baja todavía a propósito: a diferencia
+      de los de grupos (§31, un concepto que desapareció), acá las pantallas nunca se
+      migraron y podrían migrarse después — darlos de baja daría por cancelada una
+      funcionalidad que nadie canceló.
+      **Pendiente:** decidir si las dos pantallas se migran o se descartan. Si se
+      descartan, darlos de baja en `DEACTIVATE` de una migración nueva y en `DEACTIVATED`
+      de `db/seeds.rb` — las dos listas tienen que coincidir (§28). Baja lógica, nunca
+      `DELETE`.
+
+> No confundir con **"Logs de recepciones"** (`/documents/receptions/logs`, permiso
+> `S_MailParserLogs`): esa pantalla sí está migrada, sigue en el menú bajo Documentos y
+> no se tocó.
+
+---
+
 ## Documentos emitidos — pantalla de consulta (`/documents/issued`)
 
 `GET /api/documents` (`Api::DocumentsController` + `Sap::IssuedDocumentsSearch`) migró la

@@ -51,21 +51,11 @@ export default [
       { key: 'numbering',        label: 'Numeración',                     route: '/configurations/numbering',      requiredPermission: 'S_Numbering' },
       { key: 'Rol',              label: 'Seguridad',                      route: '/configurations/security',       requiredPermission: 'Configurations_Security_Access' },
       { key: 'sucursal',         label: 'Sucursal',                       route: '/configurations/branches',       requiredPermission: 'S_Sucursal' },
-      { key: 'wizardSetup',      label: 'Asistente de configuración',     route: '/wizard-setup',                  requiredPermission: 'Configurations_WizardSetup_Access' },
       { key: 'mailParserConfig', label: 'Bandejas de recepción',          route: '/configurations/mail-parser',    requiredPermission: ['Configurations_MailParser_ViewConfigurations', 'Configurations_MailParser_ViewAllConfigurationsInApplication'] },
       { key: 'emailInbox',       label: 'Bandejas de emisión',            route: '/configurations/email-senders',  requiredPermission: 'Configurations_EmailInbox_Access' },
       { key: 'userHelp',         label: 'Enlaces de documentación',       route: '/user-help',                     requiredPermission: 'Configurations_UserHelp_Access' },
       { key: 'generalConfigs',   label: 'Generales',                      route: '/configurations/general',        requiredPermission: 'Configurations_General_Access' }
     ]
-  },
-  {
-    key: 'textFilesLogs',
-    label: 'Logs',
-    icon: 'terminal',
-    route: '/logs',
-    visible: false,
-    requiredPermission: 'Logs_Access',
-    nodes: []
   },
   {
     key: 'logout',
