@@ -362,7 +362,7 @@ export default class extends TabulatorController {
   // ── Formatters ────────────────────────────────────────────────────────────
 
   #statusBadge(status) {
-    if (status === 'loading') return this.#sendingBadge();
+    if (status === 'loading') return this.#queueingBadge();
     const s = DOC_STATUS[status];
     if (!s) return `<span style="background-color:#f3f4f6; color:#4b5563;"
                          class="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide">${status ?? ''}</span>`;
@@ -372,12 +372,14 @@ export default class extends TabulatorController {
     </span>`;
   }
 
-  /** Badge transitorio que se muestra en la celda Estado mientras se envía la solicitud de reprocesamiento */
-  #sendingBadge() {
+  // Badge transitorio de la celda Estado mientras viaja la solicitud de reprocesamiento.
+  // Dice "Reencolando" y no "Enviando": lo que la acción hace es devolver el documento a la
+  // cola, no mandarlo a Hacienda. Mismo texto que en emitidos.
+  #queueingBadge() {
     return `<span style="background-color:#e8f0fe; color:#1a56db;"
                   class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide">
       <span class="inline-block h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin"></span>
-      Enviando
+      Reencolando
     </span>`;
   }
 
@@ -824,7 +826,7 @@ export default class extends TabulatorController {
       showToast('No tiene permiso para reprocesar este documento', 'info');
       return;
     }
-    // Loader a nivel de fila: marca la celda Estado como "Enviando" durante la solicitud
+    // Loader a nivel de fila: marca la celda Estado como "Reencolando" durante la solicitud
     const currentPage = this.table?.getPage() || 1;
     const rowComp = this.table?.getRows().find(r => r.getData().Id === id);
     rowComp?.update({ Statuscambio: 'loading' });

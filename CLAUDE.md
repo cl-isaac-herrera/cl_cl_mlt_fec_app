@@ -835,7 +835,7 @@ restaura el estado real (o revierte el loader si falló).
 
 ```js
 // Helper — badge transitorio (mismo estilo que los badges de §1)
-#sendingBadge(label = 'Enviando') {
+#queueingBadge(label = 'Reencolando') {
   return `<span style="background-color:#e8f0fe; color:#1a56db;"
                 class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide">
     <span class="inline-block h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin"></span>
@@ -846,7 +846,7 @@ restaura el estado real (o revierte el loader si falló).
 // En el formatter de la columna Estado — detectar el marcador transitorio
 formatter: (cell) => {
   const val = cell.getValue();
-  if (val?.loading) return this.#sendingBadge(val.label);  // o sentinel 'loading' según el tipo del campo
+  if (val?.loading) return this.#queueingBadge(val.label);  // o sentinel 'loading' según el tipo del campo
   return this.#statusBadge(val);
 }
 
@@ -864,9 +864,15 @@ try {
 ```
 
 **Regla del texto:** el label debe describir la **fase real** de la operación, no una
-acción que no ocurre todavía. Ej.: una acción que solo **encola** el documento para que
-un servicio en segundo plano lo procese usa **"Enviando"** (la solicitud se está enviando),
-**nunca "Procesando"/"Reprocesando"** — eso implicaría trabajo activo que no está pasando.
+acción que no ocurre todavía, **y no puede confundirse con ningún estado del catálogo de la
+misma columna**. Ej.: una acción que solo **encola** el documento para que un servicio en
+segundo plano lo procese usa **"Reencolando"**, **nunca "Procesando"/"Reprocesando"** — eso
+implicaría trabajo activo que no está pasando.
+
+> El label anterior era "Enviando", correcto en cuanto a la fase (la solicitud se está
+> enviando) pero leído por el usuario contra el estado **"Enviado"** de esa misma columna
+> —que significa *enviado a Hacienda*— y entendido como que el documento ya había salido.
+> La fase que importa es la del **documento**, no la del request HTTP.
 
 ### Regla de selección
 
