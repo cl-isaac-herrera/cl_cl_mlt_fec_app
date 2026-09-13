@@ -6,6 +6,7 @@ RSpec.describe Hacienda::SchemaStore do
   let(:account)   { 'clviscofe' }
   let(:key)       { Base64.strict_encode64('una-clave-de-prueba-cualquiera') }
   let(:container) { 'clvsfe' }
+  let(:workspace) { 'fec' }
 
   # El XSD real que usaba el .NET. Se lee del legacy a propósito: un esquema de
   # juguete no probaría que los archivos que el operador va a subir de verdad
@@ -20,6 +21,7 @@ RSpec.describe Hacienda::SchemaStore do
     azure_setting('AZURE_STORAGE_ACCOUNT_NAME', account)
     azure_setting('AZURE_STORAGE_ACCOUNT_KEY', key, is_visible: false)
     azure_setting('AZURE_STORAGE_CONTAINER', container)
+    azure_setting('AZURE_STORAGE_WORKSPACE', workspace)
   end
 
   after { Hacienda::SchemaStore.clear_cache! }
@@ -212,9 +214,19 @@ RSpec.describe Hacienda::SchemaStore do
                                        file_name: 'FacturaElectronica_V4.4.xsd',
                                        content: legacy_xsd)
 
-      expect(path).to start_with('xsd/HACIENDA_XSD_01/')
+      # Bajo el workspace del producto: la cuenta es compartida entre productos
+      # de Clavisco y un `xsd/` en la raíz del contenedor sería de cualquiera.
+      expect(path).to start_with('fec/xsd/HACIENDA_XSD_01/')
       expect(path).to end_with('/FacturaElectronica_V4.4.xsd')
       expect(described_class.file_name(path)).to eq('FacturaElectronica_V4.4.xsd')
+    end
+
+    it 'usa el workspace configurado, no uno fijo' do
+      azure_setting('AZURE_STORAGE_WORKSPACE', 'fec-qa')
+
+      path = described_class.blob_path(code: 'HACIENDA_XSD_01', file_name: 'x.xsd', content: legacy_xsd)
+
+      expect(path).to start_with('fec-qa/xsd/HACIENDA_XSD_01/')
     end
 
     it 'da la MISMA ruta para el mismo contenido y otra para uno distinto' do

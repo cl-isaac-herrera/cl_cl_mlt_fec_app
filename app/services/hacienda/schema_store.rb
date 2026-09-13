@@ -75,9 +75,14 @@ module Hacienda
     # legacy (`FacturaElectronica_V4.4.xsd`) no llega a 200 KB.
     MAX_BYTES = 2.megabytes
 
-    # Prefijo de los blobs dentro del contenedor de `AZURE_STORAGE_CONTAINER`.
-    # Los XML de comprobante cuelgan de `{cédula}/`, así que no se pisan.
-    BLOB_PREFIX = 'xsd'
+    # Carpeta de los XSD DENTRO del workspace del producto: la ruta completa es
+    # `<contenedor>/<workspace>/xsd/{CODE}/{digest}/{nombre}.xsd`.
+    #
+    # Cuelga del workspace y no de la raíz del contenedor porque la cuenta es
+    # compartida entre productos de Clavisco: un `xsd/` suelto sería "los XSD de
+    # cualquiera". Al lado quedan las carpetas por compañía (`{uuid}/xmls/`), así
+    # que los dos almacenes siguen sin pisarse — un uuid nunca es "xsd".
+    BLOB_FOLDER = 'xsd'
 
     # El catálogo completo, en el orden en que lo pinta la pantalla.
     #
@@ -212,11 +217,16 @@ module Hacienda
       # de todos los procesos se invalide solo. Dieciséis caracteres del SHA-256
       # alcanzan de sobra para nueve archivos que cambian una vez por año.
       #
-      # @return [String] `xsd/{CODE}/{digest}/{nombre}.xsd`
+      # ⚠️ Solo se usa al SUBIR. Leer un esquema no recompone la ruta: la toma
+      # del ajuste tal como quedó guardada (`#fetch`), así que mover esta carpeta
+      # no deja ciegos a los XSD que ya estaban cargados — siguen donde están
+      # hasta que alguien los vuelva a subir.
+      #
+      # @return [String] `{workspace}/xsd/{CODE}/{digest}/{nombre}.xsd`
       def blob_path(code:, file_name:, content:)
         digest = Digest::SHA256.hexdigest(content)[0, 16]
 
-        "#{BLOB_PREFIX}/#{code}/#{digest}/#{file_name}"
+        "#{workspace}/#{BLOB_FOLDER}/#{code}/#{digest}/#{file_name}"
       end
 
       # El nombre del archivo tal como lo subió el operador, para la pantalla.
@@ -225,16 +235,15 @@ module Hacienda
       # @return [String, nil]
       def file_name(path) = path.to_s.split('/').last.presence
 
-      # "clvsfe" — el mismo contenedor de los XML de comprobante. Los XSD
-      # cuelgan de `xsd/` y los comprobantes de `{cédula}/`, así que comparten
-      # contenedor sin pisarse, y el operador configura una sola cuenta.
-      def container
-        Setting.group('AZURE_STORAGE').fetch('CONTAINER')
-      rescue KeyError
-        raise Azure::BlobStorage::MissingConfiguration,
-              'Falta el ajuste AZURE_STORAGE_CONTAINER en Configuraciones → Generales, ' \
-              'necesario para guardar los esquemas XSD de Hacienda.'
-      end
+      PURPOSE = 'guardar los esquemas XSD de Hacienda'
+
+      # El mismo contenedor y el mismo workspace que los XML de comprobante: el
+      # operador configura una sola cuenta, y dentro del workspace los XSD
+      # cuelgan de `xsd/` mientras que los comprobantes cuelgan de
+      # `{uuid}/xmls/`, así que no se pisan.
+      def container = Azure::BlobStorage.container(purpose: PURPOSE)
+
+      def workspace = Azure::BlobStorage.workspace(purpose: PURPOSE)
 
       # Vacía el caché de ESTE proceso. La usan los specs y `SchemaUpload`
       # después de reemplazar un archivo: el proceso que subió el XSD no tiene

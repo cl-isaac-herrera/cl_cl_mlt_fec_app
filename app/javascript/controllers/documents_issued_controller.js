@@ -21,14 +21,21 @@ import { relativeDate } from 'vendor/clavisco/format/dates';
  *
  * ⚠️ Fuera de alcance de esta migración (siguen pegándole al proxy .NET, con un
  * `Id` de fila que ya no existe en un resultado que viene de SAP — anotado en
- * `TODOS.md` → Emisión de documentos): Ver/Descargar comprobante, Ver/Descargar
- * XML respuesta, Descargar XML comprobante, Correos, Omitir Validaciones, Anulación Interna,
- * Descarga Masiva, y el gráfico "Más Información" (dependía de
- * `DocumentQtyList`, que el .NET calculaba y SAP no).
+ * `TODOS.md` → Emisión de documentos): Ver/Descargar comprobante, Ver XML
+ * respuesta, Omitir Validaciones, Anulación Interna, Descarga Masiva, y el
+ * gráfico "Más Información" (dependía de `DocumentQtyList`, que el .NET
+ * calculaba y SAP no).
  *
  * "Reprocesar" SÍ está migrado: `PATCH /api/documents/:id/reprocess` reencola
  * el documento en la cola propia (§37, `Documents::PendingQueue#reprocess`),
  * ya no pega al servidor de sincronización .NET (`ApiFEUrl`).
+ *
+ * Las DOS descargas de XML también: `GET /api/documents/:id/xml_files/sent` y
+ * `…/response` (`Api::Documents::XmlFilesController`). El XML no vive en SAP
+ * sino en Azure (`Documents::XmlArchive`) y SAP guarda su URL en
+ * `U_CL_FEC_XmlSentUrl`/`U_CL_FEC_XmlResponseUrl`; el listado las trae para
+ * saber si hay algo que bajar, pero la URL que se baja la resuelve el servidor
+ * por `DocEntry` — ver `#downloadXmlFile` y `#xmlFileOption`.
  */
 export default class extends TabulatorController {
   static targets = [
@@ -321,6 +328,16 @@ export default class extends TabulatorController {
       // Sin columna propia en la tabla (se sacó a pedido): sigue viajando
       // cruda para el panel "Consultar Información" (`#openInfoModal`).
       FechaEmision: doc.U_CL_FEC_FechaEmision,
+      // Las direcciones en Azure de los XML archivados (`Documents::XmlArchive`).
+      // NO se usan para bajar el archivo —eso lo resuelve el servidor por
+      // `DocEntry`, ver `Api::Documents::XmlFilesController`— sino para saber si
+      // hay algo que bajar antes de ofrecer la opción del dropdown.
+      //
+      // ⚠️ Se copian TAL CUAL, sin `|| ''`: `undefined` (el `$select` de la
+      // instalación no pidió el campo) y `''`/`null` (SAP lo devolvió vacío) son
+      // dos cosas distintas — ver `#xmlFileOption`.
+      XmlSentUrl: doc.U_CL_FEC_XmlSentUrl,
+      XmlResponseUrl: doc.U_CL_FEC_XmlResponseUrl,
       TotalComprobante: this.#normalizeCurrency(doc.DocCurrency) + ' ' +
                         Number(doc.DocTotal || 0).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,'),
     };
@@ -385,6 +402,30 @@ export default class extends TabulatorController {
 
   // ── Dropdown de opciones por fila ─────────────────────────────────────────
 
+  /**
+   * Una opción de descarga de XML, habilitada según haya o no archivo archivado.
+   *
+   * El estado NO decide esto: lo decide la URL que SAP guardó en el UDF
+   * (`U_CL_FEC_XmlSentUrl` / `U_CL_FEC_XmlResponseUrl`). Antes se adivinaba por
+   * `Status`, que es una correlación y no el dato —un documento Aceptado cuyo
+   * archivado falló ofrecía una descarga que no existía, y uno Rechazado sin
+   * respuesta archivada también—.
+   *
+   * ⚠️ `undefined` NO es "no hay": es "no se sabe". Significa que el `$select`
+   * de la consulta del catálogo (`getDocuments<tipo>`, personalizable por
+   * instalación) no pidió el campo, así que la fila no puede decir nada y la
+   * opción queda habilitada — el servidor contesta 404 con el motivo si de
+   * verdad no hay nada. Inhabilitarla ahí mostraría un motivo falso.
+   *
+   * El ícono es `download` en las dos, igual que "Descargar comprobante": lo que
+   * la opción hace es bajar un archivo, y el ícono lo dice.
+   */
+  #xmlFileOption({ label, action, url, disabledReason }) {
+    const missing = url === null || url === '';
+
+    return { label, action, icon: 'download', disabled: missing, disabledReason };
+  }
+
   #showRowDropdown(e, row) {
     // Eliminar dropdown previo si existe
     document.getElementById('cl-row-dropdown')?.remove();
@@ -398,16 +439,14 @@ export default class extends TabulatorController {
         disabled: row.Status !== 6 && row.Status !== 7,
         disabledReason: 'Solo disponible para documentos en estado Aceptado o Rechazado',
       },
-      {
-        label: 'Descargar XML respuesta', icon: 'download', action: 'download-xml',
-        disabled: row.Status !== 6 && row.Status !== 7,
-        disabledReason: 'Solo disponible para documentos en estado Aceptado o Rechazado',
-      },
-      {
-        label: 'Descargar XML comprobante', icon: 'description', action: 'download-doc-xml',
-        disabled: row.Status === 4,
-        disabledReason: 'No disponible para documentos en estado Error',
-      },
+      this.#xmlFileOption({
+        label: 'Descargar XML respuesta', action: 'download-xml', url: row.XmlResponseUrl,
+        disabledReason: 'El XML de respuesta se archiva cuando Hacienda acepta o rechaza el documento',
+      }),
+      this.#xmlFileOption({
+        label: 'Descargar XML comprobante', action: 'download-doc-xml', url: row.XmlSentUrl,
+        disabledReason: 'El XML del comprobante se archiva cuando el documento se firma y se envía a Hacienda',
+      }),
       { label: 'Correos',               icon: 'mail',     action: 'emails' },
       { label: 'Ver más detalles',      icon: 'info',     action: 'info'   },
       {
@@ -495,8 +534,8 @@ export default class extends TabulatorController {
       case 'view-pdf':         this.#viewPDF(row.Id);          break;
       case 'download-pdf':     this.#downloadPDF(row.Id, row.NumeroConsecutivo); break;
       case 'view-xml':         this.#viewXML(row.Id);          break;
-      case 'download-xml':     this.#downloadXML(row.Id, row.NumeroConsecutivo); break;
-      case 'download-doc-xml': this.#downloadDocXML(row.Id, row.NumeroConsecutivo); break;
+      case 'download-xml':     this.#downloadXmlFile(row, 'response'); break;
+      case 'download-doc-xml': this.#downloadXmlFile(row, 'sent');     break;
       case 'emails':           this.#openEmailModal(row);      break;
       case 'info':             this.#openInfoModal(row);        break;
       case 'skip-validations': this.#skipValidations(row.Id);  break;
@@ -540,28 +579,56 @@ export default class extends TabulatorController {
     }
   }
 
-  async #downloadXML(id, numeroConsecutivo) {
+  /**
+   * Baja uno de los dos XML archivados del documento — `sent` (el comprobante
+   * firmado que se envió) o `response` (lo que devolvió Hacienda).
+   *
+   * Endpoint nativo (`GET /api/documents/:id/xml_files/:kind`), ya no
+   * `GetXMLDoc`/`DownloadDocumentXML` del .NET. Dos diferencias con aquel:
+   *
+   *   - El cuerpo es el XML, no un JSON con Base64 adentro, así que no se pasa
+   *     por `#apiFetch` (que espera JSON) sino por `fetch` a secas — mismo
+   *     patrón que la descarga de esquemas XSD en `general_configs_controller`.
+   *   - El nombre del archivo lo manda el servidor (`Content-Disposition`), y es
+   *     EL MISMO con el que el XML quedó archivado en Azure (`<clave>.xml` /
+   *     `<clave>_respuesta.xml`) y con el que viaja adjunto en el correo de
+   *     recepción. El `NNN-XMLRESP`/`NNN-XMLDOC` del legacy era una tercera
+   *     convención, sin extensión y sin relación con las otras dos.
+   */
+  async #downloadXmlFile(row, kind) {
+    const url = `/api/documents/${row.Id}/xml_files/${kind}` +
+                `?doc_type=${encodeURIComponent(row.DocType)}`;
+
     try {
-      const json = await this.#apiFetch(`/api/Documents/DownloadDocumentXML?docId=${id}`);
-      if (!json.Data?.HrRespuestaXml) { showToast('No se pudo descargar el XML', 'error'); return; }
-      this.#downloadBase64(json.Data.HrRespuestaXml, `${numeroConsecutivo}-XMLRESP`, 'application/xml');
+      const response = await fetch(url, { headers: { Accept: 'application/xml' } });
+
+      if (!response.ok) {
+        // El cuerpo del error SÍ es JSON: trae el motivo (`Message`), que para
+        // un 404 explica cuándo se archiva el XML que no está.
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.Message || `HTTP ${response.status}`);
+      }
+
+      const fallback = `${row.Clave || row.NumeroConsecutivo || row.Id}` +
+                       `${kind === 'response' ? '_respuesta' : ''}.xml`;
+
+      this.#saveBlob(await response.blob(), this.#fileNameFromResponse(response) || fallback);
       showToast('Proceso de descarga exitoso!', 'success');
     } catch (err) {
+      // Lectura fallida → toast (§9).
       showToast(err.message, 'error');
     }
   }
 
-  async #downloadDocXML(id, numeroConsecutivo) {
-    try {
-      const json = await this.#apiFetch(`/api/Documents/GetXMLDoc?docId=${id}`);
-      if (!json.Data?.XmlSent) { showToast('No se pudo descargar el XML del documento', 'error'); return; }
-      const decoded = this.#b64DecodeUnicode(json.Data.XmlSent);
-      const blob = new Blob([decoded], { type: 'application/xml' });
-      this.#saveBlob(blob, `${numeroConsecutivo}-XMLDOC`);
-      showToast('Proceso de descarga exitoso!', 'success');
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
+  /** El `filename` del `Content-Disposition`, o `null` si el header no vino. */
+  #fileNameFromResponse(response) {
+    const disposition = response.headers.get('content-disposition') || '';
+    // `filename*=UTF-8''…` primero: es el que lleva el nombre sin degradar
+    // cuando tiene caracteres fuera de ASCII.
+    const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (encoded) { try { return decodeURIComponent(encoded[1]); } catch { /* cae al plano */ } }
+
+    return disposition.match(/filename="?([^";]+)"?/i)?.[1] || null;
   }
 
   async #skipValidations(docId) {
@@ -1532,12 +1599,6 @@ export default class extends TabulatorController {
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
-  }
-
-  #b64DecodeUnicode(str) {
-    return decodeURIComponent(
-      atob(str).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
-    );
   }
 
   // ── Tooltip para opciones inhabilitadas del dropdown ──────────────────────

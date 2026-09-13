@@ -147,7 +147,7 @@ class SyncIssuedDocumentsJob < ApplicationJob
   rescue Sap::CompanyClient::MissingConfiguration,
          Hacienda::CompanySigner::MissingCertificate,
          Hacienda::Client::MissingConfiguration,
-         Documents::XmlArchive::MissingIdNumber,
+         Documents::XmlArchive::MissingUuid,
          Azure::BlobStorage::MissingConfiguration => e
     # No se llegó a hablar con nadie: falta configuración de la instalación. Es
     # accionable por quien administra, así que va como warn y no como error.

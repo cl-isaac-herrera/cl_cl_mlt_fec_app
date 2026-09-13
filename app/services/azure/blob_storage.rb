@@ -28,6 +28,23 @@ module Azure
     # Falta la cuenta o la clave en `settings` (grupo `AZURE_STORAGE`).
     class MissingConfiguration < Error; end
 
+    # El ajuste ESTÁ, pero su valor no sirve como segmento de ruta (ver
+    # `VALID_SEGMENT`). Hereda de `MissingConfiguration` a propósito: es el mismo
+    # desenlace —un problema de configuración que ningún reintento arregla— y así
+    # todos los `rescue` que ya existen lo atrapan sin tener que sumarlo uno por
+    # uno (`SyncIssuedDocumentsJob#failed`, `CheckSentDocumentsJob#archive_response`).
+    class InvalidConfiguration < MissingConfiguration; end
+
+    # Lo que puede ser un segmento de la ruta de un blob cuando el valor no lo
+    # elige el código: un ajuste que escribe el operador
+    # (`AZURE_STORAGE_WORKSPACE`) o una columna de la base (`companies.uuid`).
+    #
+    # Sin esto, un `../` o una barra de más no es un error: es una escritura en
+    # OTRA carpeta —la de otro producto o la de otra compañía— y nadie se entera
+    # hasta que alguien busca el archivo donde tendría que estar. Mismo criterio
+    # que `CompanyFiles::Store::VALID_ID_NUMBER` para las rutas del disco (§34).
+    VALID_SEGMENT = /\A[A-Za-z0-9._-]+\z/
+
     # La subida falló por algo que no es del archivo: red, timeout, un 5xx de
     # Azure, o una firma rechazada (403) — que casi siempre es reloj
     # desincronizado (Azure exige que la fecha esté a menos de 15 min) y no un
@@ -46,6 +63,48 @@ module Azure
 
     OPEN_TIMEOUT = 10
     READ_TIMEOUT = 30
+
+    # Los dos ajustes que forman la ruta de CUALQUIER blob de este producto, no
+    # solo de uno de los dos almacenes. Viven acá y no duplicados en
+    # `Documents::XmlArchive` y `Hacienda::SchemaStore` porque son el mismo dato
+    # leído con el mismo criterio: dos copias se separan en cuanto una agregue
+    # una validación que la otra no tenga.
+    #
+    # `purpose` es la única parte que cambia entre llamadores, y es la que hace
+    # que el mensaje sirva: quien lo lee necesita saber qué dejó de funcionar,
+    # no solo qué ajuste falta.
+    class << self
+      # El contenedor de la cuenta. No es un segmento de ruta (va en la
+      # autoridad de la URL, no en el path), así que no pasa por `VALID_SEGMENT`
+      # — Azure rechaza un nombre inválido con un 400 que ya se traduce a
+      # `RejectedError`.
+      def container(purpose:) = setting('CONTAINER', purpose: purpose)
+
+      # La carpeta de PRIMER nivel del producto dentro del contenedor ("fec").
+      # Existe porque la cuenta es compartida entre productos de Clavisco: sin
+      # ella, `xsd/` y `{uuid}/` colgarían de la raíz y se mezclarían con los de
+      # otro producto.
+      def workspace(purpose:)
+        value = setting('WORKSPACE', purpose: purpose)
+
+        unless value.match?(VALID_SEGMENT)
+          raise InvalidConfiguration,
+                "El ajuste AZURE_STORAGE_WORKSPACE (#{value.inspect}) no es una carpeta válida: " \
+                'solo letras, números, punto, guion y guion bajo.'
+        end
+
+        value
+      end
+
+      # @raise [MissingConfiguration] el ajuste no existe o está vacío.
+      def setting(key, purpose:)
+        Setting.group('AZURE_STORAGE').fetch(key)
+      rescue KeyError
+        raise MissingConfiguration,
+              "Falta el ajuste AZURE_STORAGE_#{key} en Configuraciones → Generales, " \
+              "necesario para #{purpose}."
+      end
+    end
 
     def initialize
       @account = setting('ACCOUNT_NAME')
@@ -227,11 +286,7 @@ module Azure
     end
 
     def setting(key)
-      Setting.group('AZURE_STORAGE').fetch(key)
-    rescue KeyError
-      raise MissingConfiguration,
-            "Falta el ajuste AZURE_STORAGE_#{key} en Configuraciones → Generales, " \
-            'necesario para guardar los XML de Hacienda.'
+      self.class.setting(key, purpose: 'guardar los archivos de Hacienda')
     end
   end
 end

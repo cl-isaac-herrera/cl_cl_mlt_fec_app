@@ -5,25 +5,36 @@ module Documents
   # `U_CL_FEC_XmlSentUrl` / `U_CL_FEC_XmlResponseUrl` (`Sap::DocumentStatus`).
   #
   #   Documents::XmlArchive.store_sent(company: company, clave: clave, xml: signed_xml)
-  #   # => "https://miempresa.blob.core.windows.net/clvsfe/3101822733/5061....xml"
+  #   # => "https://miempresa.blob.core.windows.net/appfiles/fec/aaeda6a9-…/xmls/5061….xml"
   #
-  # El nombre de archivo lo fija Hacienda/el legacy, no una elección de esta
-  # clase: `<contenedor>/<cédula>/<clave>.xml` para el firmado que se envía,
-  # `<clave>_respuesta.xml` para el que Hacienda devuelve — el contenedor sale
-  # del ajuste `AZURE_STORAGE_CONTAINER` (`db/seeds.rb`), sembrado con "clvsfe"
-  # igual que el legacy. La cédula (y no `company.id` ni `company.sap_db`) es la carpeta
-  # porque es el identificador estable del contribuyente — el mismo criterio
-  # que usa `CompanyFiles::Store` para el certificado y el logo (`CLAUDE.md` §34).
+  # La ruta es `<contenedor>/<workspace>/<uuid de la compañía>/xmls/<archivo>`:
+  #
+  #   - el CONTENEDOR y el WORKSPACE salen de `settings` (`Azure::BlobStorage
+  #     .container`/`.workspace`). El workspace separa este producto de los demás
+  #     que comparten la cuenta;
+  #   - el UUID DE LA COMPAÑÍA (`companies.uuid`) separa una compañía de otra. Es
+  #     el identificador que no cambia nunca: la cédula sí puede corregirse —y
+  #     corregirla movería de carpeta a una compañía con documentos ya
+  #     archivados, dejando las URLs guardadas en SAP apuntando a un blob que ya
+  #     no existe—;
+  #   - `xmls/` deja lugar, al lado, a las otras carpetas de la compañía sin
+  #     tener que mover nada.
+  #
+  # El NOMBRE del archivo lo fija Hacienda/el legacy y no cambió: `<clave>.xml`
+  # para el firmado que se envía, `<clave>_respuesta.xml` para el que Hacienda
+  # devuelve.
+  #
+  # ⚠️ Esto describe dónde se ESCRIBE de ahora en adelante. Los documentos ya
+  # archivados siguen donde están y se siguen leyendo igual: `fetch` saca la ruta
+  # de la URL guardada en SAP, no la recompone (ver el comentario del método).
   module XmlArchive
-    # Mismo patrón que `CompanyFiles::Store::VALID_ID_NUMBER`: solo alfanumérico
-    # y guion. Una cédula con `/` cambiaría a qué blob se está escribiendo.
-    VALID_ID_NUMBER = /\A[A-Za-z0-9-]+\z/
-
     class Error < StandardError; end
 
-    # La compañía no tiene cédula todavía. Sin ella no hay carpeta donde
-    # guardar nada — el mismo prerrequisito que exige `CompanyFiles::Store`.
-    class MissingIdNumber < Error; end
+    # La compañía no tiene `uuid`. Lo genera un `before_create`, así que en la
+    # práctica solo puede pasar con una fila insertada por fuera del modelo (una
+    # importación, SQL directo). Sin él no hay carpeta donde guardar nada — el
+    # mismo prerrequisito que `CompanyFiles::Store` exige sobre la cédula (§34).
+    class MissingUuid < Error; end
 
     module_function
 
@@ -31,7 +42,7 @@ module Documents
     # @param clave [String] la clave de 50 dígitos del comprobante.
     # @param xml [String] el XML firmado (bytes, no Base64).
     # @return [String] la URL del blob.
-    # @raise [MissingIdNumber, Azure::BlobStorage::MissingConfiguration,
+    # @raise [MissingUuid, Azure::BlobStorage::MissingConfiguration,
     #   Azure::BlobStorage::TransientError]
     def store_sent(company:, clave:, xml:)
       store(company: company, path: "#{clave}.xml", content: xml)
@@ -52,12 +63,16 @@ module Documents
     def store(company:, path:, content:)
       Azure::BlobStorage.new.upload(
         container: container,
-        path: "#{id_number(company)}/#{path}",
+        path: "#{folder(company)}/#{path}",
         content: content,
         content_type: 'application/xml'
       )
     end
     private_class_method :store
+
+    # `<workspace>/<uuid>/xmls` — la carpeta de los XML de esta compañía.
+    def folder(company) = "#{workspace}/#{uuid(company)}/xmls"
+    private_class_method :folder
 
     # Baja de Azure un XML ya archivado, a partir de la URL que guardó
     # `store_sent`/`store_response` (`U_CL_FEC_XmlSentUrl`/`U_CL_FEC_XmlResponseUrl`).
@@ -103,28 +118,28 @@ module Documents
       name.presence
     end
 
-    # "clvsfe", el mismo contenedor que usaba el legacy — es un ajuste (no una
-    # constante) para poder corregirlo desde la UI sin deploy si Hacienda
-    # alguna vez pidiera otro (`db/seeds.rb` lo reafirma en cada corrida).
-    def container
-      Setting.group('AZURE_STORAGE').fetch('CONTAINER')
-    rescue KeyError
-      raise Azure::BlobStorage::MissingConfiguration,
-            'Falta el ajuste AZURE_STORAGE_CONTAINER en Configuraciones → Generales, ' \
-            'necesario para guardar los XML de Hacienda.'
-    end
+    PURPOSE = 'guardar los XML de Hacienda'
+
+    def container = Azure::BlobStorage.container(purpose: PURPOSE)
     private_class_method :container
 
-    def id_number(company)
-      id_number = company.issuer_id_number.to_s.strip
+    def workspace = Azure::BlobStorage.workspace(purpose: PURPOSE)
+    private_class_method :workspace
 
-      raise MissingIdNumber, "La compañía #{company.name.inspect} no tiene número de identificación." if
-        id_number.blank?
-      raise MissingIdNumber, "El número de identificación de #{company.name.inspect} no es válido." unless
-        id_number.match?(VALID_ID_NUMBER)
+    # El `uuid` de la compañía, ya validado como segmento de ruta.
+    #
+    # El formato se comprueba aunque lo genere `SecureRandom.uuid`: la columna es
+    # un `string` cualquiera y una compañía importada pudo llegar con otra cosa
+    # adentro. Es la misma razón por la que se validaba la cédula.
+    def uuid(company)
+      uuid = company.uuid.to_s.strip
 
-      id_number
+      raise MissingUuid, "La compañía #{company.name.inspect} no tiene identificador (uuid)." if uuid.blank?
+      raise MissingUuid, "El identificador (uuid) de #{company.name.inspect} no es válido." unless
+        uuid.match?(Azure::BlobStorage::VALID_SEGMENT)
+
+      uuid
     end
-    private_class_method :id_number
+    private_class_method :uuid
   end
 end

@@ -435,17 +435,17 @@ RSpec.describe SyncIssuedDocumentsJob do
       expect(hacienda).not_to have_received(:send_document)
     end
 
-    it 'marca Error sin alertar cuando la compañía no tiene cédula para archivar el XML' do
+    it 'marca Error sin alertar cuando la compañía no tiene uuid para archivar el XML' do
       queue(entry)
       allow(Documents::XmlArchive).to receive(:store_sent)
-        .and_raise(Documents::XmlArchive::MissingIdNumber, 'no tiene número de identificación')
+        .and_raise(Documents::XmlArchive::MissingUuid, 'no tiene identificador (uuid)')
       allow(Sentry).to receive(:capture_exception)
 
       described_class.perform_now
 
       expect(Documents::PendingQueue).to have_received(:mark_error)
         .with(anything)
-      expect_error_attempt(/no tiene número de identificación/)
+      expect_error_attempt(/no tiene identificador \(uuid\)/)
       expect(Sentry).not_to have_received(:capture_exception)
     end
 

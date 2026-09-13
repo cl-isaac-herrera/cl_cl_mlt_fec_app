@@ -6,6 +6,7 @@ RSpec.describe Hacienda::SchemaUpload do
   let(:account)   { 'clviscofe' }
   let(:key)       { Base64.strict_encode64('una-clave-de-prueba-cualquiera') }
   let(:container) { 'clvsfe' }
+  let(:workspace) { 'fec' }
   let(:code)      { 'HACIENDA_XSD_01' }
 
   let(:legacy_xsd) do
@@ -18,6 +19,7 @@ RSpec.describe Hacienda::SchemaUpload do
     azure_setting('AZURE_STORAGE_ACCOUNT_NAME', account)
     azure_setting('AZURE_STORAGE_ACCOUNT_KEY', key, is_visible: false)
     azure_setting('AZURE_STORAGE_CONTAINER', container)
+    azure_setting('AZURE_STORAGE_WORKSPACE', workspace)
 
     setting.update_value!(nil)
   end

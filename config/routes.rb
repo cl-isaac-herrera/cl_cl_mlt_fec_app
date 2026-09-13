@@ -233,11 +233,23 @@ Rails.application.routes.draw do
     # documento: crea un correo (§28 regla 4). Así, el panel "Correos" del
     # listado se resuelve con el `index` y el `create` del mismo recurso, y
     # reemplaza `GET /api/Email/GetOutgoingMails?docId=N` y `POST /api/Email/`.
+    #
+    # `xml_files` son los dos XML archivados del documento — `sent` (el
+    # comprobante firmado que se envió) y `response` (lo que devolvió Hacienda).
+    # Reemplazan `GET /api/Documents/GetXMLDoc` y `DownloadDocumentXML`: el
+    # archivo vive en Azure y SAP guarda su URL, así que el `:id` nombra CUÁL de
+    # los dos se pide en vez de meter el verbo en el path. El servidor resuelve
+    # la URL por `DocEntry` y no la acepta del cuerpo — ver
+    # `Api::Documents::XmlFilesController`.
     resources :documents, only: %i[index show] do
       get   :attempts,  on: :member
       patch :reprocess, on: :member
 
       resources :mails, only: %i[index create], module: :documents
+      # Sin `constraints` sobre el `:id`: un valor fuera de `sent`/`response`
+      # tiene que contestar 404 acá y no caerse al catch-all del proxy, que lo
+      # reenviaría al .NET.
+      resources :xml_files, only: %i[show], module: :documents
     end
   end
 

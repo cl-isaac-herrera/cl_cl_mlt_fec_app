@@ -77,7 +77,7 @@ module Documents
     # @return [Hacienda::Client::Receipt]
     # @raise [ValidationFailed] el documento no pasa las reglas de Hacienda.
     # @raise [Hacienda::XmlBuilder::UnsupportedDocType, Hacienda::XmlBuilder::InvalidValue]
-    # @raise [Documents::XmlArchive::MissingIdNumber, Azure::BlobStorage::MissingConfiguration,
+    # @raise [Documents::XmlArchive::MissingUuid, Azure::BlobStorage::MissingConfiguration,
     #   Azure::BlobStorage::TransientError, Azure::BlobStorage::RejectedError]
     # @raise [Hacienda::Client::TransientError, Hacienda::Client::RejectedError,
     #   Hacienda::Client::MissingConfiguration]

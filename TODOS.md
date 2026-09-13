@@ -2003,19 +2003,39 @@ BÚSQUEDA/listado: consulta en vivo el catálogo `getDocuments01`..`10` de `sl_r
 (SAP es la fuente de verdad; `DocumentsQueue`, §37, queda para el historial de reintentos,
 no para este listado — decisión del 2026-09-05). Lo que sigue sin migrar:
 
-- [ ] **Las acciones por fila siguen pegándole al proxy .NET con un `Id` que ya no
-      existe.** Ver/Descargar PDF (`/api/Report/*InvoicePDF`), Ver/Descargar XML Hacienda
-      y Descargar Doc XML (`/api/Documents/*XML*`), Omitir
-      Validaciones y Anulación Interna (`/api/Documents` PATCH) y Descarga Masiva
-      (`/api/Report/BulkDownloadOfDocuments`). Todas asumían un `Id` de la base local del
-      .NET (`spGetDocuments`); el listado nuevo viene de SAP y solo puede ofrecer
-      `DocEntry` (`documents_issued_controller.js#mapDocument` lo estampa como `Id` de
-      paso, para que el código no reciba `undefined`, pero ningún backend nativo lo
-      resuelve todavía).
+- [ ] **Las acciones por fila que quedan siguen pegándole al proxy .NET con un `Id` que ya
+      no existe.** Ver/Descargar PDF (`/api/Report/*InvoicePDF`), **Ver** XML respuesta
+      (`/api/Documents/PrintDocumentXML`), Omitir Validaciones y Anulación Interna
+      (`/api/Documents` PATCH) y Descarga Masiva (`/api/Report/BulkDownloadOfDocuments`).
+      Todas asumían un `Id` de la base local del .NET (`spGetDocuments`); el listado nuevo
+      viene de SAP y solo puede ofrecer `DocEntry`
+      (`documents_issued_controller.js#mapDocument` lo estampa como `Id` de paso, para que
+      el código no reciba `undefined`, pero ningún backend nativo lo resuelve todavía).
       **Pendiente:** una migración por acción (o por grupo), decidiendo primero si cada
       una se resuelve por `DocEntry`+`DocType` contra SAP o necesita datos que hoy solo
-      tiene el .NET (el PDF sale de un Crystal Report, el XML/envío a Hacienda depende del
-      paso 4 de "Emisión de documentos" más arriba, que tampoco existe todavía).
+      tiene el .NET (el PDF sale de un Crystal Report).
+      **"Ver XML respuesta" es el más barato de los que faltan:** el archivo ya lo sabe
+      resolver `Api::Documents::XmlFilesController` (entrada de acá abajo) — lo único que
+      cambia es abrirlo en una pestaña en vez de bajarlo, así que es `disposition:
+      'inline'` sobre el mismo endpoint, no una migración nueva.
+
+- [x] **Descargar XML comprobante y Descargar XML respuesta — migrados a Rails (2026-09-13).**
+      `GET /api/documents/:id/xml_files/sent|response?doc_type=`
+      (`Api::Documents::XmlFilesController`) reemplaza `GET /api/Documents/GetXMLDoc` y
+      `DownloadDocumentXML`. Se pudieron migrar sin esperar al resto porque el archivo no
+      depende del `Id` local: vive en Azure (`Documents::XmlArchive`) y SAP guarda su URL
+      en `U_CL_FEC_XmlSentUrl`/`U_CL_FEC_XmlResponseUrl`, que se resuelven por `DocEntry`
+      con la familia `getDocumentXmlUrls01`..`10` del catálogo
+      (`20260913160000_add_document_xml_url_sl_resources.rb`, que además le suma las dos
+      URLs al `$select` de `getDocuments01`..`10`).
+      La URL **no** viaja en el pedido aunque el listado ya la tenga: cambiarle la carpeta
+      (`<contenedor>/<cédula>/…`) bajaría el XML de otro contribuyente con las credenciales
+      de Azure de la instalación. La del listado solo decide si la opción se ofrece
+      habilitada (§26) — y `undefined` ahí es "no se sabe" (un `$select` personalizado que
+      omitió el campo), no "no hay".
+      El archivo se baja con el nombre con el que quedó archivado (`<clave>.xml` /
+      `<clave>_respuesta.xml`), el mismo que ya usan los adjuntos del correo de recepción;
+      el `NNN-XMLRESP`/`NNN-XMLDOC` del legacy era una tercera convención sin extensión.
 
 - [x] **Correos (el LISTADO del panel) — migrado a Rails (2026-09-12).**
       `GET /api/documents/:id/mails?doc_type=` (`Api::DocumentsController#mails` +

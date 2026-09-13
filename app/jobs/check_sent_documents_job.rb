@@ -232,7 +232,7 @@ class CheckSentDocumentsJob < ApplicationJob
     return nil if xml.nil?
 
     Documents::XmlArchive.store_response(company: company, clave: clave, xml: xml)
-  rescue Documents::XmlArchive::MissingIdNumber, Azure::BlobStorage::MissingConfiguration,
+  rescue Documents::XmlArchive::MissingUuid, Azure::BlobStorage::MissingConfiguration,
          Azure::BlobStorage::TransientError, Azure::BlobStorage::RejectedError => e
     Rails.logger.error("[CheckSentDocuments] #{entry}: no se pudo archivar la respuesta de Hacienda — #{e.message}")
     Sentry.capture_exception(e)

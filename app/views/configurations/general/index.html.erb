@@ -495,10 +495,12 @@
   <%# SECCIÓN: Azure Storage (grupo AZURE_STORAGE)                      %>
   <%#                                                                   %>
   <%# Cuenta donde `Documents::XmlArchive` guarda el XML firmado que se %>
-  <%# envía a Hacienda y el XML de respuesta que Hacienda devuelve. El  %>
-  <%# contenedor viene sembrado ("clvsfe", igual que el legacy) y no lo %>
-  <%# personaliza el operador — solo la cuenta sí —, pero vive acá y no %>
-  <%# como constante para poder corregirlo sin deploy (`db/seeds.rb`).  %>
+  <%# envía a Hacienda y el XML de respuesta que Hacienda devuelve, y   %>
+  <%# donde `Hacienda::SchemaStore` guarda los XSD. La ruta se arma     %>
+  <%# `<contenedor>/<workspace>/<uuid de la compañía>/xmls/` para los   %>
+  <%# comprobantes y `<contenedor>/<workspace>/xsd/` para los esquemas. %>
+  <%# El contenedor viene sembrado y se reafirma en cada `db:seed`; el  %>
+  <%# workspace es solo un DEFAULT ("fec") y sí se puede cambiar.       %>
   <%# ---------------------------------------------------------------- %>
   <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6"
        style="grid-column: 1 / -1;">
@@ -524,8 +526,14 @@
       <%= render 'configurations/general/setting_field',
             code:        'AZURE_STORAGE_CONTAINER',
             label:       'Contenedor',
-            placeholder: 'clvsfe',
+            placeholder: 'appfiles',
             hint:        'Solo cambia si el proveedor de Azure exige otro contenedor.' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'AZURE_STORAGE_WORKSPACE',
+            label:       'Carpeta del producto',
+            placeholder: 'fec',
+            hint:        'Primer nivel dentro del contenedor. Cambiarla NO mueve los archivos ya guardados: los nuevos se escriben en la carpeta nueva y los anteriores se siguen leyendo donde están.' %>
 
     </div>
 

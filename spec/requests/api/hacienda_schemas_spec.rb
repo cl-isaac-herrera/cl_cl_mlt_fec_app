@@ -25,6 +25,7 @@ RSpec.describe 'Api::HaciendaSchemas', type: :request do
     azure_setting('AZURE_STORAGE_ACCOUNT_NAME', account)
     azure_setting('AZURE_STORAGE_ACCOUNT_KEY', key, is_visible: false)
     azure_setting('AZURE_STORAGE_CONTAINER', container)
+    azure_setting('AZURE_STORAGE_WORKSPACE', 'fec')
 
     setting.update_value!(nil)
   end

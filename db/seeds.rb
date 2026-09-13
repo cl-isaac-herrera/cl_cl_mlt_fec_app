@@ -649,35 +649,49 @@ SL_RESOURCES_STATUS_UPDATES = [
 # se dejaron fuera para no repetir columnas ya cubiertas por otras filas del
 # catálogo, pero `app/javascript/controllers/documents_issued_controller.js` sí
 # los necesita.
+#
+# ⚠️ `U_CL_FEC_XmlSentUrl`/`U_CL_FEC_XmlResponseUrl` SÍ tienen que estar en el
+# `$select` de la instalación: es con ellas que el listado sabe si hay un XML
+# archivado para ofrecer "Descargar XML comprobante"/"Descargar XML respuesta"
+# (`SL_RESOURCES_DOCUMENT_XML_URLS`, más abajo, es lo que después resuelve la
+# descarga). Un `$select` personalizado que las omita deja las dos acciones
+# habilitadas —no se puede saber— y el error recién aparece al hacer click.
 SL_RESOURCES_DOCUMENT_QUERIES = [
   ['getDocuments01', 'Obtiene el listado paginado de facturas electrónicas desde SAP',
    'Invoices',
    '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
+   '&$orderby=DocEntry desc', 0],
   ['getDocuments02', 'Obtiene el listado paginado de notas de débito electrónicas desde SAP',
    'Invoices',
    '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
+   '&$orderby=DocEntry desc', 0],
   ['getDocuments03', 'Obtiene el listado paginado de notas de crédito electrónicas desde SAP',
    'CreditNotes',
    '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
+   '&$orderby=DocEntry desc', 0],
   ['getDocuments04', 'Obtiene el listado paginado de tiquetes electrónicos desde SAP',
    'Invoices',
    '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
+   '&$orderby=DocEntry desc', 0],
   ['getDocuments08', 'Obtiene el listado paginado de facturas electrónicas de compra desde SAP',
    'PurchaseInvoices',
    '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
+   '&$orderby=DocEntry desc', 0],
   ['getDocuments09', 'Obtiene el listado paginado de facturas electrónicas de exportación desde SAP',
    'Invoices',
    '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0],
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
+   '&$orderby=DocEntry desc', 0],
   ['getDocuments10', 'Obtiene el listado paginado de recibos electrónicos de pago desde SAP',
    'IncomingPayments',
    '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision&$orderby=DocEntry desc', 0]
+   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
+   '&$orderby=DocEntry desc', 0]
 ].freeze
 
 # ── Cola de correos de recepción electrónica (UDT `@CL_FEC_MAILSDETAILS`) ───
@@ -881,6 +895,45 @@ SL_RESOURCES_DOCUMENT_ERROR_DETAILS = [
    'IncomingPayments(#DocEntry#)', '$select=U_CL_FEC_Status,U_CL_FEC_ErrorDetails', 0]
 ].freeze
 
+# ── URLs de los XML archivados de un documento ──────────────────────────────
+# Las dos direcciones de Azure que escribió `Sap::DocumentStatus` cuando el
+# documento se sincronizó: `U_CL_FEC_XmlSentUrl` (el comprobante firmado que se
+# envió) y `U_CL_FEC_XmlResponseUrl` (lo que devolvió Hacienda). Las consume
+# `Api::Documents::XmlFilesController`, que baja el blob con
+# `Documents::XmlArchive.fetch` — el XML no está en SAP, solo su dirección.
+#
+# ── Por qué el servidor las vuelve a pedir si el listado ya las trajo ────────
+# Porque una URL que llega del cliente es una URL que el cliente eligió:
+# bastaría cambiarle la carpeta (`<contenedor>/<cédula>/…`) para bajar el XML de
+# otro contribuyente con las credenciales de Azure de la instalación. La URL que
+# trae el listado decide si la acción se OFRECE; la que se baja la resuelve el
+# servidor por `DocEntry` contra la compañía activa.
+#
+# ── Por qué una familia aparte y no dos campos más en `getDocumentErrorDetails` ──
+# Mismo criterio que esa familia frente a `qsGetDocumentHeaderInfo`: el `code`
+# dice qué devuelve la consulta. Sumarle dos campos que no son ni el estado ni
+# el detalle de error dejaría un nombre que miente, y el panel de información
+# pagaría el `$select` más ancho sin usarlo.
+#
+# Mismo universo, mismo mapeo tipo→entidad y misma consulta por llave que
+# `SL_RESOURCES_DOCUMENT_ERROR_DETAILS`.
+SL_RESOURCES_DOCUMENT_XML_URLS = [
+  ['getDocumentXmlUrls01', 'URLs de los XML archivados de una factura electrónica',
+   'Invoices(#DocEntry#)', '$select=U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl', 0],
+  ['getDocumentXmlUrls02', 'URLs de los XML archivados de una nota de débito electrónica',
+   'Invoices(#DocEntry#)', '$select=U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl', 0],
+  ['getDocumentXmlUrls03', 'URLs de los XML archivados de una nota de crédito electrónica',
+   'CreditNotes(#DocEntry#)', '$select=U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl', 0],
+  ['getDocumentXmlUrls04', 'URLs de los XML archivados de un tiquete electrónico',
+   'Invoices(#DocEntry#)', '$select=U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl', 0],
+  ['getDocumentXmlUrls08', 'URLs de los XML archivados de una factura electrónica de compra',
+   'PurchaseInvoices(#DocEntry#)', '$select=U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl', 0],
+  ['getDocumentXmlUrls09', 'URLs de los XML archivados de una factura electrónica de exportación',
+   'Invoices(#DocEntry#)', '$select=U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl', 0],
+  ['getDocumentXmlUrls10', 'URLs de los XML archivados de un recibo electrónico de pago',
+   'IncomingPayments(#DocEntry#)', '$select=U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl', 0]
+].freeze
+
 # ── Historial de intentos de sincronización de un documento (UDT) ───────────
 # La UDT `@CL_FEC_DOCSYNCATTMP` (`config/sap_schemas/doc_sync_attempts_udt.json`),
 # que reemplazó a la tabla `DocumentAttemptDetails` de la base de la cola: el
@@ -962,7 +1015,8 @@ ActiveRecord::Base.transaction do
   all_sl_resources = SL_RESOURCES + SL_RESOURCES_OWN + SL_RESOURCES_STATUS_UPDATES +
                      SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE +
                      SL_RESOURCES_MAIL_DOCUMENT_INFO + SL_RESOURCES_DOCUMENT_ERROR_DETAILS +
-                     SL_RESOURCES_DOC_SYNC_ATTEMPTS + SL_RESOURCES_BRANCHES
+                     SL_RESOURCES_DOCUMENT_XML_URLS + SL_RESOURCES_DOC_SYNC_ATTEMPTS +
+                     SL_RESOURCES_BRANCHES
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el
@@ -1116,10 +1170,18 @@ HACIENDA_XADES_SETTINGS = [
 # más arriba. Vive en `settings` (no en una constante) solo para poder
 # corregirlo desde la UI sin deploy si Hacienda alguna vez pidiera otro
 # contenedor.
+# El WORKSPACE es la carpeta de PRIMER nivel dentro del contenedor: la cuenta es
+# compartida entre productos de Clavisco y "fec" es la de este. Va con
+# `default_value` y NO con `fixed_value`: el nombre por defecto es del producto,
+# pero una instalación puede necesitar otro (un ambiente de QA conviviendo con
+# producción en la misma cuenta), y ese cambio no se puede perder en el próximo
+# deploy. Ver `Azure::BlobStorage.workspace` y `Documents::XmlArchive`.
 AZURE_STORAGE_SETTINGS = [
+  # code                          description                                             is_visible  fixed  default
   ['AZURE_STORAGE_ACCOUNT_NAME', 'Nombre de la cuenta de Azure Storage', true],
   ['AZURE_STORAGE_ACCOUNT_KEY',  'Clave de acceso de la cuenta de Azure Storage', false],
-  ['AZURE_STORAGE_CONTAINER',    'Contenedor de Azure Storage donde se guardan los XML', true, 'appfiles']
+  ['AZURE_STORAGE_CONTAINER',    'Contenedor de Azure Storage donde se guardan los XML', true, 'appfiles'],
+  ['AZURE_STORAGE_WORKSPACE',    'Carpeta del producto dentro del contenedor', true, nil, 'fec']
 ].freeze
 
 # Los esquemas XSD con los que se valida cada comprobante antes de mandarlo a
@@ -1165,7 +1227,7 @@ ActiveRecord::Base.transaction do
   created = 0
 
   SETTING_GROUPS.each do |group_code, rows|
-    rows.each do |code, description, is_visible, fixed_value|
+    rows.each do |code, description, is_visible, fixed_value, default_value|
       # `unscoped`: un ajuste dado de baja tiene que reactivarse, no duplicarse.
       # El índice único de `code` no excluye a las inactivas, así que sin esto el
       # `find_or_initialize_by` no la encontraría e intentaría insertar otra
@@ -1178,11 +1240,20 @@ ActiveRecord::Base.transaction do
       record.is_visible  = is_visible
       record.is_active   = true
 
-      # `value` NO se asigna, salvo `fixed_value`: es la excepción de
-      # `HACIENDA_XADES_SETTINGS` documentada arriba — un dato del PRODUCTO, no
-      # de la instalación, que el seed reafirma en cada corrida. En cualquier
-      # otra fila de este archivo `value` es lo único que escribe el operador.
-      record.value = fixed_value if fixed_value
+      # `value` NO se asigna, salvo por las dos excepciones de abajo. En
+      # cualquier otra fila de este archivo es lo único que escribe el operador.
+      #
+      #   - `fixed_value` — un dato del PRODUCTO, no de la instalación
+      #     (`HACIENDA_XADES_SETTINGS`, documentado arriba). El seed lo reafirma
+      #     en CADA corrida, así que pisa lo que haya: si el operador lo cambió
+      #     desde la pantalla, el cambio se revierte.
+      #   - `default_value` — un valor con el que el ajuste ARRANCA y que el
+      #     operador puede cambiar (`AZURE_STORAGE_WORKSPACE`). Solo se escribe
+      #     cuando no hay ninguno guardado, precisamente para no revertirlo.
+      #     `value.blank?` y no `record.persisted?`: una fila que quedó sin valor
+      #     —creada por una migración anterior, o vaciada— también lo necesita.
+      record.value = fixed_value   if fixed_value
+      record.value = default_value if default_value && record.value.blank?
 
       record.save!
     end
