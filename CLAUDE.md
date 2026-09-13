@@ -2734,27 +2734,48 @@ if (Documento.CondicionVenta == SalesConditions.Cash && DocType != DocTypesStrin
 `REP` es el tipo que más exclusiones acumula (no lleva líneas de detalle ni cuadre de totales
 como los demás): al migrarlo, revisar todos los `!= DocTypesString.REP` de `Validations.cs`.
 
-### Cómo está cableado hoy — FE y TE
+### Cómo está cableado hoy — FE, TE, ND y NC
 
 `Documents::Issuer#validate!` pregunta `Hacienda::DocumentValidator.validates?(doc_type)`, y
 esa lista (`VALIDATED_DOC_TYPES`) coincide con lo que `Hacienda::XmlBuilder` sabe generar. Es
 a propósito: un tipo que se pueda emitir sin poder validarse iría a Hacienda a ciegas.
 
-Las dos exclusiones por tipo que existen hoy, cada una donde corresponde:
+Las diferencias por tipo que existen hoy, cada una donde corresponde:
 
-| Regla exenta | Tipos | Dónde vive | Legacy |
+| Regla | Tipos | Dónde vive | Origen |
 |---|---|---|---|
-| Exigir identificación del receptor | TE, ND, NC | `Validations::HeaderValidator::RECEPTOR_OPCIONAL` | L324, L329 |
-| Validar `InformacionReferencia` | TE | `DocumentValidator::REFERENCIAS_NO_VALIDADAS` | L817 |
+| Exigir identificación del receptor — **exenta** | TE, ND, NC | `Validations::HeaderValidator::RECEPTOR_OPCIONAL` | `Validations.cs` L324, L329 |
+| Validar `InformacionReferencia` — **exenta** | TE | `DocumentValidator::REFERENCIAS_NO_VALIDADAS` | `Validations.cs` L817 |
+| Exigir al menos una `InformacionReferencia` — **extra** | ND, NC | `DocumentValidator::REFERENCIAS_REQUERIDAS` | XSD (`NotaCreditoElectronica_V4.4.xsd` L874) |
 
-Todo lo demás corre igual para factura y tiquete, la regla del medio de pago incluida.
+Todo lo demás corre igual para los cuatro, la regla del medio de pago incluida.
 
 > **Lo que se exime es EXIGIR el dato, no revisarlo.** Un tiquete puede no traer receptor,
 > pero si lo trae, el formato y la longitud se validan igual — el legacy hace esas dos
 > comprobaciones con un `if` que no excluye a ningún tipo (L334, L339, L344). Copiar la
 > exclusión al bloque entero dejaría pasar una cédula con formato inválido.
 
-Al sumar un tipo: revisar sus exclusiones en `Validations.cs`, agregarlas al validador que
-corresponda, y recién entonces meterlo en `VALIDATED_DOC_TYPES`. `RECEPTOR_OPCIONAL` ya
-lista ND y NC porque el legacy los exime — la lista describe la regla, no lo que hoy se
-puede emitir.
+> **`OwnValidations` no es la única fuente.** El legacy corre ANTES una validación contra el
+> XSD del tipo (`Validations.cs#ValidateXSD`, con `pathNCXSD`/`pathNDXSD`), así que una regla
+> puede no aparecer en `OwnValidations` y ser obligatoria igual. La referencia de ND/NC es
+> justamente eso: `InformacionReferencia` es `maxOccurs="10"` **sin `minOccurs`** —o sea,
+> mínimo una— en el XSD de las notas, y `minOccurs="0"` en el de factura. Al migrar un tipo
+> hay que diferenciar su XSD contra el del tipo ya migrado más parecido, no solo leer
+> `Validations.cs`.
+
+### Dos esquemas, cuatro tipos — lo que cambia entre `DocumentoFETE` y `DocumentoNCND`
+
+FE y TE comparten el esquema `DocumentoFETE`; ND y NC comparten `DocumentoNCND`. Dentro de
+cada par, lo único que cambia es la raíz y el namespace (`XmlBuilder::DOCUMENTS`). Entre los
+dos pares, la diferencia son **dos campos opcionales de línea y nada más** (verificado
+elemento por elemento: 168 vs 170 elementos en los XSD 4.4):
+
+| Campo | Dónde existe | Qué hace este producto |
+|---|---|---|
+| `LineaDetalle.PartidaArancelaria` | solo NC/ND, entre `NumeroLinea` y `CodigoCABYS` | Se mapea para todos en `UnifiedBuilder` y se emite solo en NC/ND (`XmlBuilder::PARTIDA_ARANCELARIA_DOC_TYPES`) |
+| `Impuesto.MontoExportacion` | solo NC/ND, entre `Monto` y `Exoneracion` | **No se emite en ninguno**: `LineItemValidator` rechaza cualquier valor mayor a cero, igual que el legacy y sin excluir a ningún tipo |
+
+Al sumar un tipo: revisar sus exclusiones en `Validations.cs`, diferenciar su XSD contra el
+del tipo migrado más parecido, agregar cada regla al validador que corresponda, y recién
+entonces meterlo en `VALIDATED_DOC_TYPES`. `RECEPTOR_OPCIONAL` ya listaba ND y NC antes de
+que se pudieran emitir — la lista describe la regla, no lo que hoy se puede mandar.

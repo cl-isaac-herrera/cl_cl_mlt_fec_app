@@ -1143,13 +1143,13 @@ puede funcionar:
 |---|---|---|---|---|---|---|
 | **FE** (`01`) | ✅ | ✅ | ✅ (`Hacienda::DocumentValidator`, 87 specs) | ✅ `FacturaElectronica` | ✅ (agnóstica al tipo) | ✅ `updateDocument01` |
 | **TE** (`04`) | ✅ (genérico, no distingue tipo) | ✅ | ✅ (`Hacienda::DocumentValidator`, mismas reglas que FE salvo el receptor) | ✅ `TiqueteElectronico` (mismo esquema que FE) | ✅ (agnóstica al tipo) | ✅ `updateDocument04` |
-| **ND** (`02`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument02` |
-| **NC** (`03`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument03` (UDF replicado a `ORIN` desde `OINV`, misma categoría Marketing Documents) |
-| **FEC** (`08`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument08` (UDF replicado a `OPCH` desde `OINV`, misma categoría Marketing Documents) |
+| **ND** (`02`) | ✅ | ✅ | ✅ (`Hacienda::DocumentValidator`, mismas reglas que FE salvo el receptor, más la referencia obligatoria) | ✅ `NotaDebitoElectronica` | ✅ (agnóstica al tipo) | ✅ `updateDocument02` |
+| **NC** (`03`) | ✅ | ✅ | ✅ (`Hacienda::DocumentValidator`, ídem ND) | ✅ `NotaCreditoElectronica` (mismo esquema que ND) | ✅ (agnóstica al tipo) | ✅ `updateDocument03` (UDFs de `ORIN` replicados desde `OINV`, misma categoría Marketing Documents) |
+| **FEC** (`08`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument08` (UDFs de `OPCH` replicados desde `OINV`, ídem) |
 | **FEE** (`09`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument09` |
 | **REP** (`10`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument10` |
 
-**Los cinco tipos sin generador de XML se marcan `Error` con el motivo**, no revientan el
+**Los tres tipos sin generador de XML se marcan `Error` con el motivo**, no revientan el
 job: `Hacienda::XmlBuilder::UnsupportedDocType` dice "este producto todavía no sabe armar
 el XML de …" y eso llega a `Details` de la cola y a `U_CL_FEC_ErrorDetails`.
 
@@ -1176,13 +1176,51 @@ Pendiente de confirmación en campo:
       rechazando documentos que Hacienda sí acepta. Es el único punto que no se puede cerrar
       leyendo el legacy.
 
-**ND, NC, FEC, FEE, REP quedan en ❓** porque nadie llegó a construir un objeto unificado
-real para ninguno de ellos —ni con datos de prueba, mucho menos reales— y el legacy sí
-tiene reglas y exclusiones propias por tipo para varios de ellos (partida arancelaria
-solo en FEE, `DetalleServicio` obligatorio en FEC, `InformacionReferencia` obligatoria en
-NC/ND/REP, líneas de detalle simplificadas en REP, etc. — ver el bloque de "Diferencias
-clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo patrón de
-`Hacienda::Validations::*` con las reglas específicas de cada uno, no un cambio genérico.
+**ND y NC ya se emiten y se validan (2026-09-12).** Son el segundo par del mismo patrón: el
+legacy los manda a un solo `SyncDocumentNCND` (`Transactions.cs` L1943) y los serializa con
+un solo `DocumentoNCND` (`getSerializeDocNCND`), cambiando nada más la raíz y el namespace
+entre uno y otro — exactamente como FE y TE con `DocumentoFETE`.
+
+`DocumentoNCND` difiere de `DocumentoFETE` en DOS campos opcionales de línea y en nada más
+(verificado elemento por elemento entre `FacturaElectronica_V4.4.xsd` y
+`NotaCreditoElectronica_V4.4.xsd`: 168 vs 170 elementos, dos inserciones):
+
+- **`LineaDetalle.PartidaArancelaria`** — existe solo en NC/ND, entre `NumeroLinea` y
+  `CodigoCABYS`. Ya venía en la vista de líneas de SAP y nadie la mapeaba; ahora
+  `Documents::UnifiedBuilder` la arma para todos los tipos y `XmlBuilder` la emite solo
+  donde el esquema la declara (`PARTIDA_ARANCELARIA_DOC_TYPES`).
+- **`Impuesto.MontoExportacion`** — también existe solo en NC/ND, pero NO se emite:
+  `LineItemValidator` rechaza cualquier valor mayor a cero (el legacy igual, y sin excluir
+  a ningún tipo), así que el elemento solo podría salir en cero.
+
+De las reglas de `OwnValidations`, el legacy exime a ND y NC de UNA sola —la identificación
+del receptor, la misma que a TE (L324, L329)— y de ninguna otra: el bloque de referencias
+(L817) sí corre para las dos. Lo único que piden de MÁS sale del otro validador del legacy,
+el XSD: `InformacionReferencia` es obligatoria en `DocumentoNCND` (`maxOccurs="10"` sin
+`minOccurs`) y opcional en `DocumentoFETE` (`minOccurs="0"`). Vive en
+`DocumentValidator::REFERENCIAS_REQUERIDAS`, y tiene sentido de negocio: una nota existe
+para corregir OTRO comprobante, así que sin decir cuál no corrige nada.
+
+Pendiente de las notas:
+- [ ] Correr la emisión contra notas de crédito y de débito reales de la cola. Mismo aviso
+      que el tiquete: las reglas se revisaron una por una contra el legacy, pero nadie armó
+      todavía un objeto unificado de una nota con datos reales.
+- [ ] **Confirmar contra SAP que `ORIN` tiene los UDFs `CL_FEC_*`.** No hace falta un
+      schema nuevo —`ORIN` es Marketing Documents como `OINV` y SAP replica el UDF solo,
+      ver el pendiente cerrado más arriba (2026-09-07)—, pero la nota de crédito es el
+      primer tipo que de verdad va a escribirle a esa tabla, así que la replicación deja
+      de ser teoría el día que se emita una. Un `sap:schema:diff` contra una compañía real
+      lo confirma sin tocar nada.
+      ⚠️ De paso: el comentario de `db/seeds.rb` decía lo contrario ("FALTAN `ORIN` y
+      `OPCH`") desde el mismo commit que dejó esta confirmación. Ya está corregido.
+
+**FEC, FEE y REP quedan en ❓** porque nadie llegó a construir un objeto unificado real para
+ninguno de ellos —ni con datos de prueba, mucho menos reales— y el legacy sí tiene reglas y
+exclusiones propias por tipo para los tres (partida arancelaria obligatoria en FEE,
+`DetalleServicio` obligatorio en FEC, líneas de detalle simplificadas y media docena de
+`!= DocTypesString.REP` en REP, etc. — ver el bloque de "Diferencias clave" del reporte de
+la migración del XSD). Extenderlos es replicar el mismo patrón de `Hacienda::Validations::*`
+con las reglas específicas de cada uno, no un cambio genérico.
 
 - [x] **Firma XAdES-EPES — portada (2026-09-05).** `Hacienda::XmlSigner`
       (`app/services/hacienda/xml_signer.rb`) es el port casi literal del prototipo

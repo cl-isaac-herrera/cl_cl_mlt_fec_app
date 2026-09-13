@@ -7,9 +7,10 @@
 # puntual con `deep_merge`/reasignación y verifica que aparezca (y solo
 # aparezca) el error esperado.
 #
-# Sirve igual para factura y para tiquete: comparten el mismo esquema y todas
-# las reglas menos la identificación del receptor (CLAUDE.md §39). Para un
-# tiquete, los specs vacían `Receptor.Identificacion` sobre esta misma base.
+# Sirve igual para factura, tiquete y notas de crédito/débito: comparten casi
+# todas las reglas (CLAUDE.md §39). Para un tiquete, los specs vacían
+# `Receptor.Identificacion` sobre esta misma base; para una nota, le ponen una
+# `InformacionReferencia` con `valid_reference`, que ahí es obligatoria.
 #
 # Los números están elegidos para que el cuadre sea exacto (sin depender de la
 # tolerancia ±0.5): 2 unidades × 100 = 200, IVA 13% = 26.00.
@@ -63,6 +64,9 @@ module HaciendaDocumentHelpers
   def valid_line(overrides = {})
     {
       'NumeroLinea' => 1,
+      # Solo la emite el XML de NC/ND; en FE/TE viaja en el objeto unificado y
+      # se omite al serializar.
+      'PartidaArancelaria' => '0102290000',
       'CodigoCABYS' => '1' * 13,
       'CodigoComercial' => { 'Tipo' => '01', 'Codigo' => 'SKU-1' },
       'Cantidad' => BigDecimal(2),
@@ -110,6 +114,19 @@ module HaciendaDocumentHelpers
       'TipoDocumentoEX1' => nil, 'TipoDocumentoOTRO' => nil, 'NumeroDocumento' => nil,
       'NombreInstitucion' => nil, 'NombreInstitucionOtros' => nil, 'FechaEmisionEX' => nil,
       'TarifaExonerada' => nil, 'MontoExoneracion' => nil, 'Articulo' => nil, 'Inciso' => nil
+    }.merge(overrides)
+  end
+
+  # Referencia al documento que la nota corrige: obligatoria en ND y NC
+  # (`DocumentValidator::REFERENCIAS_REQUERIDAS`), opcional en factura.
+  # `Codigo` 01 es "Anula documento de referencia".
+  def valid_reference(overrides = {})
+    {
+      'TipoDocIR' => '01', 'TipoDocRefOTRO' => nil,
+      'Numero' => '00100001010000000001',
+      'FechaEmisionIR' => '2026-09-01T10:00:00-06:00',
+      'Codigo' => '01', 'CodigoReferenciaOTRO' => nil,
+      'Razon' => 'Anulación de la factura'
     }.merge(overrides)
   end
 

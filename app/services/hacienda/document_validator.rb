@@ -11,7 +11,8 @@ module Hacienda
   # @param document [Hash] la clave `'Document'` del payload que arma
   #   `Documents::UnifiedBuilder` — NO el payload completo (ese también trae
   #   `DocType` y `SendDocumentHacienda`, que este validador no necesita).
-  # @param doc_type [String] código de Hacienda (`DocType::FE`, `DocType::TE`).
+  # @param doc_type [String] código de Hacienda (`DocType::FE`, `DocType::TE`,
+  #   `DocType::ND`, `DocType::NC`).
   #
   # ── Origen y alcance ─────────────────────────────────────────────────────
   # Las reglas vienen de `Validations.cs#OwnValidations` del sistema .NET
@@ -20,18 +21,19 @@ module Hacienda
   # para excluir reglas puntuales, nunca para saltarse el bloque entero.
   #
   # Acá se replica esa forma. Las reglas migradas son las que aplican a
-  # factura y tiquete; las que el legacy marca como exclusivas de Factura de
-  # Compra/Exportación o de Recibo de Pago quedan para cuando se migren esos
-  # tipos. La regla de migración está en CLAUDE.md §39: una regla que no
-  # aplica a un tipo se excluye DENTRO del validador, con el tipo como
-  # condición — no salteándose el validador completo, que dejaría pasar sin
-  # verificar todas las demás.
+  # factura, tiquete y notas de crédito/débito; las que el legacy marca como
+  # exclusivas de Factura de Compra/Exportación o de Recibo de Pago quedan
+  # para cuando se migren esos tipos. La regla de migración está en CLAUDE.md
+  # §39: una regla que no aplica a un tipo se excluye DENTRO del validador,
+  # con el tipo como condición — no salteándose el validador completo, que
+  # dejaría pasar sin verificar todas las demás.
   #
-  # ── Factura y tiquete comparten TODAS las reglas menos una ───────────────
-  # De todo `OwnValidations`, lo único que distingue FE de TE es la
+  # ── Los cuatro tipos comparten casi TODAS las reglas ─────────────────────
+  # De todo `OwnValidations`, lo único que distingue a FE de TE/ND/NC es la
   # identificación del receptor (`Validations.cs` L324 y L329), y vive en
   # `Validations::HeaderValidator::RECEPTOR_OPCIONAL`. El bloque de
-  # referencias es el otro caso con matiz — ver `#validate_references`.
+  # referencias es el otro caso con matiz, y el único donde ND/NC piden MÁS
+  # que la factura y no menos — ver `#validate_references`.
   #
   # ── Por qué acumula en vez de cortar en el primer error ─────────────────
   # El legacy es fail-fast: el primer `throw` interrumpe todo, así que un
@@ -55,7 +57,7 @@ module Hacienda
     # casualidad: un tipo que se pueda emitir sin poder validarse iría a
     # Hacienda a ciegas. Al agregar uno acá hay que revisar antes cada
     # exclusión por tipo de `Validations.cs` (CLAUDE.md §39).
-    VALIDATED_DOC_TYPES = [DocType::FE, DocType::TE].freeze
+    VALIDATED_DOC_TYPES = [DocType::FE, DocType::TE, DocType::ND, DocType::NC].freeze
 
     # Tipos que NO validan `InformacionReferencia`.
     #
@@ -64,6 +66,20 @@ module Hacienda
     # Se replica: un tiquete con referencia declarada pasa sin revisarla, que
     # es lo que hace el sistema en producción hoy.
     REFERENCIAS_NO_VALIDADAS = [DocType::TE].freeze
+
+    # Tipos que EXIGEN al menos una `InformacionReferencia`.
+    #
+    # Esta regla no sale de `OwnValidations` —ahí la referencia se revisa si
+    # viene, pero nadie cuenta cuántas hay— sino del XSD, que es el otro
+    # validador que el legacy corre antes (`Validations.cs#ValidateXSD`, con
+    # `pathNCXSD`/`pathNDXSD`): `InformacionReferencia` es `maxOccurs="10"` sin
+    # `minOccurs`, o sea mínimo UNA, mientras que en el de factura es
+    # `minOccurs="0"`. Y es lo único que ese XSD pide de más.
+    #
+    # Tiene sentido de negocio y por eso se replica acá en vez de dejarla para
+    # el rechazo de Hacienda: una nota de crédito o de débito existe para
+    # corregir OTRO comprobante, así que sin decir cuál no corrige nada.
+    REFERENCIAS_REQUERIDAS = [DocType::ND, DocType::NC].freeze
 
     Result = Data.define(:errors) do
       def valid? = errors.empty?
@@ -112,7 +128,17 @@ module Hacienda
       return [] if REFERENCIAS_NO_VALIDADAS.include?(doc_type)
 
       references = document['InformacionReferencia'] || []
+      return [referencia_requerida] if references.empty? && REFERENCIAS_REQUERIDAS.include?(doc_type)
+
       references.flat_map { |reference| Validations::ReferenceValidator.new(reference).call }
+    end
+
+    def referencia_requerida
+      DocumentValidationError.new(
+        message: "#{DocType.label(doc_type)} debe indicar el documento que corrige en la " \
+                 'información de referencia.',
+        field: 'InformacionReferencia'
+      )
     end
   end
 end

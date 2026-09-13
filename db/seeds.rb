@@ -561,14 +561,15 @@ SL_RESOURCES_OWN = [
 #   FEC             → PurchaseInvoices  (AP Invoice — factura de compra)
 #
 # Los seis `U_CL_FEC_*` de arriba son UDFs y su schema (`CLAUDE.md` §32) está
-# declarado para dos de las cuatro tablas: `OINV` en
+# declarado en DOS archivos, no en cuatro: `OINV` en
 # `config/sap_schemas/marketing_documents.json` y `ORCT` en `payments.json`.
 #
-# ⚠️ FALTAN `ORIN` (AR Credit Memo, el objeto de `updateDocument03`) y `OPCH`
-# (AP Invoice, el de `updateDocument08`). En una instalación nueva el PATCH de
-# una nota de crédito o de una factura de compra va a fallar con "campo
-# inválido" la primera vez que se use, porque esos UDFs no existen en esas dos
-# tablas. Anotado en `TODOS.md` → Emisión de documentos.
+# `ORIN` (AR Credit Memo, el objeto de `updateDocument03`) y `OPCH` (AP Invoice,
+# el de `updateDocument08`) NO necesitan schema propio: son de la misma
+# categoría "Marketing Documents" que `OINV`, y SAP B1 replica solo un UDF
+# creado en cualquier tabla de esa categoría a todas las demás. `ORCT` sí lo
+# necesita porque es "Banking", otra categoría. Confirmado en `TODOS.md` →
+# Emisión de documentos (2026-09-07).
 #
 # El `code` lleva el CÓDIGO NUMÉRICO de Hacienda (`DocType::FE` = '01', no la
 # mnemotecnia) — es el mismo valor que trae `Documents::PendingQueue::Entry#doc_type`

@@ -38,13 +38,19 @@ module Hacienda
   # el que de verdad se serializaba y Hacienda aceptaba. No usar esa copia como
   # única fuente.
   #
-  # ── Campos del objeto unificado que NO van en el XML de FE/TE ───────────────
-  # El objeto unificado es uno solo para todos los tipos y trae campos que el
-  # esquema de FE/TE no define. Se OMITEN a propósito; emitirlos es un rechazo:
+  # ── Campos del objeto unificado que NO van en el XML ────────────────────────
+  # El objeto unificado es uno solo para todos los tipos y trae campos que los
+  # esquemas que esta clase serializa no definen. Se OMITEN a propósito;
+  # emitirlos donde el esquema no los declara es un rechazo:
   #
   #   · `Receptor.IdentificacionExtranjero` — solo existe en FEE.
-  #   · `Descuento.PorcentajeDescuento`     — no está en el modelo de FE/TE.
-  #   · `Impuesto.MontoExportacion`         — solo existe en FEE.
+  #   · `Descuento.PorcentajeDescuento`     — no está en ninguno de los dos modelos.
+  #   · `Impuesto.MontoExportacion`         — el esquema de NC/ND SÍ lo declara
+  #     (opcional), pero `Validations::LineItemValidator` rechaza cualquier valor
+  #     mayor a cero, así que el elemento solo podría salir en cero. Se omite en
+  #     los cuatro tipos; el día que se soporte, se emite como la partida.
+  #   · `LineaDetalle.PartidaArancelaria`   — al revés: existe en NC/ND y no en
+  #     FE/TE, así que se emite solo ahí (`PARTIDA_ARANCELARIA_DOC_TYPES`).
   #
   # ── Qué se omite por estar vacío ────────────────────────────────────────────
   # Un elemento sin valor NO se emite en blanco: se omite. Para los opcionales
@@ -64,18 +70,36 @@ module Hacienda
     NAMESPACE_BASE = 'https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4'
 
     # Raíz y último segmento del namespace, por tipo de comprobante. Los valores
-    # salen del `Web.config` del legacy (`namespacefe`, `namespacete`) y de los
-    # `XmlRootAttribute` de `SerializeDoc.getSerializeDocFETE`.
+    # salen del `Web.config` del legacy (`namespacefe`, `namespacete`,
+    # `namespacenc`, `namespacend`) y de los `XmlRootAttribute` de
+    # `SerializeDoc.getSerializeDocFETE` / `getSerializeDocNCND`.
     #
-    # Solo FE y TE: los dos comparten el MISMO esquema (`DocumentoFETE` — el
-    # nombre del tipo es literalmente "Factura Electrónica / Tiquete
-    # Electrónico") y cambian nada más en la raíz y el namespace. Los otros
-    # cinco tipos tienen estructura propia y su armado es otro trabajo; ver
-    # `TODOS.md` → Emisión de documentos.
+    # Son DOS esquemas, no cuatro: FE y TE comparten `DocumentoFETE` (el nombre
+    # del tipo es literalmente "Factura Electrónica / Tiquete Electrónico") y
+    # ND y NC comparten `DocumentoNCND`. Dentro de cada par, lo único que cambia
+    # es la raíz y el namespace. Los tres tipos que faltan (FEC, FEE, REP)
+    # tienen estructura propia y su armado es otro trabajo; ver `TODOS.md` →
+    # Emisión de documentos.
     DOCUMENTS = {
       DocType::FE => ['FacturaElectronica', 'facturaElectronica'],
-      DocType::TE => ['TiqueteElectronico', 'tiqueteElectronico']
+      DocType::TE => ['TiqueteElectronico', 'tiqueteElectronico'],
+      DocType::ND => ['NotaDebitoElectronica', 'notaDebitoElectronica'],
+      DocType::NC => ['NotaCreditoElectronica', 'notaCreditoElectronica']
     }.freeze
+
+    # Tipos cuyo esquema define `PartidaArancelaria` en la línea de detalle.
+    #
+    # Es la ÚNICA diferencia de forma entre `DocumentoFETE` y `DocumentoNCND`
+    # que este producto puede llenar: el XSD de NC/ND la declara opcional entre
+    # `NumeroLinea` y `CodigoCABYS` (`NotaCreditoElectronica_V4.4.xsd` L198) y
+    # el de FE/TE no la tiene. Emitirla en una factura es un rechazo.
+    #
+    # La otra diferencia del esquema, `Impuesto.MontoExportacion`, NO se emite
+    # en ningún tipo: `Validations::LineItemValidator` la rechaza si viene con
+    # un valor mayor a cero —el legacy también, y sin excluir a ningún tipo—,
+    # así que el elemento solo podría salir en cero. Ver la nota de "Campos del
+    # objeto unificado que NO van en el XML" más arriba.
+    PARTIDA_ARANCELARIA_DOC_TYPES = [DocType::ND, DocType::NC].freeze
 
     # Los dos prefijos que declaraba el legacy en la raíz
     # (`SerializeDoc.cs:77-78`). No se usan en ningún elemento, así que la
@@ -225,6 +249,7 @@ module Hacienda
     def emit_line(xml, line)
       xml.LineaDetalle do
         integer xml, 'NumeroLinea', line['NumeroLinea']
+        text xml, 'PartidaArancelaria', line['PartidaArancelaria'] if partida_arancelaria?
         text xml, 'CodigoCABYS', line['CodigoCABYS']
         emit_codigo_comercial(xml, line['CodigoComercial'])
         decimal xml, 'Cantidad', line['Cantidad'], QUANTITY
@@ -247,6 +272,8 @@ module Hacienda
         decimal xml, 'MontoTotalLinea', line['MontoTotalLinea'], MONEY
       end
     end
+
+    def partida_arancelaria? = PARTIDA_ARANCELARIA_DOC_TYPES.include?(doc_type)
 
     def emit_codigo_comercial(xml, codigo)
       return if blank_block?(codigo)

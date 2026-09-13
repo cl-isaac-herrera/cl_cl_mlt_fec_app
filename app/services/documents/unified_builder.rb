@@ -12,17 +12,19 @@ module Documents
   # Hacienda, para que el generador del XML sea una traducción directa y no otra
   # ronda de decisiones.
   #
-  # ── Factura electrónica — y, en teoría, Tiquete Electrónico ─────────────────
+  # ── Sirve para FE, TE, ND y NC sin cambios de forma ─────────────────────────
   # El documento dice que este objeto unificado es **solo para factura
-  # electrónica** (punto 10, última línea), pero el XSD real de Hacienda define
-  # un único esquema para las dos (`DocumentoFETE` en `FacturaElectronica_V4.4.xsd`
-  # — el nombre es literalmente "Factura Electrónica / Tiquete Electrónico"), y el
-  # legacy .NET las procesa con el mismo código. Este armado debería servir para
-  # TE (`DocType::TE`) sin cambios de forma.
+  # electrónica** (punto 10, última línea), pero los XSD reales de Hacienda
+  # definen un único esquema para FE y TE (`DocumentoFETE` en
+  # `FacturaElectronica_V4.4.xsd` — el nombre es literalmente "Factura
+  # Electrónica / Tiquete Electrónico") y otro para ND y NC (`DocumentoNCND`),
+  # que difiere del primero en DOS campos opcionales de línea y en nada más. El
+  # legacy .NET arma los cuatro con el mismo `objToSend`.
   #
-  # `Hacienda::DocumentValidator` también cubre las dos: comparten todas las
-  # reglas menos la identificación del receptor, que el legacy exime para TE
-  # (además de ND y NC) y que resuelve `HeaderValidator::RECEPTOR_OPCIONAL`.
+  # `Hacienda::DocumentValidator` cubre los cuatro: comparten todas las reglas
+  # menos la identificación del receptor —que el legacy exime para TE, ND y NC
+  # (`HeaderValidator::RECEPTOR_OPCIONAL`)— y la información de referencia, que
+  # TE no valida y ND/NC tienen obligatoria.
   #
   # Las consultas iniciales son las mismas para todos los tipos; lo que cambia
   # por tipo es justamente este armado (aclaración final del documento). Por eso
@@ -188,6 +190,11 @@ module Documents
     def linea_detalle(line)
       {
         'NumeroLinea' => line.integer('NumeroLinea'),
+        # Solo la emiten NC y ND: el esquema de FE/TE no la declara. Se mapea
+        # igual para todos porque este armado es uno solo y el que decide qué
+        # sale al XML es `Hacienda::XmlBuilder` — mismo criterio que
+        # `Receptor.IdentificacionExtranjero`, que es de FEE y viaja siempre.
+        'PartidaArancelaria' => line.string('PartidaArancelaria'),
         'CodigoCABYS' => line.string('Codigo'),
         'CodigoComercial' => {
           'Tipo' => line.string('CodTipo'),

@@ -63,6 +63,25 @@ RSpec.describe Hacienda::XmlBuilder do
         .to eq('https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/tiqueteElectronico')
     end
 
+    # ND y NC comparten `DocumentoNCND` entre sí, igual que FE y TE comparten
+    # `DocumentoFETE`. Los valores salen del `Web.config` del legacy
+    # (`namespacend`, `namespacenc`).
+    it 'la nota de débito usa su raíz y su namespace' do
+      root = parse(doc_type: DocType::ND).root
+
+      expect(root.name).to eq('NotaDebitoElectronica')
+      expect(root.namespace.href)
+        .to eq('https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/notaDebitoElectronica')
+    end
+
+    it 'la nota de crédito usa su raíz y su namespace' do
+      root = parse(doc_type: DocType::NC).root
+
+      expect(root.name).to eq('NotaCreditoElectronica')
+      expect(root.namespace.href)
+        .to eq('https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/notaCreditoElectronica')
+    end
+
     # Los hijos van SIN prefijo y heredan el namespace por defecto de la raíz;
     # si quedaran fuera del namespace, Hacienda no reconoce el comprobante.
     it 'los hijos heredan el namespace del comprobante' do
@@ -73,8 +92,8 @@ RSpec.describe Hacienda::XmlBuilder do
     end
 
     it 'no arma el XML de un tipo que todavía no sabe serializar' do
-      expect { build(doc_type: DocType::NC) }
-        .to raise_error(described_class::UnsupportedDocType, /Nota de crédito/)
+      expect { build(doc_type: DocType::FEC) }
+        .to raise_error(described_class::UnsupportedDocType, /Factura electrónica de compra/)
     end
   end
 
@@ -252,6 +271,37 @@ RSpec.describe Hacienda::XmlBuilder do
     end
   end
 
+  # La ÚNICA diferencia de forma entre `DocumentoFETE` y `DocumentoNCND` que
+  # este producto llena. En el XSD de NC/ND va entre `NumeroLinea` y
+  # `CodigoCABYS` (`NotaCreditoElectronica_V4.4.xsd` L198); en el de FE/TE no
+  # existe, y emitirla ahí es un rechazo.
+  describe 'partida arancelaria' do
+    it 'la emite en la nota de crédito, después de NumeroLinea' do
+      names = doc_without_ns(doc_type: DocType::NC).at_xpath('//LineaDetalle').elements.map(&:name)
+
+      expect(names).to eq(['NumeroLinea', 'PartidaArancelaria', *LINE_SEQUENCE.drop(1)])
+    end
+
+    it 'la emite en la nota de débito' do
+      doc = doc_without_ns(doc_type: DocType::ND)
+
+      expect(doc.at_xpath('//PartidaArancelaria').text).to eq('0102290000')
+    end
+
+    it 'no la emite en la factura ni en el tiquete' do
+      expect(doc_without_ns.at_xpath('//PartidaArancelaria')).to be_nil
+      expect(doc_without_ns(doc_type: DocType::TE).at_xpath('//PartidaArancelaria')).to be_nil
+    end
+
+    it 'la omite en la nota cuando la línea no la trae' do
+      document = valid_unified_document
+      document['DetalleServicio'] = [valid_line('PartidaArancelaria' => nil)]
+
+      expect(doc_without_ns(document, doc_type: DocType::NC).at_xpath('//PartidaArancelaria'))
+        .to be_nil
+    end
+  end
+
   # El objeto unificado sirve a todos los tipos y trae campos que el esquema de
   # FE/TE no define. Emitirlos es un rechazo.
   describe 'campos que NO pertenecen al esquema de FE/TE' do
@@ -276,13 +326,18 @@ RSpec.describe Hacienda::XmlBuilder do
         .to eq(%w[MontoDescuento CodigoDescuento NaturalezaDescuento])
     end
 
-    it 'no emite MontoExportacion del impuesto' do
+    # El esquema de NC/ND SÍ lo declara (opcional), pero `LineItemValidator`
+    # rechaza cualquier valor mayor a cero en los cuatro tipos, así que el
+    # elemento solo podría salir en cero. Se omite en todos.
+    it 'no emite MontoExportacion del impuesto, en ningún tipo' do
       document = valid_unified_document
       document['DetalleServicio'] = [valid_line(
         'Impuesto' => valid_impuesto('MontoExportacion' => BigDecimal(50))
       )]
 
       expect(doc_without_ns(document).at_xpath('//MontoExportacion')).to be_nil
+      expect(doc_without_ns(document, doc_type: DocType::NC).at_xpath('//MontoExportacion'))
+        .to be_nil
     end
   end
 
