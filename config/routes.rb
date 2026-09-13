@@ -161,6 +161,19 @@ Rails.application.routes.draw do
     # todavía no hay id: lo que se prueba son los valores del formulario.
     resources :email_credential_validations, only: [:create]
 
+    # Sucursales del emisor (pantalla /configurations/branches). Reemplazan
+    # `GET /api/Sucursal/GetSucursalByCompany?companyId=N`, `POST /api/Sucursal` y
+    # `PATCH /api/Sucursal` del .NET: el `companyId` se cae (sale de la sesión,
+    # §28 regla 5) y la llave del update pasa del cuerpo al path.
+    #
+    # Sin `destroy`: una sucursal no se borra —la emisión de comprobantes viejos
+    # la sigue referenciando— se da de baja con `Active: false` en el PATCH, y el
+    # listado muestra activas e inactivas para poder reactivarla.
+    #
+    # `:id` es el `Code` de la UDT `@CL_FEC_SUCURSALES` (la llave que
+    # autoincrementa SAP), no el número de sucursal ante Hacienda.
+    resources :branches, only: %i[index show create update]
+
     # Consultas al Service Layer (pantalla de mantenimiento). Sin `create` ni
     # `destroy`: el catálogo lo define `db/seeds.rb`, la pantalla solo ajusta el
     # recurso y la query de las consultas que la app ya sabe consumir.

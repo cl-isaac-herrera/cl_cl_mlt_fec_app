@@ -20,7 +20,7 @@ Los manifiestos de **borrado** van en `delete/` y tienen su propio README.
 | `payments.json` | `ORCT` | no | Los **mismos** 7 UDFs: `ORCT` es categoría Banking y NO recibe la replicación de `OINV`. |
 | `outgoing_mails_udt.json` | `@CL_FEC_MAILSDETAILS` | sí | Detalle del correo de recepción electrónica (destinatarios, remitente, estado del envío). La escribe `Sap::MailQueue`. |
 | `doc_sync_attempts_udt.json` | `@CL_FEC_DOCSYNCATTMP` | sí | Historial de intentos de sincronización de un documento: con qué estado terminó cada intento y por qué. La escribe y la lee `Sap::DocSyncAttempts`. |
-| `sucursales_udt.json` | `@CL_FEC_SUCURSALES` | sí | Sucursales del emisor ante Hacienda. |
+| `sucursales_udt.json` | `@CL_FEC_SUCURSALES` | sí | Sucursales del emisor ante Hacienda: ubicación, teléfono y correo de cada una. La administra `Sap::Branches` (pantalla `/configurations/branches`) y la lee la emisión para los campos `Emsr*` del comprobante. |
 
 ## Límites de largo — los pone SAP, no son estilo
 

@@ -899,6 +899,52 @@ SL_RESOURCES_DOC_SYNC_ATTEMPTS = [
    '$filter=(U_DocEntry eq @DocEntry and U_DocType eq @DocType)&$orderby=U_CreatedAt desc', 0]
 ].freeze
 
+# ── Sucursales del emisor (UDT) ─────────────────────────────────────────────
+# La UDT `@CL_FEC_SUCURSALES` (`config/sap_schemas/sucursales_udt.json`), que
+# reemplaza a la tabla `Sucursal` de la base del .NET y sus tres SP
+# (`spGetSucursalByCompany`, `spCreateSucursal`, `spUpdateSucursal`). Las
+# consume `Sap::Branches` desde la pantalla /configurations/branches; la
+# emisión ya las leía desde acá (`Documents::UnifiedBuilder#emisor`).
+#
+# `CompanyId` no aparece por ningún lado, a diferencia de la tabla del .NET: la
+# compañía ES la base de SAP contra la que se consulta.
+#
+# ── El `$filter` de la lista lo arma el request, no el catálogo ─────────────
+# `getBranches` viene SIN `$filter`: la pantalla filtra por alias, ubicación y
+# estado, y esas condiciones cambian en cada búsqueda. `Sap::Branches` se las
+# suma con `and` al que traiga la fila (`Sap::ResourceQuery#merge`), así que una
+# instalación que quiera acotar la consulta desde la pantalla de mantenimiento
+# puede agregarle el suyo sin que el código lo pise — mismo patrón que
+# `getDocuments<tipo>` con la `Series`.
+#
+# ⚠️ El `$orderby` SÍ va acá, y no es decorativo: sin un orden explícito SAP no
+# garantiza devolver las filas siempre igual, y `$top`/`$skip` empezarían a
+# repetir o saltarse sucursales entre una página y la siguiente. Mismo motivo
+# que el `$orderby=DocEntry desc` de `SL_RESOURCES_DOCUMENT_QUERIES`.
+#
+# ⚠️ La llave del `get`/`update` va SIN comillas (`(#Code#)` y no `('#Code#')`):
+# la UDT es `bott_NoObjectAutoIncrement`, así que su `Code` es numérico y
+# citarlo hace fallar la petición — igual que en `SL_RESOURCES_MAIL_QUEUE`.
+#
+# `page_size: 0` en las cuatro: la paginación real la manda el request
+# (`$top`/`$skip`, acotada por `Sap::Branches::MAX_PAGE_SIZE`) y las otras tres
+# son una entidad por llave o una escritura.
+SL_RESOURCES_BRANCHES = [
+  ['getBranches',
+   'Sucursales del emisor de la compañía (UDT)',
+   'U_CL_FEC_SUCURSALES',
+   '$orderby=U_SucursalNum asc', 0],
+  ['getBranchByCode',
+   'Sucursal del emisor por su Code (UDT)',
+   'U_CL_FEC_SUCURSALES(#Code#)', nil, 0],
+  ['createBranch',
+   'Registra una sucursal del emisor (UDT)',
+   'U_CL_FEC_SUCURSALES', nil, 0],
+  ['updateBranch',
+   'Actualiza una sucursal del emisor (UDT)',
+   'U_CL_FEC_SUCURSALES(#Code#)', nil, 0]
+].freeze
+
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
   # sin haber escrito ninguna fila.
@@ -909,7 +955,7 @@ ActiveRecord::Base.transaction do
   all_sl_resources = SL_RESOURCES + SL_RESOURCES_OWN + SL_RESOURCES_STATUS_UPDATES +
                      SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE +
                      SL_RESOURCES_MAIL_DOCUMENT_INFO + SL_RESOURCES_DOCUMENT_ERROR_DETAILS +
-                     SL_RESOURCES_DOC_SYNC_ATTEMPTS
+                     SL_RESOURCES_DOC_SYNC_ATTEMPTS + SL_RESOURCES_BRANCHES
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el

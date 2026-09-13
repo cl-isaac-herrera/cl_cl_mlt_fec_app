@@ -9,7 +9,7 @@
   <%# FILTROS DE BÚSQUEDA %>
   <%# ---------------------------------------------------------------- %>
   <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4 flex-shrink-0">
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 items-end">
 
       <div class="flex flex-col gap-1">
         <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Alias</label>
@@ -46,6 +46,19 @@
                 data-testid="filter-distrito"
                 class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
           <option value="">Todos</option>
+        </select>
+      </div>
+
+      <%# Estado — "Todos" incluye activas e inactivas: una sucursal dada de baja %>
+      <%# tiene que poder verse para poder reactivarse. %>
+      <div class="flex flex-col gap-1">
+        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Estado</label>
+        <select data-branches-target="filterActive"
+                data-testid="filter-active"
+                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+          <option value="">Todos</option>
+          <option value="true">Activo</option>
+          <option value="false">Inactivo</option>
         </select>
       </div>
 
@@ -101,7 +114,7 @@
     <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
       <h3 data-branches-target="panelTitle"
           data-testid="panel-title"
-          class="text-base font-semibold text-gray-800">Nueva Sucursal</h3>
+          class="text-base font-semibold text-gray-800">Nueva sucursal</h3>
       <button type="button"
               data-action="click->branches#closePanel"
               class="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors">

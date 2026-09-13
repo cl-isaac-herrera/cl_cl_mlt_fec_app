@@ -1,26 +1,36 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
-import { Storage, SStore } from 'vendor/clavisco/core';
+import { SStore, getApiHeaders } from 'vendor/clavisco/core';
 import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
- * BranchesController — Gestión de sucursales por compañía (Tabulator).
+ * BranchesController — Gestión de sucursales de la compañía activa (Tabulator).
  *
- * Replica la funcionalidad del componente Angular SucursalComponent:
- *   - Carga inicial: forkJoin de
- *       GET /api/Sucursal/GetSucursalByCompany?companyId={id}
- *       GET /Country.json   (lugares: canton, distrito, barrio)
- *       GET /Provinces.json (provincias)
- *   - Tabla Tabulator: SucursalNum, Alias, Provincia, Cantón, Distrito, Barrio,
- *                      Otras señas, Estado (badge), Acciones (editar)
- *   - Botón "Nueva Sucursal" → panel lateral (crear)
- *   - Botón editar en fila → panel lateral (editar, pre-cargado)
- *   - POST /api/Sucursal   para crear (Id=0)
- *   - PATCH /api/Sucursal  para editar
- *   - Toast éxito / Modal error
- *   - Cascada provincia → cantón → distrito → barrio (autocomplete)
+ * Endpoints NATIVOS de Rails (ver CLAUDE.md §28). Ya no se pasa por el proxy al
+ * API .NET (`/api/Sucursal/...`):
+ *   - GET   /api/branches?alias=&provincia=&canton=&distrito=&active=&page=&per_page=
+ *   - GET   /api/branches/:code   (releer la sucursal antes de editarla)
+ *   - POST  /api/branches         (crear)
+ *   - PATCH /api/branches/:code   (actualizar)
  *
- * JSON locales servidos desde /public:
+ * ── Tres cosas que cambiaron con la migración ──────────────────────────────
+ *   1. **La sucursal vive en SAP**, en la UDT `@CL_FEC_SUCURSALES` de la
+ *      compañía (ver `Sap::Branches`), no en la base del .NET. La llave es el
+ *      `Code` que asigna SAP; `SucursalNum` es el número ante Hacienda y sigue
+ *      siendo lo que se muestra.
+ *   2. **`companyId` ya no viaja.** La compañía activa sale de la sesión del
+ *      servidor y determina contra qué base de SAP se consulta.
+ *   3. **El filtrado y la paginación los hace el servidor.** Antes se traían
+ *      todas las sucursales y se filtraba en el browser; ahora las condiciones
+ *      —el estado incluido— van al `$filter` de la consulta a SAP.
+ *
+ * ⚠️ Sin `Total` en la respuesta: el Service Layer no devuelve más de 20 filas
+ * por respuesta sin un header que el submódulo todavía no soporta, así que no
+ * hay forma honesta de contar el total (`TODOS.md` → SAP). Llega `HasMore` y de
+ * ahí sale `last_page`; el contador muestra el rango, sin "de N filas"
+ * (CLAUDE.md §17 asume un total conocible — acá NO lo hay, y es a propósito).
+ *
+ * JSON locales servidos desde /public (catálogo de ubicaciones de Costa Rica):
  *   /Provinces.json → { Provinces: [{ ProvinceId, ProvinceName }] }
  *   /Country.json   → { Country: [{ ProvinceId, CantonId, CantonName,
  *                                   DistrictId, DistrictName,
@@ -31,7 +41,7 @@ export default class extends TabulatorController {
     ...TabulatorController.targets,
 
     // Filtros
-    'filterAlias', 'filterProvincia', 'filterCanton', 'filterDistrito',
+    'filterAlias', 'filterProvincia', 'filterCanton', 'filterDistrito', 'filterActive',
 
     // Toolbar
     'btnCreate', 'btnCreateWrap',
@@ -59,8 +69,6 @@ export default class extends TabulatorController {
 
   // ── Estado ────────────────────────────────────────────────────────────────
 
-  #companyId     = null;
-  #branches      = [];       // lista raw de la API
   #provinces     = [];       // [{ ProvinceId, ProvinceName }]
   #country       = [];       // array plano con todos los registros de Country.json
   #neighborhoodList = [];    // barrios del distrito seleccionado
@@ -68,12 +76,15 @@ export default class extends TabulatorController {
   #provinceId    = '';
   #cantonId      = '';
   #permissions   = [];
+  #lastPageRowCount = 0;     // filas de la página actual, para el contador
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-  connect() {
-    const company   = SStore.get('CurrentCompany');
-    this.#companyId = company?.companyId ? parseInt(company.companyId) : null;
+  // `async` a propósito: el catálogo de ubicaciones tiene que estar cargado
+  // ANTES de que Tabulator dispare su primer request, porque cada fila se
+  // traduce a nombres (provincia/cantón/distrito) con esos JSON. Al revés, la
+  // primera página mostraría los códigos crudos.
+  async connect() {
     this.#permissions = SStore.get('Permissions') || [];
 
     // Botón "Nueva Sucursal": habilitado solo con permiso; si no, queda
@@ -86,24 +97,40 @@ export default class extends TabulatorController {
       }
     }
 
-    super.connect();
-    this.#loadInitialData();
+    await this.#loadLocations();
+
+    super.connect();   // inicializa Tabulator y dispara la primera página
   }
 
   // ── Configuración Tabulator ────────────────────────────────────────────────
 
   getTableConfig() {
+    const baseConfig = super.getTableConfig();
+    delete baseConfig.data;   // sin data estática: la tabla arranca por AJAX
+
     return {
-      ...super.getTableConfig(),
+      ...baseConfig,
       height:    '100%',
       maxHeight: undefined,
       movableRows: false,
       layout: 'fitColumns',
-      placeholder: 'No hay sucursales registradas',
+      placeholder: 'No se encontraron sucursales para los filtros aplicados.',
       pagination: true,
+      paginationMode: 'remote',
       paginationSize: 10,
-      paginationSizeSelector: [10, 20, 50],
-      paginationCounter: 'rows',
+      // El tope del servidor es `Sap::Branches::MAX_PAGE_SIZE` (19), que deja
+      // margen bajo el techo real de 20 filas por respuesta del Service Layer.
+      paginationSizeSelector: [5, 10, 15],
+      // Contador sin total (ver la cabecera del archivo): se muestra el rango
+      // de la página actual.
+      paginationCounter: (_pageSize, currentRow) => {
+        if (!this.#lastPageRowCount) return '';
+        const to = currentRow + this.#lastPageRowCount - 1;
+        return `Mostrando ${currentRow.toLocaleString('es-CR')}-${to.toLocaleString('es-CR')}`;
+      },
+      ajaxURL: '/api/branches',   // requerido para activar el modo remote
+      ajaxRequestFunc: (_url, _config, params) => this.#fetchPage(params),
+      ajaxResponse:    (_url, _params, response) => response,
       locale: TABULATOR_LOCALE,
       langs:  TABULATOR_LANGS,
       dataLoaderLoading: TABULATOR_LOADING_HTML,
@@ -161,35 +188,58 @@ export default class extends TabulatorController {
 
   // ── Carga de datos ─────────────────────────────────────────────────────────
 
-  async #loadInitialData() {
-    // 1. JSON locales — independientes de la API, siempre deben cargar
+  /** Catálogo de ubicaciones de Costa Rica (JSON estáticos de /public). */
+  async #loadLocations() {
     try {
       const [countryRes, provincesRes] = await Promise.all([
         fetch('/Country.json').then(r => r.json()),
         fetch('/Provinces.json').then(r => r.json()),
       ]);
-      this.#country   = countryRes.Country   || [];
+      this.#country   = countryRes.Country     || [];
       this.#provinces = provincesRes.Provinces || [];
       this.#populateProvinceSelect();
       this.#populateFilterProvinciaSelect();
     } catch (err) {
       showToast('Error al cargar datos de ubicación.', 'error');
     }
+  }
 
-    // 2. Sucursales desde la API
-    this.table?.alert(TABULATOR_LOADING_HTML);
+  /**
+   * Una página de sucursales. La llama Tabulator en cada cambio de página o de
+   * tamaño; los filtros se leen del formulario en ese momento, así que
+   * `setData()` (ver `search`) alcanza para volver a buscar.
+   */
+  async #fetchPage(params) {
+    const page = params.page || 1;
+    const size = params.size || 10;
+
+    const qp = new URLSearchParams({ page, per_page: size });
+    const alias     = this.filterAliasTarget.value.trim();
+    const provincia = this.filterProvinciaTarget.value;
+    const canton    = this.filterCantonTarget.value;
+    const distrito  = this.filterDistritoTarget.value;
+    // '' = todas (activas e inactivas); 'true'/'false' acotan.
+    const active    = this.hasFilterActiveTarget ? this.filterActiveTarget.value : '';
+
+    if (alias)     qp.set('alias', alias);
+    if (provincia) qp.set('provincia', provincia);
+    if (canton)    qp.set('canton', canton);
+    if (distrito)  qp.set('distrito', distrito);
+    if (active)    qp.set('active', active);
+
     try {
-      const json = await this.#apiFetch(`/api/Sucursal/GetSucursalByCompany?companyId=${this.#companyId}`);
-      if (json.Error || !json.Data?.length) {
-        showToast(json.Message || 'No hay sucursales registradas.', 'warning');
-        return;
-      }
-      this.#branches = json.Data.map(b => this.#mapBranchNames(b));
-      this.table?.setData(this.#branches);
+      const json = await this.#apiFetch(`/api/branches?${qp}`);
+      const items = (json.Data?.Items || []).map(b => this.#mapBranchNames(b));
+      this.#lastPageRowCount = items.length;
+
+      // Sin un total real, `last_page` es "esta página + 1" cuando el servidor
+      // avisó que hay más — suficiente para que el botón "Siguiente" de
+      // Tabulator se habilite o no.
+      return { data: items, last_page: json.Data?.HasMore ? page + 1 : page };
     } catch (err) {
       showToast(err.message || 'Error al cargar las sucursales.', 'error');
-    } finally {
-      this.table?.clearAlert();
+      this.#lastPageRowCount = 0;
+      return { data: [], last_page: 1 };
     }
   }
 
@@ -213,24 +263,38 @@ export default class extends TabulatorController {
       return;
     }
     this.#editingBranch = null;
-    this.panelTitleTarget.textContent = 'Nueva Sucursal';
+    this.panelTitleTarget.textContent = 'Nueva sucursal';
     this.saveIconTarget.textContent   = 'check';
     this.saveLabelTarget.textContent  = 'Guardar';
     this.#resetForm();
     this.#openPanel();
   }
 
-  #openEditPanel(branch) {
+  async #openEditPanel(row) {
     if (!this.#hasPerm('Configurations_Branches_Update')) {
       showToast('No cuenta con permisos para editar sucursales.', 'info');
       return;
     }
-    this.#editingBranch = branch;
-    this.panelTitleTarget.textContent = 'Editar Sucursal';
+
+    this.panelTitleTarget.textContent = 'Editar sucursal';
     this.saveIconTarget.textContent   = 'refresh';
     this.saveLabelTarget.textContent  = 'Modificar';
-    this.#populateFormForEdit(branch);
-    this.#openPanel();
+
+    // Se relee del servidor en vez de usar la fila: la tabla pudo quedar vieja
+    // si alguien editó la sucursal —o la emisión la tocó— mientras estaba
+    // abierta. Mismo criterio que el panel de recursos de Service Layer.
+    try {
+      const json = await this.#apiFetch(`/api/branches/${row.Code}`);
+      if (!json.Data) {
+        showToast(json.Message || 'No se encontró la sucursal.', 'error');
+        return;
+      }
+      this.#editingBranch = json.Data;
+      this.#populateFormForEdit(json.Data);
+      this.#openPanel();
+    } catch (err) {
+      showToast(err.message || 'Error al cargar la sucursal.', 'error');
+    }
   }
 
   #openPanel() {
@@ -272,13 +336,13 @@ export default class extends TabulatorController {
     this.#provinceId = branch.EmsrUbProvincia;
     this.#cantonId   = branch.EmsrUbCanton;
 
-    this.inputSucursalNumTarget.value = branch.SucursalNum;
-    this.inputOtrasSenasTarget.value  = branch.EmsrUbOtrasSenas;
-    this.inputTelefonoTarget.value    = branch.EmsrTlfNumTelefono;
-    this.inputFaxTarget.value         = branch.EmsrFaxNumTelefono || '';
-    this.inputEmailTarget.value       = branch.EmsrCorreoElectronico;
-    this.inputAliasTarget.value       = branch.Alias;
-    this.inputActiveTarget.checked    = branch.Active;
+    this.inputSucursalNumTarget.value = branch.SucursalNum ?? '';
+    this.inputOtrasSenasTarget.value  = branch.EmsrUbOtrasSenas ?? '';
+    this.inputTelefonoTarget.value    = branch.EmsrTlfNumTelefono ?? '';
+    this.inputFaxTarget.value         = branch.EmsrFaxNumTelefono ?? '';
+    this.inputEmailTarget.value       = branch.EmsrCorreoElectronico ?? '';
+    this.inputAliasTarget.value       = branch.Alias ?? '';
+    this.inputActiveTarget.checked    = Boolean(branch.Active);
 
     // Cargar selects en cascada
     this.#populateCantonSelect(branch.EmsrUbProvincia);
@@ -288,10 +352,10 @@ export default class extends TabulatorController {
     );
 
     // Seleccionar valores
-    this.selectProvinciaTarget.value = branch.EmsrUbProvincia;
-    this.selectCantonTarget.value    = branch.EmsrUbCanton;
-    this.selectDistritoTarget.value  = branch.EmsrUbDistrito;
-    this.inputBarrioTarget.value     = branch.EmsrUbBarrio;
+    this.selectProvinciaTarget.value = branch.EmsrUbProvincia ?? '';
+    this.selectCantonTarget.value    = branch.EmsrUbCanton ?? '';
+    this.selectDistritoTarget.value  = branch.EmsrUbDistrito ?? '';
+    this.inputBarrioTarget.value     = branch.EmsrUbBarrio ?? '';
 
     this.#clearAllErrors();
   }
@@ -360,21 +424,9 @@ export default class extends TabulatorController {
     this.#populateFilterDistritoSelect(provinciaId, e.target.value);
   }
 
+  /** Recarga desde el servidor con los filtros actuales y vuelve a la página 1. */
   search() {
-    const alias      = this.filterAliasTarget.value.trim().toLowerCase();
-    const provinciaId = this.filterProvinciaTarget.value;
-    const cantonId    = this.filterCantonTarget.value;
-    const distritoId  = this.filterDistritoTarget.value;
-
-    const filtered = this.#branches.filter(b => {
-      if (alias && !(b.Alias || '').toLowerCase().includes(alias)) return false;
-      if (provinciaId && b.EmsrUbProvincia !== provinciaId) return false;
-      if (cantonId && b.EmsrUbCanton !== cantonId) return false;
-      if (distritoId && b.EmsrUbDistrito !== distritoId) return false;
-      return true;
-    });
-
-    this.table?.setData(filtered);
+    this.table?.setData();
   }
 
   #populateFilterProvinciaSelect() {
@@ -466,39 +518,38 @@ export default class extends TabulatorController {
   async saveFromPanel() {
     if (!this.#validate()) return;
 
+    // Ni `Code` ni `CompanyId` viajan en el cuerpo: la llave va en el path y la
+    // compañía sale de la sesión (CLAUDE.md §28). Los códigos de país del
+    // teléfono y del fax los pone el servidor (506 fijo), porque el formulario
+    // no los ofrece.
     const payload = {
-      Id:                  this.#editingBranch?.Id ?? 0,
-      CompanyId:           this.#companyId,
-      SucursalNum:         parseInt(this.inputSucursalNumTarget.value),
-      EmsrUbProvincia:     this.selectProvinciaTarget.value,
-      EmsrUbCanton:        this.selectCantonTarget.value,
-      EmsrUbDistrito:      this.selectDistritoTarget.value,
-      EmsrUbBarrio:        this.inputBarrioTarget.value,
-      EmsrUbOtrasSenas:    this.inputOtrasSenasTarget.value.trim(),
-      EmsrTlfCodigoPais:   506,
-      EmsrTlfNumTelefono:  this.inputTelefonoTarget.value.trim(),
-      EmsrFaxCodigoPais:   506,
-      EmsrFaxNumTelefono:  this.inputFaxTarget.value.trim() || '',
+      SucursalNum:           parseInt(this.inputSucursalNumTarget.value),
+      EmsrUbProvincia:       this.selectProvinciaTarget.value,
+      EmsrUbCanton:          this.selectCantonTarget.value,
+      EmsrUbDistrito:        this.selectDistritoTarget.value,
+      EmsrUbBarrio:          this.inputBarrioTarget.value,
+      EmsrUbOtrasSenas:      this.inputOtrasSenasTarget.value.trim(),
+      EmsrTlfNumTelefono:    this.inputTelefonoTarget.value.trim(),
+      EmsrFaxNumTelefono:    this.inputFaxTarget.value.trim(),
       EmsrCorreoElectronico: this.inputEmailTarget.value.trim(),
-      Active:              this.inputActiveTarget.checked,
-      Alias:               this.inputAliasTarget.value.trim(),
+      Active:                this.inputActiveTarget.checked,
+      Alias:                 this.inputAliasTarget.value.trim(),
     };
 
-    const isEdit  = Boolean(this.#editingBranch?.Id);
-    const method  = isEdit ? 'PATCH' : 'POST';
-    const msgOk   = isEdit
-      ? 'Sucursal actualizada exitosamente.'
-      : 'Sucursal registrada exitosamente.';
-    const msgErr  = isEdit
-      ? 'Error al actualizar la sucursal'
-      : 'Error al crear la sucursal';
+    const code   = this.#editingBranch?.Code;
+    const isEdit = code !== undefined && code !== null;
+    const url    = isEdit ? `/api/branches/${code}` : '/api/branches';
+    const method = isEdit ? 'PATCH' : 'POST';
+    const msgErr = isEdit ? 'Error al actualizar la sucursal' : 'Error al crear la sucursal';
 
     this.#setLoading(true);
     try {
-      await this.#apiFetch('/api/Sucursal', { method, body: JSON.stringify(payload) });
-      showToast(msgOk, 'success');
+      const json = await this.#apiFetch(url, { method, body: JSON.stringify(payload) });
+      showToast(json.Message || 'Sucursal guardada exitosamente.', 'success');
       this.closePanel();
-      await this.#loadInitialData();
+      // `setData()` recarga desde el servidor con los filtros actuales; una
+      // sucursal recién creada puede no entrar en ellos, y eso es correcto.
+      this.table?.setData();
     } catch (err) {
       showAlert({ type: ALERT_TYPES.ERROR, title: msgErr, message: err.message });
     } finally {
@@ -740,38 +791,24 @@ export default class extends TabulatorController {
 
   // ── apiFetch ──────────────────────────────────────────────────────────────
 
+  /**
+   * Endpoints nativos: la sesión va en la cookie httpOnly, así que no se arma
+   * ningún header Authorization — getApiHeaders() aporta lo único que hace falta.
+   */
   async #apiFetch(url, options = {}) {
-    const session = Storage.get('Session') || {};
-    const token   = session.access_token;
-
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type':             'application/json',
-        'API':                      'ApiAppUrl',
-        'X-Skip-Error-Interceptor': 'true',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'Accept': 'application/json',
+        ...getApiHeaders(),
         ...(options.headers || {}),
       },
     });
 
-    const clMessage = response.headers.get('cl-message');
-    const decodedMessage = clMessage ? (() => {
-      try { return decodeURIComponent(clMessage); } catch { return clMessage; }
-    })() : null;
+    const json = await response.json().catch(() => null);
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => response.statusText);
-      throw new Error(decodedMessage || text || `HTTP ${response.status}`);
-    }
+    if (!response.ok) throw new Error(json?.Message || `HTTP ${response.status}`);
 
-    const hasBody = response.status !== 204 &&
-                    response.headers.get('content-length') !== '0' &&
-                    response.headers.get('content-type')?.includes('application/json');
-    if (!hasBody) return { Message: decodedMessage || null };
-
-    const json = await response.json();
-    if (decodedMessage && !json.Message) json.Message = decodedMessage;
-    return json;
+    return json ?? {};
   }
 }

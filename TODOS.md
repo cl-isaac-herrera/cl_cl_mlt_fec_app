@@ -81,6 +81,74 @@ leen/escriben la tabla propia `email_configs`. Notas y pendientes:
 > anterior — su único propósito era alimentar el dropdown de Host, así que no son deuda
 > pendiente (ver criterio en CLAUDE.md §24).
 
+## Sucursales — endpoints migrados a Rails (`/configurations/branches`)
+
+La pantalla ya no toca el .NET: `GET /api/branches`, `GET /api/branches/:code`,
+`POST /api/branches` y `PATCH /api/branches/:code` son nativos y leen/escriben la UDT
+`@CL_FEC_SUCURSALES` de la compañía activa vía Service Layer (`Sap::Branches`), que es de
+donde la emisión ya sacaba los campos `Emsr*` del emisor
+(`Documents::UnifiedBuilder#emisor`). Reemplazan a `GET /api/Sucursal/GetSucursalByCompany`,
+`POST /api/Sucursal` y `PATCH /api/Sucursal`, que daban contra la tabla `Sucursal` de la base
+del .NET (`spGetSucursalByCompany`, `spCreateSucursal`, `spUpdateSucursal`).
+
+- [x] **`companyId` se cayó del contrato.** La compañía activa sale de la sesión y determina
+      contra qué base de SAP se consulta (§28 regla 5): la fila que devuelve una compañía es,
+      por construcción, de esa compañía. La llave del update pasó del cuerpo al path.
+
+- [x] **La llave cambió de `Id` a `Code`.** `Id` era el autoincremental de la tabla del .NET;
+      `Code` es el que asigna SAP en la UDT (`bott_NoObjectAutoIncrement`). `SucursalNum` sigue
+      siendo el número ante Hacienda y es lo que ve el usuario — son dos cosas distintas y las
+      dos viajan en la respuesta.
+
+- [x] **El filtrado y la paginación pasaron al servidor.** Antes se traían todas las sucursales
+      y la tabla filtraba en el browser. Ahora las condiciones van al `$filter` de la consulta,
+      y el **estado es un filtro más**: en blanco la pantalla muestra activas e inactivas, que
+      es lo que permite reactivar una sucursal dada de baja.
+
+- [ ] **⚠️ La UDT tiene que existir en SAP antes de usar la pantalla.** El schema está
+      declarado (`config/sap_schemas/sucursales_udt.json`) pero crear el objeto es
+      `rake sap:schema:sync` (`CLAUDE.md` §32), fuera de la app. Sin ese paso las cuatro
+      consultas resuelven un entity set inexistente y el Service Layer responde
+      `Service Not Found` — que la pantalla muestra como error de SAP (502).
+
+- [ ] **⚠️ La pantalla de Numeración sigue leyendo las sucursales del .NET.**
+      `numbering_controller.js` llama `GET /api/Sucursal/GetSucursalByCompany?companyId=N` por
+      el proxy para poblar su selector de sucursal, así que mientras la tabla del .NET y la UDT
+      no coincidan, las dos pantallas muestran cosas distintas. **Pendiente:** apuntarla a
+      `GET /api/branches` cuando se migre `/configurations/numbering` (hoy esa pantalla está
+      entera sobre `/api/Numbering`, también por el proxy). Ojo al hacerlo: un selector necesita
+      TODAS las sucursales y `GET /api/branches` pagina con tope 19 por el techo del Service
+      Layer — hace falta una subcolección tipo `assignable` (§28) o recorrer las páginas.
+
+- [ ] **Los datos de la tabla `Sucursal` del .NET no están importados.** Igual que
+      `connections`, `companies` y `email_configs`, salvo que acá el destino no es una tabla de
+      esta base sino la UDT de cada compañía en SAP. **Pendiente:** incluirlo en la tarea de
+      importación, con el mapeo columna → `U_<columna>` (los nombres coinciden salvo el prefijo)
+      y `Active` booleano → `'Y'`/`'N'`. La fila se elige por `CompanyId` del origen y se
+      escribe en la base de SAP de esa compañía; el `Id` viejo se descarta (lo reemplaza el
+      `Code` que asigna SAP).
+
+- [ ] **`GET /api/Sucursal/GetSucursalById` no se migró como tal.** Su equivalente es
+      `GET /api/branches/:code`, que es lo que usa el panel de edición para releer la fila. El
+      endpoint viejo no tiene más consumidores.
+
+- [ ] **El permiso de acceso sigue llamándose `S_Sucursal`.** Crear y modificar ya están
+      renombrados (`Configurations_Branches_Create`/`_Update`, ids 1006/1007), pero el de acceso
+      —el que gatea el nodo del menú y el `index` del endpoint— conserva el nombre del submenú
+      del Angular. **Pendiente:** renombrarlo a `Configurations_Branches_Access` junto con su
+      entrada en `db/permission_name_map.yml`, `db/seeds.rb`, `menu.js`, el controller y los
+      specs (§28, "Renombrar un permiso").
+
+- [ ] **No hay baja de sucursales, y es a propósito.** Una sucursal se desactiva con
+      `Active: false`; borrarla dejaría sin emisor a los comprobantes viejos que la referencian.
+      Si alguna vez hiciera falta borrar de verdad, primero hay que definir qué pasa con esos
+      comprobantes.
+
+> Nota: la validación de que el `SucursalNum` no se repita vive en `Sap::Branches`
+> (`#ensure_number_available!`) y no en la UDT, que no puede declarar un índice único. Es una
+> consulta extra a SAP por cada guardado; el motivo es que dos sucursales con el mismo número
+> emitirían consecutivos que chocan entre sí ante Hacienda.
+
 ## Bandejas de recepción — filtro de búsqueda (`/configurations/mail-parser`)
 
 - [ ] Parámetro `mailServer` (filtro "Nombre del servidor") — eliminado el filtro de la vista
