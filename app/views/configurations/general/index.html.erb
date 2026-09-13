@@ -551,6 +551,65 @@
     </div>
   </div>
 
+  <%# ---------------------------------------------------------------- %>
+  <%# SECCIÓN: Esquemas XSD de Hacienda (grupo HACIENDA_XSD)            %>
+  <%#                                                                   %>
+  <%# Reemplaza los nueve `appSettings` del .NET (`FEXSDPath`, …), que   %>
+  <%# eran rutas absolutas al disco de aquel servidor. Acá el archivo    %>
+  <%# se sube a Azure y el ajuste guarda la ruta del blob, que la decide %>
+  <%# el servidor: por eso el campo es readonly y se edita subiendo un   %>
+  <%# archivo, no escribiendo (CLAUDE.md §34).                           %>
+  <%#                                                                    %>
+  <%# La lista sale de `Hacienda::SchemaStore::SCHEMAS` en vez de estar   %>
+  <%# escrita acá: esa constante ya tiene que existir —es la que resuelve %>
+  <%# qué esquema le toca a cada tipo de comprobante— y una segunda copia %>
+  <%# de las etiquetas se separaría de la primera sin que nadie lo note.  %>
+  <%# ---------------------------------------------------------------- %>
+  <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6"
+       style="grid-column: 1 / -1;">
+
+    <%= render 'configurations/general/section_loader', target: 'groupLoader', group: 'HACIENDA_XSD' %>
+
+    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+      Esquemas XSD de Hacienda
+    </h2>
+
+    <div class="mb-4 flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
+      <span class="material-icons text-sm text-blue-500 flex-shrink-0 mt-px">info</span>
+      <p class="text-xs text-blue-700">
+        Cada archivo se valida al cargarlo y se guarda en Azure Storage, no en el servidor.
+        El esquema debe ser <strong>autocontenido</strong>: si trae un
+        <code class="font-mono">&lt;xs:import&gt;</code> a otro archivo, hay que comentarlo
+        o incorporar el esquema importado, porque no se resuelven referencias externas.
+      </p>
+    </div>
+
+    <%# Un solo file input para los nueve campos: el botón de cada fila le dice
+        para qué `code` es. %>
+    <input type="file"
+           data-general-configs-target="schemaFileInput"
+           data-action="change->general-configs#onSchemaFileSelected"
+           data-testid="schema-file-input"
+           accept=".xsd"
+           class="hidden">
+
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <% Hacienda::SchemaStore::SCHEMAS.each do |schema| %>
+        <%= render 'configurations/general/schema_field',
+              code:  schema[:code],
+              label: schema[:label] %>
+      <% end %>
+    </div>
+
+    <div class="mt-4 flex items-center justify-between gap-4">
+      <div data-general-configs-target="groupAudit" data-setting-group="HACIENDA_XSD"
+           class="hidden flex items-center gap-1.5 text-xs text-gray-400">
+        <span class="material-icons text-sm leading-none">history</span>
+        <span data-audit-text></span>
+      </div>
+    </div>
+  </div>
+
   </div><%# /grid %>
 
 </div>

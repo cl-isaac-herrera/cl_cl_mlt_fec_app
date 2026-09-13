@@ -40,6 +40,11 @@ export default class extends Controller {
     'groupButton',
     'groupAudit',
     'groupLoader',
+    // Esquemas XSD de Hacienda (grupo `HACIENDA_XSD`)
+    'schemaInput',
+    'schemaUpload',
+    'schemaDownload',
+    'schemaFileInput',
     // Base de documentos
     'engineNotice',
     'engineNoticeText',
@@ -55,6 +60,13 @@ export default class extends Controller {
   // ----------------------------------------------------------------
   #generalConfigId = null
   #selectedFile    = null
+
+  /**
+   * `code` del esquema XSD cuyo botón de subir se apretó. La sección tiene UN
+   * solo file input para los nueve campos, así que el `change` necesita saber a
+   * cuál corresponde el archivo que se eligió.
+   */
+  #pendingSchemaCode = null
 
   /** Code → ajuste serializado, tal como lo devolvió `GET /api/settings`. */
   #settings = new Map()
@@ -145,6 +157,7 @@ export default class extends Controller {
 
       this.#settings = new Map(list.map(setting => [setting.Code, setting]))
       this.#applySettings()
+      this.#applySchemas()
       this.#renderGroupAudits()
       this.#applyEngineHints()
       this.#refreshGroupButtons()
@@ -522,6 +535,140 @@ export default class extends Controller {
   }
 
   // ----------------------------------------------------------------
+  // Esquemas XSD de Hacienda
+  //
+  // Lo que se edita NO es el valor del ajuste: el ajuste guarda la ruta del
+  // blob en Azure y esa la decide el servidor (CLAUDE.md §34). La pantalla sube
+  // un ARCHIVO a `PUT /api/hacienda_schemas/:code` y muestra el nombre de lo que
+  // quedó cargado.
+  // ----------------------------------------------------------------
+  /**
+   * Vuelca el nombre del archivo cargado en cada campo y habilita su botón de
+   * descarga. El ajuste guarda `xsd/{CODE}/{digest}/{nombre}.xsd`: el nombre es
+   * el último segmento.
+   */
+  #applySchemas() {
+    this.schemaInputTargets.forEach(input => {
+      const code     = input.dataset.schemaCode
+      const setting  = this.#settings.get(code)
+      const fileName = this.#schemaFileName(setting?.Value)
+
+      input.value = fileName || ''
+
+      const button = this.schemaDownloadTargets.find(el => el.dataset.schemaCode === code)
+      if (!button) return
+
+      // El title que trae el HTML explica por qué está deshabilitado (§26). Se
+      // guarda la primera vez para poder restaurarlo si el archivo se quita.
+      if (button.dataset.emptyTitle === undefined) button.dataset.emptyTitle = button.title
+
+      button.disabled = !fileName
+      button.title    = fileName ? `Descargar ${fileName}` : button.dataset.emptyTitle
+    })
+  }
+
+  triggerSchemaFileInput(event) {
+    this.#pendingSchemaCode = event.currentTarget.dataset.schemaCode
+    // Limpiar antes de abrir: sin esto, volver a elegir el MISMO archivo no
+    // dispara `change` y el botón parece no hacer nada.
+    this.schemaFileInputTarget.value = ''
+    this.schemaFileInputTarget.click()
+  }
+
+  async onSchemaFileSelected(event) {
+    const file = event.target.files[0]
+    const code = this.#pendingSchemaCode
+
+    this.#pendingSchemaCode = null
+    event.target.value = ''
+
+    if (!file || !code) return
+
+    if (!/\.xsd$/i.test(file.name)) {
+      showToast('Seleccione un archivo con extensión .xsd.', 'warning')
+      return
+    }
+
+    const label = this.#schemaLabel(code)
+
+    const confirmed = await confirm(
+      `¿Está seguro de que desea usar «${file.name}» como esquema XSD de ${label.toLowerCase()}?`,
+      'Cargar esquema XSD'
+    )
+    if (!confirmed) return
+
+    // El servidor compila el esquema antes de guardarlo, así que la espera
+    // incluye la validación: por eso el texto la nombra.
+    showLoading('Validando y guardando el esquema XSD, espere por favor...')
+
+    const body = new FormData()
+    body.append('File', file)
+
+    try {
+      await this.#settingsFetch(`/api/hacienda_schemas/${code}`, { method: 'PUT', body })
+      showToast('Esquema XSD actualizado con éxito.', 'success')
+    } catch (err) {
+      // Escritura fallida → modal, no toast (CLAUDE.md §9). El mensaje suele
+      // ser el de libxml2 diciendo qué tiene mal el archivo.
+      showAlert({
+        type:    ALERT_TYPES.ERROR,
+        title:   'Error al cargar el esquema XSD',
+        message: err.message || 'Error desconocido',
+      })
+    } finally {
+      hideLoading()
+      // Siempre: la ruta que quedó guardada la decide el servidor, así que la
+      // única forma de que la pantalla cuente la verdad es volver a leerla.
+      await this.#loadSettings()
+    }
+  }
+
+  async downloadSchema(event) {
+    const code  = event.currentTarget.dataset.schemaCode
+    const label = this.#schemaLabel(code)
+
+    showLoading(`Descargando el esquema XSD de ${label.toLowerCase()}...`)
+
+    try {
+      const response = await fetch(`/api/hacienda_schemas/${code}`, {
+        headers: { 'Accept': 'application/xml' },
+      })
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null)
+        throw new Error(body?.Message || `HTTP ${response.status}`)
+      }
+
+      const blob = await response.blob()
+      const url  = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href     = url
+      link.download = this.#schemaInputFor(code)?.value || `${code.toLowerCase()}.xsd`
+      link.click()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      // Lectura fallida → toast (CLAUDE.md §9).
+      showToast(err.message || 'Error al descargar el esquema XSD', 'error')
+    } finally {
+      hideLoading()
+    }
+  }
+
+  /** El último segmento de `xsd/{CODE}/{digest}/{nombre}.xsd`. */
+  #schemaFileName(value) {
+    return value ? String(value).split('/').pop() : ''
+  }
+
+  #schemaInputFor(code) {
+    return this.schemaInputTargets.find(input => input.dataset.schemaCode === code)
+  }
+
+  /** La etiqueta visible del esquema, la misma que pinta su `<label>`. */
+  #schemaLabel(code) {
+    return this.#schemaInputFor(code)?.dataset.schemaLabel || 'este comprobante'
+  }
+
+  // ----------------------------------------------------------------
   // Helpers: auditoría (última actualización)
   // ----------------------------------------------------------------
   /** Pinta, por grupo, la actualización más reciente de sus ajustes. */
@@ -579,14 +726,18 @@ export default class extends Controller {
    * (CLAUDE.md §28). El mensaje real de la API viaja en el cuerpo (`Message`).
    */
   async #settingsFetch(url, options = {}) {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Accept': 'application/json',
-        ...getApiHeaders(),
-        ...(options.headers || {}),
-      },
-    })
+    const headers = {
+      'Accept': 'application/json',
+      ...getApiHeaders(),
+      ...(options.headers || {}),
+    }
+
+    // `getApiHeaders()` fija `Content-Type: application/json`. Un cuerpo
+    // FormData trae el suyo con el boundary que genera el browser: dejarle el
+    // de JSON lo deja sin boundary y el servidor no puede parsear las partes.
+    if (options.body instanceof FormData) delete headers['Content-Type']
+
+    const response = await fetch(url, { ...options, headers })
 
     if (!response.ok) {
       const body = await response.json().catch(() => null)

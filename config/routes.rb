@@ -177,6 +177,21 @@ Rails.application.routes.draw do
     resources :settings, only: %i[index update], param: :code,
                          constraints: { code: /[A-Z][A-Z0-9]*(_[A-Z0-9]+)+/ }
 
+    # Los archivos XSD con los que se valida el comprobante contra el esquema de
+    # Hacienda, uno por tipo más los dos de mensaje de receptor. Reemplazan los
+    # nueve `appSettings` del .NET (`FEXSDPath`, … `ACCEPTXSDMailParser`), que
+    # eran rutas del disco de aquel servidor.
+    #
+    # La ruta del blob la decide el servidor (lleva el digest del contenido), así
+    # que NO se puede escribir por `PATCH /api/settings/:code`: el recurso que la
+    # pantalla manipula es el esquema, y su cuerpo es multipart (§34).
+    #
+    # `param: :code` porque la llave es el `code` del ajuste; la restricción lo
+    # acota al grupo `HACIENDA_XSD`, así que un `code` de otro grupo ni siquiera
+    # entra al controller.
+    resources :hacienda_schemas, only: %i[show update], param: :code,
+                                 constraints: { code: /HACIENDA_XSD_[A-Z0-9]+(_[A-Z0-9]+)*/ }
+
     # Prueba de conexión a la base de documentos, con los ajustes ya guardados.
     # Alimenta el botón "Probar conexión" de la misma pantalla: es lo único que
     # le dice al operador si los diez campos que llenó sirven.

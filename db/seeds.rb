@@ -1069,6 +1069,32 @@ AZURE_STORAGE_SETTINGS = [
   ['AZURE_STORAGE_CONTAINER',    'Contenedor de Azure Storage donde se guardan los XML', true, 'appfiles']
 ].freeze
 
+# Los esquemas XSD con los que se valida cada comprobante antes de mandarlo a
+# Hacienda. Reemplazan los nueve `appSettings` del .NET
+# (`CLVS_FE.API/Web.config`: `FEXSDPath`, `NCXSDPath`, … `ACCEPTXSDMailParser`),
+# que eran rutas absolutas al disco de aquel servidor.
+#
+# ⚠️ **Estos nueve NO van en `db/setting_code_map.yml`.** Ese archivo traduce los
+# `code` de la tabla `Setting` de SQL Server, y estos no salen de ahí: vivían en
+# el `Web.config`, que la importación no lee. La equivalencia con la llave vieja
+# está en `Hacienda::SchemaStore::SCHEMAS` (`legacy_key`), que es lo que le dice
+# a quien migra una instalación qué archivo del servidor viejo va en cada campo.
+#
+# El VALOR no es el XSD ni una ruta del disco: es la ruta del blob en Azure
+# (`xsd/{CODE}/{digest}/{nombre}.xsd`), que escribe `Hacienda::SchemaUpload`
+# cuando el operador sube el archivo. Por eso nacen vacíos y `is_visible: true`
+# —la ruta no es un secreto— y por eso NINGUNO lleva `fixed_value`: el archivo
+# lo publica Hacienda y cambia con cada versión del esquema, así que no hay un
+# valor del producto que reafirmar.
+#
+# El catálogo se deriva de `Hacienda::SchemaStore::SCHEMAS` en vez de repetirse
+# acá: esa lista ya tiene que existir en el código —es la que resuelve qué
+# esquema le toca a cada tipo de comprobante— y dos listas paralelas se separan
+# sin que nadie lo note.
+HACIENDA_XSD_SETTINGS = Hacienda::SchemaStore::SCHEMAS.map do |schema|
+  [schema[:code], "Esquema XSD de Hacienda para #{schema[:label].downcase}", true]
+end.freeze
+
 # El grupo es el prefijo del `code` sin el campo, y se declara junto a las filas
 # en vez de derivarlo: `DOCS_DB_ODBC_QUERY_TIMEOUT` partido por el último `_`
 # daría el grupo equivocado (ver el encabezado de la migración).
@@ -1078,6 +1104,7 @@ SETTING_GROUPS = {
   'CRYSTAL' => LEGACY_SETTINGS.select { |code, _, _| code.start_with?('CRYSTAL_') },
   'HACIENDA_FE' => HACIENDA_FE_SETTINGS,
   'HACIENDA_XADES' => HACIENDA_XADES_SETTINGS,
+  'HACIENDA_XSD' => HACIENDA_XSD_SETTINGS,
   'AZURE_STORAGE' => AZURE_STORAGE_SETTINGS
 }.freeze
 

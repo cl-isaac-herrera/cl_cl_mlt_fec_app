@@ -2821,3 +2821,77 @@ del tipo migrado más parecido, preguntarse si los ROLES se mantienen, agregar c
 validador que corresponda, y recién entonces meterlo en `VALIDATED_DOC_TYPES`.
 `RECEPTOR_OPCIONAL` ya listaba ND y NC antes de que se pudieran emitir, y `TERCERO_PROHIBIDO`
 lista a FEE hoy — las listas describen la regla, no lo que hoy se puede mandar.
+
+---
+
+## 40. Esquemas XSD de Hacienda — en AZURE, compilados en memoria
+
+Los nueve XSD con los que se valida un comprobante contra el esquema de Hacienda **no viven
+en el disco del servidor**: se suben a Azure desde Configuraciones → Generales y se compilan
+en memoria con `Nokogiri::XML::Schema`. El acceso pasa siempre por
+`Hacienda::SchemaStore`; la carga, por `Hacienda::SchemaUpload`.
+
+```ruby
+schema = Hacienda::SchemaStore.for_doc_type(DocType::FE)
+errors = schema.validate(Nokogiri::XML(xml))
+```
+
+### Por qué acá SÍ y en §34 NO
+
+§34 manda el certificado, el logo y el `.rpt` al disco porque **otro proceso los abre por su
+ruta** — el servicio de firma, el generador del PDF, el de correo. Con el XSD no pasa eso: el
+único consumidor es esta aplicación, y lo que necesita no es un archivo sino un esquema
+compilado. En disco habría que sincronizar una copia por servidor a mano; en Azure hay una
+sola, en el mismo contenedor que ya usa `Documents::XmlArchive`.
+
+> **Regla:** un archivo va al disco si otro proceso lo abre por su ruta. Si no, va a Azure.
+> La pregunta no es el tamaño ni el tipo de archivo — es quién más lo abre.
+
+### El ajuste guarda la RUTA DEL BLOB, y lleva el digest del contenido
+
+`settings.value` queda con `xsd/{CODE}/{digest}/{nombre original}.xsd`:
+
+- el **digest** hace que subir un archivo distinto produzca una ruta distinta. El caché de
+  `SchemaStore` es por proceso y compara la ruta en cada lectura, así que un worker que
+  lleva días arriba descarta el esquema viejo solo, sin reiniciar nada;
+- el **nombre original** sobrevive, y es lo que la pantalla muestra;
+- **no se guarda la URL completa**, para no repetir el conocimiento de cómo se arma y se
+  vuelve a partir una URL de blob, que hoy vive en un solo lugar (`Documents::XmlArchive`).
+
+La ruta **no se acepta del cuerpo** — la decide el servidor, igual que `cert_path` en §34. Por
+eso la carga NO es `PATCH /api/settings/:code` sino `PUT /api/hacienda_schemas/:code`, con el
+archivo en un cuerpo multipart.
+
+### ⚠️ El XSD tiene que ser AUTOCONTENIDO
+
+Un esquema construido desde un String no tiene ruta base, así que **libxml2 no resuelve ningún
+`xs:import` ni `xs:include`** — ni relativo ni remoto (se compila con `NONET`, y salir a la red
+en medio de una emisión no es aceptable). Los XSD publicados por Hacienda traen el import de
+`xmldsig-core-schema.xsd`; el legacy lo dejó **comentado** en sus copias, y es lo que hay que
+hacer con el archivo que se sube, o inlinear el esquema importado.
+
+Por eso `SchemaUpload` **compila el archivo antes de subirlo**: un XSD que no resuelve se
+rechaza en la pantalla, con el mensaje de libxml2, y no en medio de la emisión de un
+comprobante. Toda validación de un archivo subido que se pueda hacer sin escribir nada se hace
+primero — mismo criterio que §34 con el PIN del `.p12`.
+
+### ⚠️ Los XSD del legacy NO son los oficiales
+
+`legacy/.../CLVS_FE.DAO/Docs/*_V4.4.xsd` son copias con la raíz renombrada (`DocumentoFETE`,
+`DocumentoNCND`) y **sin `targetNamespace`**: el legacy no valida el XML que manda, sino un
+objeto intermedio que serializa aparte (`GetDocumentToValidateFETE` + `GetSerializedBaseFETE`).
+`Hacienda::XmlBuilder` genera el XML real, así que cargar esas copias rechaza todo con
+`No matching global declaration available for the validation root`. Lo que se carga es el XSD
+**oficial** de Hacienda — que es más estricto que lo que el legacy comprueba hoy.
+
+### Agregar un esquema al catálogo
+
+`Hacienda::SchemaStore::SCHEMAS` es la única lista: de ahí salen los `code`, las etiquetas, el
+mapeo `doc_type → code`, las filas de `db/seeds.rb` y los campos de la vista. Un esquema nuevo
+se agrega ahí **y** en una migración de datos que inserte su fila (§36: `db:seed` entero contra
+una base viva borra las asignaciones de permisos). La migración escribe los `code` literales,
+no derivados de la constante: documenta lo que se aplicó el día que corrió.
+
+Son **nueve y no diez** porque los tres mensajes de receptor (`05`/`06`/`07`) comparten
+esquema, y la variante se elige por el ORIGEN del mensaje —extraído de un correo o no—, no por
+su código: es el parámetro `fromMailParser` del legacy (`Validations.cs` L248-256).

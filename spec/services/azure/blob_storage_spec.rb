@@ -197,4 +197,74 @@ RSpec.describe Azure::BlobStorage do
       end
     end
   end
+
+  describe '#delete' do
+    # Mismo `StringToSign` que el GET salvo el verbo: `Delete Blob` tampoco
+    # manda `x-ms-blob-type` ni cuerpo.
+    def expected_delete_authorization(account:, key:, path:, date:)
+      string_to_sign = [
+        'DELETE', '', '', '', '', '', '', '', '', '', '', ''
+      ].join("\n") + "\n" +
+        "x-ms-date:#{date}\nx-ms-version:2021-08-06\n" +
+        "/#{account}#{path}"
+
+      signature = Base64.strict_encode64(
+        OpenSSL::HMAC.digest('SHA256', Base64.strict_decode64(key), string_to_sign)
+      )
+      "SharedKey #{account}:#{signature}"
+    end
+
+    def stub_delete(status: 202)
+      stub_request(:delete, "https://#{account}.blob.core.windows.net/clvsfe/xsd/viejo.xsd")
+        .to_return(status: status)
+    end
+
+    def delete
+      described_class.new.delete(container: 'clvsfe', path: 'xsd/viejo.xsd')
+    end
+
+    it 'borra el blob' do
+      request = stub_delete
+
+      delete
+
+      expect(request).to have_been_made.once
+    end
+
+    it 'firma la petición con el algoritmo Shared Key exacto de Microsoft' do
+      stub_delete
+
+      delete
+
+      expect(a_request(:delete, %r{clvsfe/xsd/viejo\.xsd}).with { |req|
+        date = req.headers['X-Ms-Date']
+        req.headers['Authorization'] == expected_delete_authorization(
+          account: account, key: key, path: '/clvsfe/xsd/viejo.xsd', date: date
+        )
+      }).to have_been_made
+    end
+
+    # Quien llama a `#delete` lo hace para limpiar algo que sobra: "ya no está"
+    # es el resultado buscado, no un error que cada llamador tenga que
+    # distinguir.
+    it 'trata un blob que ya no existe como éxito' do
+      stub_delete(status: 404)
+
+      expect { delete }.not_to raise_error
+    end
+
+    describe 'fallas' do
+      it 'un rechazo de Azure es transitorio' do
+        stub_delete(status: 403)
+
+        expect { delete }.to raise_error(described_class::TransientError, /rechazó el borrado/)
+      end
+
+      it 'un contenedor inexistente NO es transitorio' do
+        stub_delete(status: 400)
+
+        expect { delete }.to raise_error(described_class::RejectedError, /rechazó el borrado/)
+      end
+    end
+  end
 end

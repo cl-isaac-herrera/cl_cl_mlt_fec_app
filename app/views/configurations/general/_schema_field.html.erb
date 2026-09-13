@@ -1,0 +1,68 @@
+<%#
+  Campo de un esquema XSD de Hacienda (grupo `HACIENDA_XSD` de `settings`).
+
+  A diferencia de `_setting_field`, lo que se edita NO es el valor del ajuste:
+  el ajuste guarda la ruta del blob y esa la decide el servidor (CLAUDE.md §34).
+  Acá se sube un ARCHIVO, a `PUT /api/hacienda_schemas/:code`, y la pantalla
+  solo muestra el nombre de lo que está cargado.
+
+  Por eso el input es readonly y no lleva el target `settingInput`: si lo
+  llevara, `#changedInputs` lo contaría como un ajuste editable y el botón
+  "Actualizar" del grupo intentaría mandarle el nombre del archivo como valor.
+
+  El botón de subir no abre un file input propio: la sección tiene UNO solo y el
+  botón le dice para qué `code` es (`#pendingSchemaCode`). Nueve inputs ocultos
+  con el mismo `accept` no aportan nada y hay que limpiarlos de a uno.
+
+  Locals:
+    code  — `code` del ajuste (obligatorio)
+    label — etiqueta visible (obligatorio)
+    hint  — texto de ayuda bajo el campo
+%>
+<div>
+  <label class="block text-sm font-medium text-gray-700 mb-1"><%= label %></label>
+
+  <%# Contenedor unificado con borde compartido — CLAUDE.md §4. %>
+  <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden
+              focus-within:ring-2 focus-within:ring-blue-500 bg-gray-50">
+    <input type="text"
+           data-general-configs-target="schemaInput"
+           data-schema-code="<%= code %>"
+           data-schema-label="<%= label %>"
+           data-testid="schema-<%= code %>"
+           readonly
+           placeholder="Sin cargar"
+           class="flex-1 px-3 py-2 text-sm bg-transparent outline-none cursor-default">
+
+    <button type="button"
+            data-general-configs-target="schemaUpload"
+            data-schema-code="<%= code %>"
+            data-action="click->general-configs#triggerSchemaFileInput"
+            data-testid="schema-upload-<%= code %>"
+            title="Cargar el archivo .xsd de <%= label.downcase %>"
+            class="self-stretch flex items-center px-2 border-l border-gray-200
+                   text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0
+                   disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+      <span class="material-icons text-base leading-none">cloud_upload</span>
+    </button>
+
+    <%# Nace deshabilitado: sin archivo cargado no hay nada que bajar. Lo
+        habilita `#applySchemas()` cuando el ajuste trae una ruta. %>
+    <button type="button"
+            data-general-configs-target="schemaDownload"
+            data-schema-code="<%= code %>"
+            data-action="click->general-configs#downloadSchema"
+            data-testid="schema-download-<%= code %>"
+            disabled
+            title="Todavía no se ha cargado un archivo .xsd para <%= label.downcase %>"
+            class="self-stretch flex items-center px-2 border-l border-gray-200
+                   text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors flex-shrink-0
+                   disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+      <span class="material-icons text-base leading-none">download</span>
+    </button>
+  </div>
+
+  <% if local_assigns[:hint].present? %>
+    <p class="mt-1 text-xs text-gray-400"><%= hint %></p>
+  <% end %>
+</div>

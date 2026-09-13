@@ -1012,6 +1012,80 @@ están (`db/migrate/20260821120000_create_settings.rb`, `app/models/setting.rb`,
 
 ---
 
+## Esquemas XSD de Hacienda — administración migrada, validación sin cablear
+
+Los nueve `appSettings` del .NET (`CLVS_FE.API/Web.config`: `FEXSDPath`,
+`NCXSDPath`, … `ACCEPTXSDMailParser`) eran rutas absolutas al disco de aquel
+servidor y `Validations.cs#ValidateXSD` las pasaba tal cual a
+`settings.Schemas.Add(null, SchemaPath)`. Ya está migrada **la administración**:
+el archivo se sube desde Configuraciones → Generales, se guarda en Azure y se
+compila en memoria (`app/services/hacienda/schema_store.rb`,
+`app/services/hacienda/schema_upload.rb`,
+`app/controllers/api/hacienda_schemas_controller.rb`,
+`db/migrate/20260912170000_add_hacienda_xsd_settings.rb`). Ver `CLAUDE.md` §40.
+
+- [x] **Nueve ajustes en el grupo `HACIENDA_XSD`.** Uno por tipo de comprobante
+      (`_01`, `_02`, `_03`, `_04`, `_08`, `_09`, `_10`) más `MENSAJE_RECEPTOR` y
+      `MENSAJE_RECEPTOR_MAIL_PARSER`. Son nueve y no diez porque los tres
+      mensajes de receptor (`05`/`06`/`07`) comparten esquema y la variante se
+      elige por el ORIGEN del mensaje, no por su código (`Validations.cs` L248-256).
+
+- [x] **El archivo no toca el disco del servidor.** Se guarda en Azure
+      (`xsd/{CODE}/{digest}/{nombre}.xsd`, mismo contenedor que los XML de
+      comprobante) y se compila desde los bytes con `Nokogiri::XML::Schema`. El
+      digest en la ruta invalida el caché de todos los procesos sin reiniciar
+      ninguno. Es deliberadamente distinto de `CLAUDE.md` §34: los archivos de
+      compañía van al disco porque **otro proceso los abre por su ruta**, y al
+      XSD no lo abre nadie más.
+
+- [x] **`POST`/`PUT` no pasa por `PATCH /api/settings/:code`.** La ruta del blob
+      la decide el servidor, así que aceptarla del cuerpo es lo que §34 prohíbe
+      para `cert_path`: el recurso es el esquema y su cuerpo es multipart.
+
+- [ ] **⚠️ Falta cablear la validación XSD en la emisión.** Hoy
+      `Documents::Issuer` valida con `Hacienda::DocumentValidator` y nada más:
+      **ningún comprobante se coteja contra su XSD**, aunque el archivo esté
+      cargado. El legacy corre las dos validaciones y el XSD va PRIMERO
+      (`Validations.cs#ValidateDocument`, L195-224).
+      **Dónde va:** entre `Hacienda::XmlBuilder#call` y `signer.sign`, sobre el
+      XML ya generado — validar antes de firmar es el criterio que ya sigue esa
+      clase.
+      **Decisión tomada sobre el ajuste sin cargar:** el documento **queda en
+      error**, con el detalle de que no se encuentra el archivo XSD configurado.
+      `Hacienda::SchemaStore::NotConfigured` ya levanta con ese mensaje exacto,
+      listo para que el job lo escriba en la cola.
+
+- [ ] **⚠️ Antes de cablearlo: los XSD del legacy NO son los oficiales de
+      Hacienda.** `legacy/apis/clvsfesync4.3/CLVS_FE.DAO/Docs/*_V4.4.xsd` son
+      copias con la raíz renombrada (`DocumentoFETE`, `DocumentoNCND`) y **sin
+      `targetNamespace`**, porque el legacy no valida el XML que manda: serializa
+      un objeto intermedio (`GetData.GetDocumentToValidateFETE` +
+      `SerializeDoc.GetSerializedBaseFETE`) y valida ESO.
+      `Hacienda::XmlBuilder` sí genera el XML real (`FacturaElectronica` en el
+      namespace de Hacienda), así que subir los archivos del legacy **rechaza
+      todo** con `No matching global declaration available for the validation
+      root` — verificado. Lo que hay que cargar es el XSD **oficial** publicado
+      por Hacienda, que es más estricto que lo que el legacy comprueba hoy:
+      antes de encender la validación hay que correr una tanda de documentos
+      reales contra él y ver qué aparece.
+
+- [ ] **El XSD oficial trae un `<xs:import>` de `xmldsig` que hay que quitar.**
+      Un esquema construido desde memoria no tiene ruta base, así que libxml2 no
+      resuelve NINGÚN import —ni relativo ni remoto— y el archivo se rechaza al
+      subirlo. El legacy resolvió lo mismo dejando ese import **comentado** en
+      sus copias. Hay que documentarlo para quien instala, o resolverlo en el
+      producto: inlinear `xmldsig-core-schema.xsd` en el archivo que se sube, o
+      dejar que `SchemaUpload` lo incorpore por su cuenta. **Sacar el import no
+      pierde nada hoy**, porque la validación corre ANTES de firmar y el
+      elemento `Signature` todavía no existe en el XML.
+
+- [ ] **Sin permiso propio para cargar un esquema.** `Api::HaciendaSchemasController`
+      exige `Configurations_General_Access`, el mismo de `Api::SettingsController`;
+      es la misma deuda anotada arriba en "Ajustes de la instalación" y se
+      resuelve junto con ella.
+
+---
+
 ## Emisión de documentos — sincronización de emitidos (`SyncIssuedDocumentsJob`)
 
 El flujo de `docs/sync-documents-flow.md` de punta a punta: se lee la cola de documentos

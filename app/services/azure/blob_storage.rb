@@ -114,6 +114,41 @@ module Azure
       raise RejectedError, message
     end
 
+    # Borra un blob. La usa `Hacienda::SchemaUpload` para sacar del contenedor
+    # el XSD que acaba de quedar reemplazado — el que ningún ajuste apunta ya.
+    #
+    # **Un blob que no existe NO es un error**: `Delete Blob` responde 404 y acá
+    # eso se trata como éxito. Quien llama a este método lo hace para limpiar
+    # algo que sobra, así que "ya no está" es exactamente el resultado buscado,
+    # y levantar obligaría a cada llamador a distinguir un caso que le da igual.
+    #
+    # @param container [String]
+    # @param path [String] ruta dentro del contenedor, sin barra inicial.
+    # @return [void]
+    # @raise [TransientError, RejectedError]
+    def delete(container:, path:)
+      uri = blob_uri(container, path)
+      date = Time.now.utc.httpdate
+
+      # Sin `x-ms-blob-type`, por lo mismo que `#download`: ese header es propio
+      # de `Put Blob`. Firmar uno que la petición no manda es un 403 sin motivo
+      # visible.
+      ms_headers = { 'x-ms-date' => date, 'x-ms-version' => API_VERSION }
+
+      request = Net::HTTP::Delete.new(uri.request_uri)
+      ms_headers.each { |name, value| request[name] = value }
+      request['Authorization'] = authorization('DELETE', uri, ms_headers, 0, '')
+
+      response = perform(uri, request)
+
+      return if response.is_a?(Net::HTTPSuccess) || response.is_a?(Net::HTTPNotFound)
+
+      message = "Azure Storage rechazó el borrado (#{describe(response)})."
+      raise TransientError, message if transient?(response)
+
+      raise RejectedError, message
+    end
+
     private
 
     attr_reader :account, :key
