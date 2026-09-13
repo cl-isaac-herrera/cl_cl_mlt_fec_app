@@ -212,10 +212,11 @@ CODE_ONLY_GLOBAL = [
 #    que los referencie no encontraría la fila. Pero nacen `is_active: false`
 #    porque su pantalla ya no existe y nadie los evalúa.
 #
-#    Tiene que coincidir con `DEACTIVATE` de
-#    `db/migrate/20260812130000_apply_permission_catalog_changes.rb`: esta lista
-#    es para la base que se crea de cero, la migración es para la que ya existe,
-#    y las dos deben dejar el mismo estado final.
+#    Tiene que coincidir con el `DEACTIVATE` de las migraciones que dan de baja
+#    permisos (`20260812130000_apply_permission_catalog_changes.rb` y
+#    `20260913150000_deactivate_group_permissions.rb`): esta lista es para la base
+#    que se crea de cero, las migraciones para la que ya existe, y las dos vías
+#    deben dejar el mismo estado final.
 #
 #    Ver `db/permission_name_map.yml` → orphaned.
 # ---------------------------------------------------------------------------
@@ -223,8 +224,14 @@ DEACTIVATED = %w[
   S_CompUser
   Configurations_Users_ViewGroupUsers
   Configurations_Companies_ChangeGroup
-  Configurations_Groups_ViewAllApplicationGroups
   S_AcceptDocsGT
+  Configurations_Groups_ViewAllApplicationGroups
+  S_Groups
+  Configurations_Groups_Create
+  Configurations_Groups_Update
+  Configurations_Groups_UpdateAllInApplication
+  Configurations_Groups_DownloadFEPrintFormat
+  Configurations_Groups_DownloadFEPrintFormatInAllGroups
 ].to_set.freeze
 
 ADMIN_ROLE_NAME = 'Administrador'

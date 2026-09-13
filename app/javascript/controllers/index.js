@@ -16,7 +16,6 @@ import ConnectionsController      from 'controllers/connections_controller'
 import ConnectionFormController   from 'controllers/connection_form_controller'
 import SlResourcesController      from 'controllers/sl_resources_controller'
 import NumberingController        from 'controllers/numbering_controller'
-import GroupController            from 'controllers/group_controller'
 import BranchesController         from 'controllers/branches_controller'
 import DocumentsIssuedController   from 'controllers/documents_issued_controller'
 import DocumentsReportsController    from 'controllers/documents_reports_controller'
@@ -48,7 +47,6 @@ application.register('connections',       ConnectionsController)
 application.register('connection-form',   ConnectionFormController)
 application.register('sl-resources',      SlResourcesController)
 application.register('numbering',         NumberingController)
-application.register('group',             GroupController)
 application.register('branches',          BranchesController)
 application.register('documents-issued',  DocumentsIssuedController)
 application.register('documents-reports',    DocumentsReportsController)

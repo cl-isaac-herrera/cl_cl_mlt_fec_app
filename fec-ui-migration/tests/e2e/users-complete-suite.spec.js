@@ -102,10 +102,6 @@ async function mockAssignmentAPIs(page) {
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ Data: [{ Id: 'uid-1', Email: 'ana@empresa.com' }], Message: 'OK' }),
   }));
-  await page.route('**/api/Group/for-assignments**', route => route.fulfill({
-    status: 200, contentType: 'application/json',
-    body: JSON.stringify({ Data: [{ Id: 1, GroupName: 'Grupo Principal' }], Message: 'OK' }),
-  }));
   await page.route('**/api/Companies/for-assignment**', route => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({
@@ -431,10 +427,6 @@ test.describe('Users — Registrar Usuario', () => {
     await page.route('**/api/Companies/GetCompaniesByUserGroup**', route => route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({ Data: [{ Id: 1, EmsrNombre: 'Empresa Test', EmsrIdeNumero: '3101' }], Message: 'OK' }),
-    }));
-    await page.route('**/api/Group/GetGroupsByUser**', route => route.fulfill({
-      status: 200, contentType: 'application/json',
-      body: JSON.stringify({ Data: [{ Id: 1, GroupName: 'Grupo Principal' }], Message: 'OK' }),
     }));
     await page.goto(REGISTER_URL);
   });

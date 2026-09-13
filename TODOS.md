@@ -256,14 +256,13 @@ pendiente:
       de otro usuario, exige `Configurations_Users_Update` y la compañía se valida contra
       las asignaciones del **usuario objetivo**, no las del administrador.
 
-- [ ] **`GET /api/Group/GetGroupsByUser` no se migró: se eliminó de las pantallas.** El
+- [x] **`GET /api/Group/GetGroupsByUser` no se migró: se eliminó de las pantallas.** El
       Angular lo pedía en el perfil y descartaba la respuesta (ningún campo depende de los
       grupos), así que no era deuda sino código muerto — criterio de §24. En la lista de
       usuarios alimentaba el select "Cuenta" del panel de creación, que se eliminó junto con
       la consulta por la misma razón: no existe tabla `groups` en la base propia.
-      Sigue en uso en `group_controller.js`; ahí se resuelve cuando se borre esa pantalla
-      (`users_register_controller.js`, que era el otro consumidor, se eliminó con la página
-      de alta).
+      Su último consumidor era `group_controller.js`, borrado con la pantalla de grupos
+      (ver más abajo → Grupos de compañías).
 
 - [ ] **`users.doc_number_preference` no se importó del origen.** La columna la agregó
       `db/migrate/20260811130000_add_doc_number_preference_to_users.rb` (texto, equivalente a
@@ -981,31 +980,34 @@ proxy .NET:
 
 Esta versión se despliega **una instancia por cliente / grupo económico**, así que el
 concepto de grupo desapareció: el aislamiento entre clientes lo da el despliegue, no una
-columna. La regla completa está en `CLAUDE.md` §31. Lo que quedó sin limpiar:
+columna. La regla completa está en `CLAUDE.md` §31. **Limpieza terminada (2026-09-13).**
 
-- [ ] **La pantalla `/configurations/group` sigue existiendo entera.** Vista
+- [x] **La pantalla `/configurations/group` se borró entera.** Vista
       (`app/views/configurations/group/index.html.erb`), controller
-      (`app/controllers/configurations/group_controller.rb`), `group_controller.js` y su
-      registro en `app/javascript/controllers/index.js`. Consume `/api/Group/*` vía proxy.
-      **Pendiente:** borrarla junto con su ruta y su nodo de menú. Es una tarea aparte
-      —borrar una pantalla completa no se hace de pasada dentro de otra migración— y hay
-      que confirmar antes que ningún cliente en producción dependa de verla.
+      (`app/controllers/configurations/group_controller.rb`), `group_controller.js`, su
+      registro en `app/javascript/controllers/index.js`, la ruta `get 'group'` y el nodo
+      `groups` del menú. Con ella se fue el último consumidor de `/api/Group/*`: ninguna
+      llamada de la app cae ya en ese prefijo del proxy.
+      También se borró su suite e2e (`fec-ui-migration/tests/e2e/group-complete-suite.spec.js`),
+      que ejercitaba una pantalla que no existe.
 
-- [ ] **Quedan llamadas a `/api/Group/*` en dos controllers JS.**
-      `companies_controller.js` y `company_form_controller.js` (selector de grupo en el
-      formulario de compañías). El tercero, `users_register_controller.js`, se eliminó
-      junto con la página de alta de usuarios.
-      **Pendiente:** eliminarlas al migrar esas pantallas, con el mismo criterio que se usó
-      acá — el filtro se va junto con la consulta que lo alimentaba (§24), no se conserva
-      mandando un valor por defecto.
+- [x] **Las llamadas a `/api/Group/*` de los controllers JS ya no existen.**
+      `users_register_controller.js` se fue con la página de alta; en
+      `companies_controller.js`, `company_form_controller.js` y `users_controller.js` el
+      selector de grupo se había eliminado al migrar cada pantalla (§24: el filtro se va
+      junto con la consulta que lo alimentaba). Solo quedan comentarios que explican por
+      qué el campo no está.
 
-- [ ] **Seis permisos de grupos siguen activos porque los evalúa la pantalla que falta
-      borrar.** `S_Groups` (nodo de menú) y los cinco `Configurations_Groups_*` que lee
-      `group_controller.js`. Darlos de baja ahora dejaría la pantalla inalcanzable sin
-      que nadie lo haya decidido.
-      **Pendiente:** al borrar `/configurations/group`, agregarlos a `DEACTIVATE` de una
-      migración nueva y a `DEACTIVATED` en `db/seeds.rb` — las dos listas tienen que
-      coincidir. Están anotados en `db/permission_name_map.yml` con `deactivated: false`.
+- [x] **Los seis permisos de grupos se dieron de baja** — `S_Groups` (nodo de menú) y los
+      cinco `Configurations_Groups_*` que leía `group_controller.js`. Baja lógica
+      (`is_active = false`) en `db/migrate/20260913150000_deactivate_group_permissions.rb`
+      para la base existente y en `DEACTIVATED` de `db/seeds.rb` para la nueva; las dos
+      listas coinciden. Anotados en `db/permission_name_map.yml` con `deactivated: true`.
+
+> El análisis de migración de la pantalla se conserva como archivo histórico
+> (`fec-migration-docs/comparisons/CONFIGURATIONS-GROUP-COMPLETE-ANALYSIS.md` y
+> `fec-migration-docs/progress/CONFIGURATIONS-GROUP-MIGRATION-COMPLETE.md`): documentan
+> lo que hacía el Angular, no código vivo.
 
 - [x] **Los tres permisos de grupos que ya nadie evaluaba se dieron de baja** —
       `Configurations_Users_ViewGroupUsers`, `Configurations_Companies_ChangeGroup` y
@@ -1948,9 +1950,10 @@ quedó sin limpiar:
       `app/javascript/controllers/documents_emails_controller.js` y su registro en
       `app/javascript/controllers/index.js`. Consume `/api/Email/GetOutgoingMailsByFilters`
       vía proxy — un endpoint .NET que nunca se migró.
-      **Pendiente:** borrar los cuatro. Es una tarea aparte, con el mismo criterio que
-      `/configurations/group`: borrar una pantalla completa no se hace de pasada, y hay
-      que confirmar antes que ningún cliente en producción dependa de verla.
+      **Pendiente:** borrar los cuatro. Es una tarea aparte, con el mismo criterio y el
+      mismo desenlace que `/configurations/group` (ver → Grupos de compañías): borrar una
+      pantalla completa no se hace de pasada, y hay que confirmar antes que ningún cliente
+      en producción dependa de verla.
 
 - [ ] **`S_EmailReport` sigue activo en el catálogo** (`db/seeds.rb`, Id 49) aunque ya no
       lo evalúa nadie: era el permiso del nodo de menú.

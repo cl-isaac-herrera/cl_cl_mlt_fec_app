@@ -64,11 +64,6 @@ const MOCK_COMPANIES = [
 const MOCK_COMPANIES_RESPONSE = { Data: MOCK_COMPANIES, Error: false, Message: null }
 const MOCK_EMPTY_RESPONSE     = { Data: [],             Error: false, Message: null }
 
-const MOCK_GROUPS = {
-  Data: [{ Id: 1, GroupName: 'Grupo A' }, { Id: 2, GroupName: 'Grupo B' }],
-  Error: false, Message: null,
-}
-
 const MOCK_SAP_CONNECTIONS = {
   Data: [{ Id: 10, Server: 'SAP-Server-01' }],
   Error: false, Message: null,
@@ -133,9 +128,6 @@ async function mockCompaniesApi(page, response = MOCK_COMPANIES_RESPONSE) {
 }
 
 async function mockInitialData(page) {
-  await page.route('**/api/Group/GetGroups**', route =>
-    route.fulfill({ json: MOCK_GROUPS })
-  )
   await page.route('**/api/Connections/for-assignment**', route =>
     route.fulfill({ json: MOCK_SAP_CONNECTIONS })
   )

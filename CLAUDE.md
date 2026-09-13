@@ -2067,15 +2067,21 @@ columna.
 - **`Configurations_Users_ViewGroupUsers` no tiene implementación** y no es deuda: el
   alcance "los usuarios de mi grupo" es idéntico a "los de la instalación". Quien lo tenga
   ve el alcance de compañía; para ver todo está `Configurations_Users_ViewAllApplicationUsers`.
-- **Los permisos `Configurations_Groups_*` del catálogo quedan huérfanos.** Siguen
-  sembrados porque el catálogo se importa tal cual del origen, pero no los evalúa nadie.
+- **Los permisos `S_Groups` y `Configurations_Groups_*` están dados de baja**
+  (`is_active = false`). Se siguen sembrando porque el catálogo replica el del origen —una
+  importación de `PermissionByRol` que los referencie necesita la fila— pero no conceden
+  nada ni aparecen en la UI. **No reactivarlos:** no hay pantalla que los evalúe.
 
-### Lo que todavía tiene código de grupos
+### Ya no queda código de grupos
 
-`/configurations/group` (vista, controller y `group_controller.js`), su nodo de menú y las
-llamadas a `/api/Group/*` que quedan en `companies_controller.js`, `company_form_controller.js`
-y `users_register_controller.js`. Es código muerto por esta decisión, pero **borrar una
-pantalla completa es una tarea aparte** — está anotado en `TODOS.md` → Grupos.
+`/configurations/group` se borró entera el 2026-09-13 —vista, controller, `group_controller.js`,
+su registro en `index.js`, su ruta y su nodo de menú— junto con la baja de sus seis permisos
+(`db/migrate/20260913150000_deactivate_group_permissions.rb`). Con eso desapareció el último
+consumidor de `/api/Group/*`: **ninguna llamada de la app cae ya en ese prefijo del proxy**, y
+una nueva no se agrega. Lo que sobrevive son comentarios en `companies_controller.js`,
+`company_form_controller.js` y `users_controller.js` que explican por qué el selector de
+"Cuenta" no existe, y los análisis de migración bajo `fec-migration-docs/` — archivo
+histórico, no código vivo.
 
 ---
 

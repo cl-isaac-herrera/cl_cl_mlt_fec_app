@@ -35,6 +35,8 @@ class ApplyPermissionCatalogChanges < ActiveRecord::Migration[8.1]
   #     `group_controller.js` y `S_Groups` gatea el nodo de menú. Se dan de baja
   #     cuando se borre la pantalla de grupos, no antes — si no, la pantalla
   #     quedaría inalcanzable sin que nadie lo haya decidido.
+  #     (Ya ocurrió: la pantalla se borró y los dio de baja
+  #     `20260913150000_deactivate_group_permissions.rb`.)
   #   · `S_RegUser`: hay una decisión pendiente sobre él en el map (los dos
   #     nombres existen en el catálogo de origen, no es un rename puro).
   #   · `Configurations_Companies_ViewGroupCompanies`: SÍ tiene consumidor — es la

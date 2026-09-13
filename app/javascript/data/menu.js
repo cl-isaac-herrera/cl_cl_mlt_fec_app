@@ -48,7 +48,6 @@ export default [
       { key: 'slResources',      label: 'Recursos Service Layer',         route: '/configurations/sl-resources',   requiredPermission: 'Configurations_SlResources_Access' },
       { key: 'udfs',             label: 'Campos definidos por usuario',   route: '/configurations/udfs',           requiredPermission: 'S_Udfs', requiredCompanyFlag: 'UseFactProv' },
       { key: 'users',            label: 'Usuarios',                       route: '/configurations/users',          requiredPermission: 'Configurations_Users_Access' },
-      { key: 'groups',           label: 'Grupos',                         route: '/configurations/group',          requiredPermission: 'S_Groups' },
       { key: 'numbering',        label: 'Numeración',                     route: '/configurations/numbering',      requiredPermission: 'S_Numbering' },
       { key: 'Rol',              label: 'Seguridad',                      route: '/configurations/security',       requiredPermission: 'Configurations_Security_Access' },
       { key: 'sucursal',         label: 'Sucursal',                       route: '/configurations/branches',       requiredPermission: 'S_Sucursal' },

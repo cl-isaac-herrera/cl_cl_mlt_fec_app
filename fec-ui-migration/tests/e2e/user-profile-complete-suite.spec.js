@@ -21,7 +21,6 @@ const USER_INFO = {
   DocNumberPreference: '1',
 };
 
-const GROUPS_DATA = [{ Id: 1, Name: 'Grupo A' }];
 
 const COMPANIES_DATA = [
   { Id: 10, EmsrNombreComercial: 'Empresa ABC', EmsrNombre: 'Empresa ABC S.A.' },
@@ -38,7 +37,6 @@ const COMPANIES_DATA = [
  */
 async function mockInitialApis(page, overrides = {}) {
   const userInfo = overrides.userInfo ?? USER_INFO;
-  const groups   = overrides.groups   ?? GROUPS_DATA;
   const companies = overrides.companies ?? COMPANIES_DATA;
   const selectedCompanyId = overrides.selectedCompanyId ?? 10;
 
@@ -47,14 +45,6 @@ async function mockInitialApis(page, overrides = {}) {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ Data: [userInfo], Message: null }),
-    })
-  );
-
-  await page.route('**/api/Group/GetGroupsByUser**', route =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ Data: groups, Message: null }),
     })
   );
 
@@ -587,13 +577,6 @@ test.describe('User Profile — Error en carga inicial', () => {
   test('Error en GetUserInfo muestra modal de error', async ({ page }) => {
     await page.route('**/api/User/GetUserInfo', route =>
       route.fulfill({ status: 500, body: 'Internal Server Error' })
-    );
-    await page.route('**/api/Group/GetGroupsByUser**', route =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ Data: [], Message: null }),
-      })
     );
     await page.route('**/api/Companies/GetCompanies**', route =>
       route.fulfill({
