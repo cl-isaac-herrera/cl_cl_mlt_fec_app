@@ -295,8 +295,8 @@ Rails.application.routes.draw do
     get ':type/create', to: 'create#index', as: :create_document,
         constraints: { type: /01|02|03|08|10/ }
 
-    # Reporte de correos enviados
-    get 'emails', to: 'emails#index', as: :emails
+    # `emails` (Historial de correos) se retiró: el panel de correos por documento de
+    # /documents/issued cubre el caso. El código muerto está anotado en TODOS.md.
   end
 
   get 'documents-reports',   to: 'documents/reports#index',              as: :documents_reports

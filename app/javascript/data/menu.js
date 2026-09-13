@@ -18,7 +18,6 @@ export default [
       { key: 'issued_documents',    label: 'Emitidos',                    route: '/documents/issued',           requiredPermission: 'Documents_Issued_ViewDocuments' },
       { key: 'accept_documents',    label: 'Recepcionados',               route: '/documents/receptions',       requiredPermission: 'Documents_Reception_ViewDocuments' },
       { key: 'mailParser',          label: 'Logs de recepciones',         route: '/documents/receptions/logs', requiredPermission: 'S_MailParserLogs' },
-      { key: 'email_report',        label: 'Historial de correos',        route: '/documents/emails',           requiredPermission: 'S_EmailReport' },
       { key: 'createFE',            label: 'Emitir Factura Electrónica',  route: '/documents/01/create',        requiredPermission: 'S_CreateDocsFE' },
       { key: 'createND',            label: 'Emitir Nota de Débito',       route: '/documents/02/create',        requiredPermission: 'S_CreateDocsND' },
       { key: 'createNC',            label: 'Emitir Nota de Crédito',      route: '/documents/03/create',        requiredPermission: 'S_CreateDocsNC' },

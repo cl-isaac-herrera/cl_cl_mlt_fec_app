@@ -1849,6 +1849,36 @@ del 2 % coherente con su `CodigoTarifaIVA` `03`.
 
 ---
 
+## Historial de correos — pantalla retirada por decisión de producto
+
+**Decidido el 2026-09-12 (Isaac):** la pantalla `/documents/emails` ("Historial de
+correos") deja de ofrecerse. El panel de correos por documento de `/documents/issued`
+—que consulta `GET /api/documents/:id/mails`, nativo— responde la misma pregunta desde
+el documento que la origina, en vez de obligar a buscar el correo en una lista aparte.
+
+Ya se hizo: se quitó el nodo `email_report` de `app/javascript/data/menu.js` y la ruta
+`get 'emails'` de `config/routes.rb`, así que la pantalla quedó inalcanzable. Lo que
+quedó sin limpiar:
+
+- [ ] **La pantalla sigue existiendo entera, sin ruta que la alcance.** Vista
+      (`app/views/documents/emails/index.html.erb`), controller
+      (`app/controllers/documents/emails_controller.rb`),
+      `app/javascript/controllers/documents_emails_controller.js` y su registro en
+      `app/javascript/controllers/index.js`. Consume `/api/Email/GetOutgoingMailsByFilters`
+      vía proxy — un endpoint .NET que nunca se migró.
+      **Pendiente:** borrar los cuatro. Es una tarea aparte, con el mismo criterio que
+      `/configurations/group`: borrar una pantalla completa no se hace de pasada, y hay
+      que confirmar antes que ningún cliente en producción dependa de verla.
+
+- [ ] **`S_EmailReport` sigue activo en el catálogo** (`db/seeds.rb`, Id 49) aunque ya no
+      lo evalúa nadie: era el permiso del nodo de menú.
+      **Pendiente:** al borrar la pantalla, darlo de baja en `DEACTIVATE` de una migración
+      nueva y en `DEACTIVATED` de `db/seeds.rb` — las dos listas tienen que coincidir
+      (§28 de `CLAUDE.md`: cambiar el catálogo en una base viva es una migración, no un
+      re-seed). Baja lógica, nunca `DELETE`.
+
+---
+
 ## Documentos emitidos — pantalla de consulta (`/documents/issued`)
 
 `GET /api/documents` (`Api::DocumentsController` + `Sap::IssuedDocumentsSearch`) migró la
