@@ -12,8 +12,8 @@ RSpec.describe Hacienda::Validations::OtherChargeValidator do
     }.merge(overrides)
   end
 
-  def errors_for(charge) = described_class.new(charge).call
-  def fields_for(charge) = errors_for(charge).map(&:field)
+  def errors_for(charge, doc_type: DocType::FE) = described_class.new(charge, doc_type: doc_type).call
+  def fields_for(charge, doc_type: DocType::FE) = errors_for(charge, doc_type: doc_type).map(&:field)
 
   it 'no reporta nada para un cargo consistente' do
     expect(errors_for(valid_charge)).to eq([])
@@ -38,6 +38,38 @@ RSpec.describe Hacienda::Validations::OtherChargeValidator do
       )
 
       expect(errors_for(charge)).to eq([])
+    end
+  end
+
+  # `Validations.cs` L639 no lo vuelve opcional para FEC/FEE: lo PROHÍBE, y el
+  # `else` que exige los dos datos cuando el tipo de cargo es `04` ni siquiera
+  # llega a correr.
+  describe 'factura de compra' do
+    it 'rechaza la identificación y el nombre del tercero' do
+      charge = valid_charge(
+        'IdentificacionTercero' => { 'Tipo' => '01', 'Numero' => '123456789' },
+        'NombreTercero' => 'Un tercero'
+      )
+
+      expect(fields_for(charge, doc_type: DocType::FEC))
+        .to include('IdentificacionTercero.Numero', 'NombreTercero')
+    end
+
+    it 'acepta un cargo sin tercero' do
+      expect(errors_for(valid_charge, doc_type: DocType::FEC)).to eq([])
+    end
+
+    # La contracara: en FEC el tipo `04` NO dispara la exigencia del tercero,
+    # porque el legacy nunca llega a esa rama.
+    it 'no exige el tercero aunque el cargo sea un cobro por cuenta de un tercero' do
+      charge = valid_charge('TipoDocumentoOC' => '04')
+
+      expect(errors_for(charge, doc_type: DocType::FEC)).to eq([])
+      expect(fields_for(charge)).to include('IdentificacionTercero.Numero')
+    end
+
+    it 'revisa el resto de las reglas igual que la factura de venta' do
+      expect(fields_for(valid_charge('Detalle' => nil), doc_type: DocType::FEC)).to include('Detalle')
     end
   end
 

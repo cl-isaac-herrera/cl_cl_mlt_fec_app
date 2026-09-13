@@ -2734,7 +2734,7 @@ if (Documento.CondicionVenta == SalesConditions.Cash && DocType != DocTypesStrin
 `REP` es el tipo que más exclusiones acumula (no lleva líneas de detalle ni cuadre de totales
 como los demás): al migrarlo, revisar todos los `!= DocTypesString.REP` de `Validations.cs`.
 
-### Cómo está cableado hoy — FE, TE, ND y NC
+### Cómo está cableado hoy — FE, TE, ND, NC y FEC
 
 `Documents::Issuer#validate!` pregunta `Hacienda::DocumentValidator.validates?(doc_type)`, y
 esa lista (`VALIDATED_DOC_TYPES`) coincide con lo que `Hacienda::XmlBuilder` sabe generar. Es
@@ -2745,10 +2745,19 @@ Las diferencias por tipo que existen hoy, cada una donde corresponde:
 | Regla | Tipos | Dónde vive | Origen |
 |---|---|---|---|
 | Exigir identificación del receptor — **exenta** | TE, ND, NC | `Validations::HeaderValidator::RECEPTOR_OPCIONAL` | `Validations.cs` L324, L329 |
-| Validar `InformacionReferencia` — **exenta** | TE | `DocumentValidator::REFERENCIAS_NO_VALIDADAS` | `Validations.cs` L817 |
-| Exigir al menos una `InformacionReferencia` — **extra** | ND, NC | `DocumentValidator::REFERENCIAS_REQUERIDAS` | XSD (`NotaCreditoElectronica_V4.4.xsd` L874) |
+| Exigir `CodigoActividadEmisor` — **exenta** | FEC | `HeaderValidator::ACTIVIDAD_EMISOR_OPCIONAL` | `Validations.cs` L299 |
+| Exigir `CodigoActividadReceptor` — **extra** | FEC | `HeaderValidator::ACTIVIDAD_RECEPTOR_REQUERIDA` | `Validations.cs` L303 |
+| Tercero en otros cargos — **prohibido** (no exento) | FEC, FEE | `Validations::OtherChargeValidator::TERCERO_PROHIBIDO` | `Validations.cs` L639 |
+| Validar `InformacionReferencia` por dentro — **exenta** | TE, FEC | `DocumentValidator::REFERENCIAS_NO_VALIDADAS` | `Validations.cs` L817 |
+| Exigir al menos una `InformacionReferencia` — **extra** | ND, NC, FEC | `DocumentValidator::REFERENCIAS_REQUERIDAS` | XSD (`NotaCreditoElectronica_V4.4.xsd` L874, `FacturaElectronicaCompra_V4.4.xsd` L514) |
+| Exigir al menos una línea de detalle — **extra** | FEC (y FEE) | `DocumentValidator::LINEAS_REQUERIDAS` | `Validations.cs` L289 |
 
-Todo lo demás corre igual para los cuatro, la regla del medio de pago incluida.
+Todo lo demás corre igual para los cinco, la regla del medio de pago incluida.
+
+> **Un tipo puede estar en dos listas opuestas sin contradicción.** FEC exige que la
+> referencia ESTÉ (lo pide el XSD) y a la vez no revisa qué dice (`OwnValidations` excluye al
+> `08`). Por eso `DocumentValidator#validate_references` resuelve la PRESENCIA antes del corte
+> por contenido: al revés, un FEC sin referencia pasaría de largo.
 
 > **Lo que se exime es EXIGIR el dato, no revisarlo.** Un tiquete puede no traer receptor,
 > pero si lo trae, el formato y la longitud se validan igual — el legacy hace esas dos
@@ -2756,26 +2765,59 @@ Todo lo demás corre igual para los cuatro, la regla del medio de pago incluida.
 > exclusión al bloque entero dejaría pasar una cédula con formato inválido.
 
 > **`OwnValidations` no es la única fuente.** El legacy corre ANTES una validación contra el
-> XSD del tipo (`Validations.cs#ValidateXSD`, con `pathNCXSD`/`pathNDXSD`), así que una regla
-> puede no aparecer en `OwnValidations` y ser obligatoria igual. La referencia de ND/NC es
-> justamente eso: `InformacionReferencia` es `maxOccurs="10"` **sin `minOccurs`** —o sea,
-> mínimo una— en el XSD de las notas, y `minOccurs="0"` en el de factura. Al migrar un tipo
-> hay que diferenciar su XSD contra el del tipo ya migrado más parecido, no solo leer
-> `Validations.cs`.
+> XSD del tipo (`Validations.cs#ValidateXSD`, con `pathNCXSD`/`pathNDXSD`/`pathFECXSD`), así
+> que una regla puede no aparecer en `OwnValidations` y ser obligatoria igual. La referencia
+> de ND/NC/FEC es justamente eso: `InformacionReferencia` es `maxOccurs="10"` **sin
+> `minOccurs`** —o sea, mínimo una— en esos tres XSD, y `minOccurs="0"` en el de factura. Al
+> migrar un tipo hay que diferenciar su XSD contra el del tipo ya migrado más parecido, no
+> solo leer `Validations.cs`.
 
-### Dos esquemas, cuatro tipos — lo que cambia entre `DocumentoFETE` y `DocumentoNCND`
+### Tres esquemas, cinco tipos — qué cambia entre `DocumentoFETE`, `DocumentoNCND` y `DocumentoFEC`
 
-FE y TE comparten el esquema `DocumentoFETE`; ND y NC comparten `DocumentoNCND`. Dentro de
-cada par, lo único que cambia es la raíz y el namespace (`XmlBuilder::DOCUMENTS`). Entre los
-dos pares, la diferencia son **dos campos opcionales de línea y nada más** (verificado
-elemento por elemento: 168 vs 170 elementos en los XSD 4.4):
+FE y TE comparten el esquema `DocumentoFETE`; ND y NC comparten `DocumentoNCND`; FEC tiene el
+suyo. Dentro de cada par, lo único que cambia es la raíz y el namespace
+(`XmlBuilder::DOCUMENTS`). Entre esquemas, verificado elemento por elemento sobre los XSD 4.4
+(168 elementos en FE, 170 en NC/ND, 128 en FEC):
 
 | Campo | Dónde existe | Qué hace este producto |
 |---|---|---|
 | `LineaDetalle.PartidaArancelaria` | solo NC/ND, entre `NumeroLinea` y `CodigoCABYS` | Se mapea para todos en `UnifiedBuilder` y se emite solo en NC/ND (`XmlBuilder::PARTIDA_ARANCELARIA_DOC_TYPES`) |
 | `Impuesto.MontoExportacion` | solo NC/ND, entre `Monto` y `Exoneracion` | **No se emite en ninguno**: `LineItemValidator` rechaza cualquier valor mayor a cero, igual que el legacy y sin excluir a ningún tipo |
+| `LineaDetalle.IVACobradoFabrica` | **falta** en FEC | Se omite con `XmlBuilder#factura_de_compra?` |
+| `LineaDetalle.ImpuestoAsumidoEmisorFabrica` | **falta** en FEC | ídem |
+| `Impuesto.DatosImpuestoEspecifico` | **falta** en FEC (el bloque entero) | ídem |
+| `ResumenFactura.TotalIVADevuelto` | **falta** en FEC | ídem (`#summary_tax_totals`) |
+| `OtrasSenasExtranjero` | en el **receptor** de FE/TE/ND/NC; en el **emisor** de FEC | Se emite en el bloque que corresponde según el tipo |
+
+### La factura de compra INVIERTE los roles — y eso no es un detalle de formato
+
+En FEC el comprobante lo emite el **proveedor** que no puede facturar —un extranjero no
+domiciliado o un no contribuyente— y la compañía es el **receptor**. Poner ahí la cédula de
+la compañía no sería un campo mal llenado: sería declararle a Hacienda que la compañía se
+compró a sí misma.
+
+Tres fuentes independientes lo confirman, y conviene revisarlas las tres antes de tocar esto:
+
+- `GetData.cs#GetDocToSendFEC` (L1142) mapea `Emisor` ← `Emsr*` también en FEC — o sea, para
+  un documento `08` **la vista de cabecera tiene que llenar los `Emsr*` con el proveedor**, no
+  con la sucursal de la compañía.
+- `Validations.cs` L299/L303 exime al emisor de declarar código de actividad y se lo exige al
+  receptor; el XSD lo repite con las cardinalidades (`minOccurs` 0 y 1, al revés que en FE).
+- El XSD mueve `OtrasSenasExtranjero` del receptor al emisor.
+
+Del lado de este producto, la inversión vive en **un solo lugar**:
+`Documents::UnifiedBuilder#identidad_emisor`, que para FEC lee la cabecera en vez de
+`companies`. `send_document_hacienda` toma la identificación de ese mismo método —no de
+`company`— porque si el cuerpo del POST y el comprobante no coinciden, Hacienda rechaza el
+envío.
+
+> ⚠️ Si la vista de cabecera no llena los `Emsr*` con el proveedor, el documento **no se
+> emite**: `HeaderValidator` corta por tipo de identificación del emisor faltante. Ese es el
+> desenlace correcto — un error en la cola es mucho mejor que un comprobante con el emisor
+> equivocado, que es un problema tributario. Ver `TODOS.md` → Emisión de documentos.
 
 Al sumar un tipo: revisar sus exclusiones en `Validations.cs`, diferenciar su XSD contra el
-del tipo migrado más parecido, agregar cada regla al validador que corresponda, y recién
-entonces meterlo en `VALIDATED_DOC_TYPES`. `RECEPTOR_OPCIONAL` ya listaba ND y NC antes de
-que se pudieran emitir — la lista describe la regla, no lo que hoy se puede mandar.
+del tipo migrado más parecido, preguntarse si los ROLES se mantienen, agregar cada regla al
+validador que corresponda, y recién entonces meterlo en `VALIDATED_DOC_TYPES`.
+`RECEPTOR_OPCIONAL` ya listaba ND y NC antes de que se pudieran emitir, y `TERCERO_PROHIBIDO`
+lista a FEE hoy — las listas describen la regla, no lo que hoy se puede mandar.

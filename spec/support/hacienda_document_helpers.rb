@@ -32,6 +32,9 @@ module HaciendaDocumentHelpers
         'Registrofiscal8707' => nil,
         'NombreComercial' => 'ACME',
         'Ubicacion' => valid_ubicacion,
+        # Solo lo emite el XML de la factura de compra, donde el emisor es el
+        # proveedor y puede ser extranjero.
+        'OtrasSenasExtranjero' => nil,
         'Telefono' => { 'CodigoPais' => 506, 'NumTelefono' => '22223333' },
         'CorreoElectronico' => 'facturas@acme.cr'
       },

@@ -74,17 +74,18 @@ module Hacienda
     # `namespacenc`, `namespacend`) y de los `XmlRootAttribute` de
     # `SerializeDoc.getSerializeDocFETE` / `getSerializeDocNCND`.
     #
-    # Son DOS esquemas, no cuatro: FE y TE comparten `DocumentoFETE` (el nombre
-    # del tipo es literalmente "Factura Electrónica / Tiquete Electrónico") y
-    # ND y NC comparten `DocumentoNCND`. Dentro de cada par, lo único que cambia
-    # es la raíz y el namespace. Los tres tipos que faltan (FEC, FEE, REP)
-    # tienen estructura propia y su armado es otro trabajo; ver `TODOS.md` →
-    # Emisión de documentos.
+    # Son TRES esquemas, no cinco: FE y TE comparten `DocumentoFETE` (el nombre
+    # del tipo es literalmente "Factura Electrónica / Tiquete Electrónico"), ND
+    # y NC comparten `DocumentoNCND`, y FEC tiene el suyo. Dentro de cada par,
+    # lo único que cambia es la raíz y el namespace. Los dos tipos que faltan
+    # (FEE, REP) tienen estructura propia y su armado es otro trabajo; ver
+    # `TODOS.md` → Emisión de documentos.
     DOCUMENTS = {
-      DocType::FE => ['FacturaElectronica', 'facturaElectronica'],
-      DocType::TE => ['TiqueteElectronico', 'tiqueteElectronico'],
-      DocType::ND => ['NotaDebitoElectronica', 'notaDebitoElectronica'],
-      DocType::NC => ['NotaCreditoElectronica', 'notaCreditoElectronica']
+      DocType::FE  => ['FacturaElectronica', 'facturaElectronica'],
+      DocType::TE  => ['TiqueteElectronico', 'tiqueteElectronico'],
+      DocType::ND  => ['NotaDebitoElectronica', 'notaDebitoElectronica'],
+      DocType::NC  => ['NotaCreditoElectronica', 'notaCreditoElectronica'],
+      DocType::FEC => ['FacturaElectronicaCompra', 'facturaElectronicaCompra']
     }.freeze
 
     # Tipos cuyo esquema define `PartidaArancelaria` en la línea de detalle.
@@ -100,6 +101,32 @@ module Hacienda
     # así que el elemento solo podría salir en cero. Ver la nota de "Campos del
     # objeto unificado que NO van en el XML" más arriba.
     PARTIDA_ARANCELARIA_DOC_TYPES = [DocType::ND, DocType::NC].freeze
+
+    # ── `DocumentoFEC` es `DocumentoFETE` MENOS cinco elementos ───────────────
+    # La factura de compra comparte el orden de la raíz, del resumen, de la
+    # línea y del impuesto con la factura de venta; lo que hace es QUITAR
+    # elementos (verificado uno por uno entre `FacturaElectronica_V4.4.xsd` y
+    # `FacturaElectronicaCompra_V4.4.xsd`, 168 vs 128 elementos):
+    #
+    #   · `LineaDetalle.IVACobradoFabrica`
+    #   · `LineaDetalle.ImpuestoAsumidoEmisorFabrica`
+    #   · `Impuesto.DatosImpuestoEspecifico` (el bloque entero)
+    #   · `ResumenFactura.TotalIVADevuelto`
+    #   · `LineaDetalle.DetalleSurtido` (que este producto nunca emitió)
+    #
+    # Los cuatro primeros son de impuestos que solo existen en una venta al
+    # consumidor final; la factura de compra documenta lo contrario.
+    #
+    # La quinta diferencia NO es una baja sino un CAMBIO DE BLOQUE:
+    # `OtrasSenasExtranjero` está en el receptor de FE/TE/ND/NC y en el EMISOR
+    # de FEC. Es la misma inversión de roles que invierte el código de
+    # actividad (`HeaderValidator::ACTIVIDAD_*`): en una factura de compra el
+    # que puede ser extranjero es quien emite, no quien recibe.
+    #
+    # Las cinco se resuelven con el predicado `#factura_de_compra?` y un guard
+    # en la línea donde el elemento se emitiría, en vez de con una tabla de
+    # rutas: esta clase emite campo por campo a propósito (ver la cabecera), y
+    # una omisión se tiene que poder leer justo donde ocurre.
 
     # Los dos prefijos que declaraba el legacy en la raíz
     # (`SerializeDoc.cs:77-78`). No se usan en ningún elemento, así que la
@@ -180,7 +207,9 @@ module Hacienda
         text xml, 'Registrofiscal8707', emisor['Registrofiscal8707']
         text xml, 'NombreComercial', emisor['NombreComercial']
         emit_ubicacion(xml, emisor['Ubicacion'])
-        text xml, 'OtrasSenasExtranjero', emisor['OtrasSenasExtranjero']
+        # Solo en la factura de compra: en los demás tipos el emisor es la
+        # compañía y el esquema no declara este elemento.
+        text xml, 'OtrasSenasExtranjero', emisor['OtrasSenasExtranjero'] if factura_de_compra?
         emit_telefono(xml, emisor['Telefono'])
         text xml, 'CorreoElectronico', emisor['CorreoElectronico']
       end
@@ -196,7 +225,9 @@ module Hacienda
         emit_identificacion(xml, receptor['Identificacion'])
         text xml, 'NombreComercial', receptor['NombreComercial']
         emit_ubicacion(xml, receptor['Ubicacion'])
-        text xml, 'OtrasSenasExtranjero', receptor['OtrasSenasExtranjero']
+        # Al revés que en el emisor: el receptor de una factura de compra es la
+        # compañía, así que ahí el esquema no lo declara.
+        text xml, 'OtrasSenasExtranjero', receptor['OtrasSenasExtranjero'] unless factura_de_compra?
         emit_telefono(xml, receptor['Telefono'])
         text xml, 'CorreoElectronico', receptor['CorreoElectronico']
       end
@@ -264,16 +295,25 @@ module Hacienda
         decimal xml, 'MontoTotal', line['MontoTotal'], MONEY
         emit_descuento(xml, line['Descuento'])
         decimal xml, 'SubTotal', line['SubTotal'], MONEY
-        text xml, 'IVACobradoFabrica', line['IVACobradoFabrica']
+        text xml, 'IVACobradoFabrica', line['IVACobradoFabrica'] unless factura_de_compra?
         decimal xml, 'BaseImponible', line['BaseImponible'], MONEY
         emit_impuesto(xml, line['Impuesto'])
-        decimal xml, 'ImpuestoAsumidoEmisorFabrica', line['ImpuestoAsumidoEmisorFabrica'], MONEY
+        unless factura_de_compra?
+          decimal xml, 'ImpuestoAsumidoEmisorFabrica', line['ImpuestoAsumidoEmisorFabrica'], MONEY
+        end
         decimal xml, 'ImpuestoNeto', line['ImpuestoNeto'], MONEY
         decimal xml, 'MontoTotalLinea', line['MontoTotalLinea'], MONEY
       end
     end
 
     def partida_arancelaria? = PARTIDA_ARANCELARIA_DOC_TYPES.include?(doc_type)
+
+    # ⚠️ "FEC" acá es el TIPO de comprobante (`08`, Factura Electrónica de
+    # Compra), no el identificador del producto — que también es FEC y aparece
+    # en cada UDF (`U_CL_FEC_*`) y en cada descripción de schema (§32). El
+    # predicado se llama por el nombre largo justamente para que nadie lea
+    # `fec?` como "¿es de esta aplicación?".
+    def factura_de_compra? = doc_type == DocType::FEC
 
     def emit_codigo_comercial(xml, codigo)
       return if blank_block?(codigo)
@@ -311,7 +351,7 @@ module Hacienda
         text xml, 'CodigoTarifaIVA', impuesto['CodigoTarifaIVA']
         decimal xml, 'Tarifa', impuesto['Tarifa'], RATE
         decimal xml, 'FactorCalculoIVA', impuesto['FactorCalculoIVA'], IVA_FACTOR
-        emit_datos_impuesto_especifico(xml, impuesto['DatosImpuestoEspecifico'])
+        emit_datos_impuesto_especifico(xml, impuesto['DatosImpuestoEspecifico']) unless factura_de_compra?
         decimal xml, 'Monto', impuesto['Monto'], MONEY
         emit_exoneracion(xml, impuesto['Exoneracion'])
       end
@@ -393,13 +433,17 @@ module Hacienda
           decimal xml, field, resumen[field], MONEY
         end
         emit_tax_breakdown(xml, resumen['TotalDesgloseImpuesto'])
-        %w[TotalImpuesto TotalImpAsumEmisorFabrica TotalIVADevuelto
-           TotalOtrosCargos].each do |field|
-          decimal xml, field, resumen[field], MONEY
-        end
+        summary_tax_totals.each { |field| decimal xml, field, resumen[field], MONEY }
         emit_payment_methods(xml, resumen['MedioPago'])
         decimal xml, 'TotalComprobante', resumen['TotalComprobante'], MONEY
       end
+    end
+
+    # Los totales de impuesto del resumen, entre el desglose y el medio de
+    # pago. `TotalIVADevuelto` no existe en el esquema de la factura de compra.
+    def summary_tax_totals
+      fields = %w[TotalImpuesto TotalImpAsumEmisorFabrica TotalIVADevuelto TotalOtrosCargos]
+      factura_de_compra? ? fields - ['TotalIVADevuelto'] : fields
     end
 
     def emit_moneda(xml, moneda)

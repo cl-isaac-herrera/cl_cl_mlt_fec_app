@@ -91,9 +91,17 @@ RSpec.describe Hacienda::XmlBuilder do
       expect(clave.namespace.href).to include('facturaElectronica')
     end
 
+    it 'la factura de compra usa su raíz y su namespace' do
+      root = parse(doc_type: DocType::FEC).root
+
+      expect(root.name).to eq('FacturaElectronicaCompra')
+      expect(root.namespace.href)
+        .to eq('https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/facturaElectronicaCompra')
+    end
+
     it 'no arma el XML de un tipo que todavía no sabe serializar' do
-      expect { build(doc_type: DocType::FEC) }
-        .to raise_error(described_class::UnsupportedDocType, /Factura electrónica de compra/)
+      expect { build(doc_type: DocType::FEE) }
+        .to raise_error(described_class::UnsupportedDocType, /Factura electrónica de exportación/)
     end
   end
 
@@ -299,6 +307,73 @@ RSpec.describe Hacienda::XmlBuilder do
 
       expect(doc_without_ns(document, doc_type: DocType::NC).at_xpath('//PartidaArancelaria'))
         .to be_nil
+    end
+  end
+
+  # `DocumentoFEC` es `DocumentoFETE` menos cuatro elementos, con
+  # `OtrasSenasExtranjero` cambiado de bloque. Cada ejemplo verifica una de las
+  # cinco diferencias, y su contracara en la factura de venta.
+  describe 'factura electrónica de compra' do
+    it 'omite IVACobradoFabrica y ImpuestoAsumidoEmisorFabrica de la línea' do
+      document = valid_unified_document
+      document['DetalleServicio'] = [valid_line('IVACobradoFabrica' => 'S')]
+      doc = doc_without_ns(document, doc_type: DocType::FEC)
+
+      expect(doc.at_xpath('//IVACobradoFabrica')).to be_nil
+      expect(doc.at_xpath('//ImpuestoAsumidoEmisorFabrica')).to be_nil
+      expect(doc.at_xpath('//LineaDetalle').elements.map(&:name))
+        .to eq(LINE_SEQUENCE - ['ImpuestoAsumidoEmisorFabrica'])
+    end
+
+    it 'omite el bloque DatosImpuestoEspecifico del impuesto' do
+      document = valid_unified_document
+      document['DetalleServicio'] = [valid_line(
+        'Impuesto' => valid_impuesto('DatosImpuestoEspecifico' => {
+                                       'ImpuestoUnidad' => BigDecimal(5), 'Porcentaje' => BigDecimal(1),
+                                       'Proporcion' => BigDecimal(0), 'CantidadUnidadMedida' => BigDecimal(0),
+                                       'VolumenUnidadConsumo' => BigDecimal(0)
+                                     })
+      )]
+
+      expect(doc_without_ns(document, doc_type: DocType::FEC).at_xpath('//DatosImpuestoEspecifico'))
+        .to be_nil
+      expect(doc_without_ns(document).at_xpath('//DatosImpuestoEspecifico')).not_to be_nil
+    end
+
+    it 'omite TotalIVADevuelto del resumen' do
+      names = doc_without_ns(doc_type: DocType::FEC).at_xpath('//ResumenFactura').elements.map(&:name)
+
+      expect(names).to eq(SUMMARY_SEQUENCE - ['TotalIVADevuelto'])
+    end
+
+    # La inversión de roles: el que puede ser extranjero en una compra es quien
+    # emite, no quien recibe.
+    it 'emite OtrasSenasExtranjero en el emisor y no en el receptor' do
+      document = valid_unified_document
+      document['Emisor']['OtrasSenasExtranjero'] = 'Miami, Florida'
+      document['Receptor']['OtrasSenasExtranjero'] = 'no corresponde'
+      doc = doc_without_ns(document, doc_type: DocType::FEC)
+
+      expect(doc.at_xpath('//Emisor/OtrasSenasExtranjero').text).to eq('Miami, Florida')
+      expect(doc.at_xpath('//Receptor/OtrasSenasExtranjero')).to be_nil
+    end
+
+    it 'en la factura de venta es al revés' do
+      document = valid_unified_document
+      document['Emisor']['OtrasSenasExtranjero'] = 'no corresponde'
+      document['Receptor']['OtrasSenasExtranjero'] = 'Miami, Florida'
+      doc = doc_without_ns(document)
+
+      expect(doc.at_xpath('//Emisor/OtrasSenasExtranjero')).to be_nil
+      expect(doc.at_xpath('//Receptor/OtrasSenasExtranjero').text).to eq('Miami, Florida')
+    end
+
+    it 'no emite la partida arancelaria, que es de las notas' do
+      expect(doc_without_ns(doc_type: DocType::FEC).at_xpath('//PartidaArancelaria')).to be_nil
+    end
+
+    it 'conserva el orden de la raíz' do
+      expect(doc_without_ns(doc_type: DocType::FEC).root.elements.map(&:name)).to eq(ROOT_SEQUENCE)
     end
   end
 

@@ -1145,11 +1145,11 @@ puede funcionar:
 | **TE** (`04`) | ✅ (genérico, no distingue tipo) | ✅ | ✅ (`Hacienda::DocumentValidator`, mismas reglas que FE salvo el receptor) | ✅ `TiqueteElectronico` (mismo esquema que FE) | ✅ (agnóstica al tipo) | ✅ `updateDocument04` |
 | **ND** (`02`) | ✅ | ✅ | ✅ (`Hacienda::DocumentValidator`, mismas reglas que FE salvo el receptor, más la referencia obligatoria) | ✅ `NotaDebitoElectronica` | ✅ (agnóstica al tipo) | ✅ `updateDocument02` |
 | **NC** (`03`) | ✅ | ✅ | ✅ (`Hacienda::DocumentValidator`, ídem ND) | ✅ `NotaCreditoElectronica` (mismo esquema que ND) | ✅ (agnóstica al tipo) | ✅ `updateDocument03` (UDFs de `ORIN` replicados desde `OINV`, misma categoría Marketing Documents) |
-| **FEC** (`08`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument08` (UDFs de `OPCH` replicados desde `OINV`, ídem) |
+| **FEC** (`08`) | ✅ | ✅ (con la identidad del emisor invertida) | ✅ (`Hacienda::DocumentValidator`, cuatro diferencias propias) | ✅ `FacturaElectronicaCompra` | ✅ (agnóstica al tipo) | ✅ `updateDocument08` (UDFs de `OPCH` replicados desde `OINV`, ídem) |
 | **FEE** (`09`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument09` |
 | **REP** (`10`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument10` |
 
-**Los tres tipos sin generador de XML se marcan `Error` con el motivo**, no revientan el
+**Los dos tipos sin generador de XML se marcan `Error` con el motivo**, no revientan el
 job: `Hacienda::XmlBuilder::UnsupportedDocType` dice "este producto todavía no sabe armar
 el XML de …" y eso llega a `Details` de la cola y a `U_CL_FEC_ErrorDetails`.
 
@@ -1214,13 +1214,48 @@ Pendiente de las notas:
       ⚠️ De paso: el comentario de `db/seeds.rb` decía lo contrario ("FALTAN `ORIN` y
       `OPCH`") desde el mismo commit que dejó esta confirmación. Ya está corregido.
 
-**FEC, FEE y REP quedan en ❓** porque nadie llegó a construir un objeto unificado real para
-ninguno de ellos —ni con datos de prueba, mucho menos reales— y el legacy sí tiene reglas y
-exclusiones propias por tipo para los tres (partida arancelaria obligatoria en FEE,
-`DetalleServicio` obligatorio en FEC, líneas de detalle simplificadas y media docena de
-`!= DocTypesString.REP` en REP, etc. — ver el bloque de "Diferencias clave" del reporte de
-la migración del XSD). Extenderlos es replicar el mismo patrón de `Hacienda::Validations::*`
-con las reglas específicas de cada uno, no un cambio genérico.
+**FEC ya se emite y se valida (2026-09-12).** Es el primer tipo que NO es una variante de la
+factura de venta: tiene esquema propio (`DocumentoFEC`, 128 elementos contra 168) y, sobre
+todo, **invierte los roles** — lo emite el proveedor que no puede facturar y la compañía es
+el receptor. El detalle de la inversión y sus tres confirmaciones independientes están en
+CLAUDE.md §39; lo que hay que saber acá es el reparto:
+
+- **Forma del XML** — `DocumentoFEC` es `DocumentoFETE` menos cuatro elementos
+  (`IVACobradoFabrica` e `ImpuestoAsumidoEmisorFabrica` de la línea,
+  `DatosImpuestoEspecifico` del impuesto y `TotalIVADevuelto` del resumen; todos son de
+  impuestos que solo existen en una venta al consumidor final) y con `OtrasSenasExtranjero`
+  movido del receptor al emisor. Lo resuelve `XmlBuilder#factura_de_compra?`.
+- **Reglas propias** — cuatro, todas citadas en la cabecera de `DocumentValidator`: el
+  código de actividad se invierte (L299/L303), el tercero de otros cargos pasa de
+  obligatorio-si-`04` a **prohibido** (L639), `DetalleServicio` se vuelve obligatorio (L289)
+  e `InformacionReferencia` también, esta última por el XSD.
+- **Identidad del emisor** — única bifurcación del objeto unificado
+  (`UnifiedBuilder#identidad_emisor`): para FEC sale de la cabecera y no de `companies`.
+
+Pendientes de la factura de compra:
+- [ ] **Confirmar que la vista de cabecera llena los `Emsr*` con el PROVEEDOR cuando el
+      documento es `08`.** Es la única pieza que no se puede verificar desde este repo: la
+      consulta vive en SAP (`CL_D_CL_MLT_FEC_SLT_DOCHEADERINFO`) y la nota del 2026-09-01
+      —"la vista ya no necesita devolver ningún `Emsr*` fuera de los ocho de la UDT"— vale
+      para los comprobantes de VENTA, donde el emisor es la compañía. En FEC vuelven a hacer
+      falta `EmsrNombre`, `EmsrIdeTipo`, `EmsrIdeNumero`, `EmsrNombreComercial` y
+      `EmsrRegistrofiscal8707`, con los datos del proveedor.
+      **Si la vista no los llena, el documento no se emite** y queda en `Error` con "El tipo
+      de identificación del emisor nil no es permitido" — que es el desenlace correcto, pero
+      el mensaje no explica la causa real. Vale revisarlo apenas haya un FEC en la cola.
+- [ ] **`EmsrOtrasSenasExtranjero` no está en la lista de campos de la vista**
+      (`docs/sync-documents-flow.md` L53-65) y el legacy sí lo lee. Es opcional en el XSD,
+      así que un proveedor extranjero sin señas no rompe nada — pero tampoco las declara.
+- [ ] Correr la emisión contra facturas de compra reales de la cola.
+
+**FEE y REP quedan en ❓** porque nadie llegó a construir un objeto unificado real para
+ninguno de los dos —ni con datos de prueba, mucho menos reales— y el legacy tiene reglas y
+exclusiones propias para ambos (partida arancelaria obligatoria en FEE, líneas de detalle
+simplificadas y media docena de `!= DocTypesString.REP` en REP — ver el bloque de
+"Diferencias clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo
+patrón de `Hacienda::Validations::*` con las reglas específicas de cada uno, no un cambio
+genérico. FEE es el más cercano a lo ya hecho: comparte con FEC la prohibición del tercero
+(`TERCERO_PROHIBIDO` ya lo lista) y la obligación de llevar líneas.
 
 - [x] **Firma XAdES-EPES — portada (2026-09-05).** `Hacienda::XmlSigner`
       (`app/services/hacienda/xml_signer.rb`) es el port casi literal del prototipo

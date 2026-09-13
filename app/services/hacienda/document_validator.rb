@@ -21,19 +21,27 @@ module Hacienda
   # para excluir reglas puntuales, nunca para saltarse el bloque entero.
   #
   # Acá se replica esa forma. Las reglas migradas son las que aplican a
-  # factura, tiquete y notas de crédito/débito; las que el legacy marca como
-  # exclusivas de Factura de Compra/Exportación o de Recibo de Pago quedan
-  # para cuando se migren esos tipos. La regla de migración está en CLAUDE.md
-  # §39: una regla que no aplica a un tipo se excluye DENTRO del validador,
-  # con el tipo como condición — no salteándose el validador completo, que
-  # dejaría pasar sin verificar todas las demás.
+  # factura, tiquete, notas de crédito/débito y factura de compra; las que el
+  # legacy marca como exclusivas de Factura de Exportación o de Recibo de Pago
+  # quedan para cuando se migren esos tipos. La regla de migración está en
+  # CLAUDE.md §39: una regla que no aplica a un tipo se excluye DENTRO del
+  # validador, con el tipo como condición — no salteándose el validador
+  # completo, que dejaría pasar sin verificar todas las demás.
   #
-  # ── Los cuatro tipos comparten casi TODAS las reglas ─────────────────────
-  # De todo `OwnValidations`, lo único que distingue a FE de TE/ND/NC es la
-  # identificación del receptor (`Validations.cs` L324 y L329), y vive en
-  # `Validations::HeaderValidator::RECEPTOR_OPCIONAL`. El bloque de
-  # referencias es el otro caso con matiz, y el único donde ND/NC piden MÁS
-  # que la factura y no menos — ver `#validate_references`.
+  # ── Los cinco tipos comparten casi TODAS las reglas ──────────────────────
+  # Las diferencias por tipo, todas con su constante y su cita del legacy:
+  #
+  #   · Identificación del receptor — exenta en TE/ND/NC, exigida en FE y FEC
+  #     (`Validations::HeaderValidator::RECEPTOR_OPCIONAL`, L324 y L329).
+  #   · Código de actividad — FEC invierte cuál de los dos es obligatorio
+  #     (`HeaderValidator::ACTIVIDAD_*`, L299 y L303): en FEC el contribuyente
+  #     inscrito es el RECEPTOR, porque el emisor es el proveedor que no
+  #     factura.
+  #   · Tercero en otros cargos — FEC (y FEE) lo PROHÍBEN en vez de exigirlo
+  #     (`Validations::OtherChargeValidator::TERCERO_PROHIBIDO`, L639).
+  #   · `InformacionReferencia` — TE y FEC no la revisan por dentro; ND, NC y
+  #     FEC exigen que exista (`REFERENCIAS_*`, L817 y el XSD).
+  #   · `DetalleServicio` — obligatorio en FEC (`LINEAS_REQUERIDAS`, L289).
   #
   # ── Por qué acumula en vez de cortar en el primer error ─────────────────
   # El legacy es fail-fast: el primer `throw` interrumpe todo, así que un
@@ -57,29 +65,50 @@ module Hacienda
     # casualidad: un tipo que se pueda emitir sin poder validarse iría a
     # Hacienda a ciegas. Al agregar uno acá hay que revisar antes cada
     # exclusión por tipo de `Validations.cs` (CLAUDE.md §39).
-    VALIDATED_DOC_TYPES = [DocType::FE, DocType::TE, DocType::ND, DocType::NC].freeze
+    VALIDATED_DOC_TYPES = [DocType::FE, DocType::TE, DocType::ND, DocType::NC, DocType::FEC].freeze
 
-    # Tipos que NO validan `InformacionReferencia`.
+    # Tipos cuya `InformacionReferencia` NO se revisa por dentro.
     #
-    # El legacy corre ese bloque solo cuando el documento NO es un tiquete
-    # (`Validations.cs` L817; para TE ninguna de las dos ramas da verdadero).
-    # Se replica: un tiquete con referencia declarada pasa sin revisarla, que
-    # es lo que hace el sistema en producción hoy.
-    REFERENCIAS_NO_VALIDADAS = [DocType::TE].freeze
+    # El legacy corre ese bloque solo cuando el documento no es `01`, `04`,
+    # `08` ni `09` (`Validations.cs` L817; para esos cuatro, ninguna de las dos
+    # ramas da verdadero — la segunda pide `DocType == "01"` y a la vez
+    # `Situacion != 1`, que es el caso de contingencia). De los tipos que este
+    # producto emite hoy, eso deja fuera a TE y a FEC: si traen una referencia
+    # declarada, pasa sin revisarse, que es lo que hace el sistema en
+    # producción.
+    REFERENCIAS_NO_VALIDADAS = [DocType::TE, DocType::FEC].freeze
 
     # Tipos que EXIGEN al menos una `InformacionReferencia`.
     #
     # Esta regla no sale de `OwnValidations` —ahí la referencia se revisa si
     # viene, pero nadie cuenta cuántas hay— sino del XSD, que es el otro
     # validador que el legacy corre antes (`Validations.cs#ValidateXSD`, con
-    # `pathNCXSD`/`pathNDXSD`): `InformacionReferencia` es `maxOccurs="10"` sin
-    # `minOccurs`, o sea mínimo UNA, mientras que en el de factura es
-    # `minOccurs="0"`. Y es lo único que ese XSD pide de más.
+    # `pathNCXSD`/`pathNDXSD`/`pathFECXSD`): `InformacionReferencia` es
+    # `maxOccurs="10"` sin `minOccurs`, o sea mínimo UNA, mientras que en el de
+    # factura es `minOccurs="0"`.
+    #
+    # ⚠️ FEC está en las DOS listas, y no es una contradicción: el XSD exige
+    # que la referencia ESTÉ y `OwnValidations` no revisa qué dice. Por eso la
+    # presencia se verifica antes y aparte del contenido (`#validate_references`).
     #
     # Tiene sentido de negocio y por eso se replica acá en vez de dejarla para
     # el rechazo de Hacienda: una nota de crédito o de débito existe para
-    # corregir OTRO comprobante, así que sin decir cuál no corrige nada.
-    REFERENCIAS_REQUERIDAS = [DocType::ND, DocType::NC].freeze
+    # corregir OTRO comprobante, y una factura de compra documenta una compra a
+    # un proveedor que no factura — sin decir a qué documento apunta, ninguna
+    # de las tres dice de qué habla.
+    REFERENCIAS_REQUERIDAS = [DocType::ND, DocType::NC, DocType::FEC].freeze
+
+    # Tipos que EXIGEN al menos una línea de detalle.
+    #
+    # `Validations.cs` L289: el legacy lo pide para FEE y FEC, con ese mensaje
+    # y en ese orden. FEE todavía no se emite, así que la lista arranca con FEC
+    # nada más — describe lo que este validador cubre, no la regla completa del
+    # legacy.
+    #
+    # En el resto de los tipos `DetalleServicio` es `minOccurs="0"` y un
+    # comprobante sin líneas es raro pero legal; en FEC el XSD lo declara
+    # obligatorio.
+    LINEAS_REQUERIDAS = [DocType::FEC].freeze
 
     Result = Data.define(:errors) do
       def valid? = errors.empty?
@@ -114,6 +143,8 @@ module Hacienda
 
     def validate_lines
       lines = document['DetalleServicio'] || []
+      return [lineas_requeridas] if lines.empty? && LINEAS_REQUERIDAS.include?(doc_type)
+
       lines.each_with_index.flat_map do |line, index|
         Validations::LineItemValidator.new(line, index + 1).call
       end
@@ -121,23 +152,36 @@ module Hacienda
 
     def validate_other_charges
       charges = document['OtrosCargos'] || []
-      charges.flat_map { |charge| Validations::OtherChargeValidator.new(charge).call }
+      charges.flat_map do |charge|
+        Validations::OtherChargeValidator.new(charge, doc_type: doc_type).call
+      end
     end
 
+    # La PRESENCIA y el CONTENIDO son dos preguntas distintas, con fuentes
+    # distintas (el XSD y `OwnValidations`), y hay un tipo —FEC— donde las
+    # respuestas no coinciden: la referencia es obligatoria y aun así nadie
+    # revisa qué dice. Por eso la presencia se resuelve ANTES del corte por
+    # `REFERENCIAS_NO_VALIDADAS`; al revés, un FEC sin referencia pasaría.
     def validate_references
-      return [] if REFERENCIAS_NO_VALIDADAS.include?(doc_type)
-
       references = document['InformacionReferencia'] || []
       return [referencia_requerida] if references.empty? && REFERENCIAS_REQUERIDAS.include?(doc_type)
+      return [] if REFERENCIAS_NO_VALIDADAS.include?(doc_type)
 
       references.flat_map { |reference| Validations::ReferenceValidator.new(reference).call }
     end
 
     def referencia_requerida
       DocumentValidationError.new(
-        message: "#{DocType.label(doc_type)} debe indicar el documento que corrige en la " \
-                 'información de referencia.',
+        message: "#{DocType.label(doc_type)} debe indicar el documento al que se refiere " \
+                 'en la información de referencia.',
         field: 'InformacionReferencia'
+      )
+    end
+
+    def lineas_requeridas
+      DocumentValidationError.new(
+        message: "#{DocType.label(doc_type)} debe llevar al menos una línea de detalle.",
+        field: 'DetalleServicio'
       )
     end
   end

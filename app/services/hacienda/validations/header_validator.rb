@@ -6,8 +6,8 @@ module Hacienda
     # venta y las identificaciones de emisor/receptor.
     #
     # Origen: `Validations.cs#OwnValidations`, bloque de cabecera (reglas #2,
-    # #4-10 del reporte de la migración). Se excluyeron las reglas que el
-    # legacy marca como "no aplica a Factura Electrónica" (#1, #3: solo FEE/FEC).
+    # #3, #4-10 del reporte de la migración). Queda fuera la #1, que el legacy
+    # marca como exclusiva de Factura de Exportación.
     class HeaderValidator
       include Catalogs
 
@@ -22,6 +22,25 @@ module Hacienda
       # todavía no los emita: la lista describe la regla, no lo que hoy se
       # puede mandar. Ver CLAUDE.md §39.
       RECEPTOR_OPCIONAL = [DocType::TE, DocType::ND, DocType::NC].freeze
+
+      # ── El código de actividad se INVIERTE en la factura de compra ────────
+      # En todo comprobante de venta, quien tiene la actividad económica
+      # inscrita ante Hacienda es el emisor. En la Factura Electrónica de
+      # Compra el rol se da vuelta: la emite el proveedor que no puede
+      # facturar —puede ser un extranjero no domiciliado o un no
+      # contribuyente— y el contribuyente inscrito es el RECEPTOR, o sea la
+      # compañía que compra.
+      #
+      # El legacy lo escribe como un `if/else` (`Validations.cs` L299 y L303)
+      # y el XSD lo confirma por su lado: en `FacturaElectronicaCompra_V4.4.xsd`
+      # `CodigoActividadEmisor` es `minOccurs="0"` y `CodigoActividadReceptor`
+      # es `minOccurs="1"`; en el de factura es exactamente al revés.
+      #
+      # REP también está exento del código del emisor en el legacy; no se
+      # lista porque este producto todavía no lo emite y la lista describe lo
+      # que este validador cubre.
+      ACTIVIDAD_EMISOR_OPCIONAL    = [DocType::FEC].freeze
+      ACTIVIDAD_RECEPTOR_REQUERIDA = [DocType::FEC].freeze
 
       # @param document [Hash] `payload['Document']`, tal como lo arma
       #   `Documents::UnifiedBuilder`.
@@ -38,6 +57,7 @@ module Hacienda
         errors = []
 
         errors << actividad_emisor_requerida
+        errors << actividad_receptor_requerida
         errors << condicion_venta_valida
         errors << tipo_identificacion_emisor_valido
         errors.concat(validate_receptor)
@@ -49,12 +69,21 @@ module Hacienda
 
       attr_reader :document, :doc_type
 
-      # Regla #2. `CodigoActividadReceptor` (regla #3) NO se valida acá: es
-      # solo para Factura de Compra, que este validador no cubre.
+      # Regla #2 (`Validations.cs` L299).
       def actividad_emisor_requerida
+        return nil if ACTIVIDAD_EMISOR_OPCIONAL.include?(doc_type)
         return nil if document['CodigoActividadEmisor'].present?
 
         error('El código de actividad del emisor es requerido.', field: 'CodigoActividadEmisor')
+      end
+
+      # Regla #3 (`Validations.cs` L303): la contraparte de la anterior, solo
+      # para factura de compra. Ver `ACTIVIDAD_RECEPTOR_REQUERIDA`.
+      def actividad_receptor_requerida
+        return nil unless ACTIVIDAD_RECEPTOR_REQUERIDA.include?(doc_type)
+        return nil if document['CodigoActividadReceptor'].present?
+
+        error('El código de actividad del receptor es requerido.', field: 'CodigoActividadReceptor')
       end
 
       # Regla #4.

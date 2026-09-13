@@ -11,11 +11,12 @@ RSpec.describe Hacienda::DocumentValidator do
       expect(described_class.validates?(DocType::TE)).to be(true)
       expect(described_class.validates?(DocType::ND)).to be(true)
       expect(described_class.validates?(DocType::NC)).to be(true)
+      expect(described_class.validates?(DocType::FEC)).to be(true)
     end
 
     # Sus reglas todavía no se revisaron una por una contra `Validations.cs`.
     it 'no cubre los tipos que todavía no se migran' do
-      expect(described_class.validates?(DocType::FEC)).to be(false)
+      expect(described_class.validates?(DocType::FEE)).to be(false)
       expect(described_class.validates?(DocType::REP)).to be(false)
     end
   end
@@ -150,8 +151,8 @@ RSpec.describe Hacienda::DocumentValidator do
 
       expect(result).not_to be_valid
       expect(result.errors.map(&:message)).to include(
-        'Nota de crédito electrónica debe indicar el documento que corrige en la ' \
-        'información de referencia.'
+        'Nota de crédito electrónica debe indicar el documento al que se refiere ' \
+        'en la información de referencia.'
       )
     end
 
@@ -186,6 +187,110 @@ RSpec.describe Hacienda::DocumentValidator do
       document['DetalleServicio'] = [valid_line('CodigoCABYS' => nil)]
 
       expect(validate(document, doc_type: DocType::ND).errors.map(&:field)).to include('CodigoCABYS')
+    end
+  end
+
+  # La factura de compra invierte los roles: la emite el proveedor que no puede
+  # facturar y la compañía es el receptor. De ahí salen sus cuatro diferencias.
+  describe 'factura electrónica de compra' do
+    def compra
+      valid_unified_document.merge('InformacionReferencia' => [valid_reference])
+    end
+
+    def validate_fec(document) = validate(document, doc_type: DocType::FEC)
+
+    it 'acepta una factura de compra consistente' do
+      expect(validate_fec(compra)).to be_valid
+    end
+
+    # `Validations.cs` L299: el código de actividad del emisor deja de ser
+    # obligatorio porque el emisor es el proveedor, que puede no estar inscrito.
+    it 'no exige el código de actividad del emisor' do
+      document = compra
+      document['CodigoActividadEmisor'] = nil
+
+      expect(validate_fec(document)).to be_valid
+      expect(validate(document).errors.map(&:field)).to include('CodigoActividadEmisor')
+    end
+
+    # `Validations.cs` L303: y se lo exige al receptor, que es la compañía.
+    it 'exige el código de actividad del receptor' do
+      document = compra
+      document['CodigoActividadReceptor'] = nil
+
+      expect(validate_fec(document).errors.map(&:field)).to include('CodigoActividadReceptor')
+      expect(validate(document)).to be_valid
+    end
+
+    # No está en la lista de exentos de `Validations.cs` L324/L329: en una
+    # factura de compra el receptor es el contribuyente y tiene que estar
+    # identificado.
+    it 'exige la identificación del receptor' do
+      document = compra
+      document['Receptor']['Identificacion'] = { 'Tipo' => nil, 'Numero' => nil }
+
+      expect(validate_fec(document).errors.map(&:field))
+        .to include('Receptor.Identificacion.Tipo')
+    end
+
+    # `Validations.cs` L289, el mismo mensaje que el legacy da para FEE y FEC.
+    it 'exige al menos una línea de detalle' do
+      document = compra
+      document['DetalleServicio'] = []
+
+      result = validate_fec(document)
+
+      expect(result.errors.map(&:message))
+        .to include('Factura electrónica de compra debe llevar al menos una línea de detalle.')
+    end
+
+    it 'a la factura de venta no se la exige' do
+      document = valid_unified_document
+      document['DetalleServicio'] = []
+      # Sin líneas, los totales del resumen dejan de cuadrar; lo que importa acá
+      # es que NO aparezca el error de líneas faltantes.
+      expect(validate(document).errors.map(&:field)).not_to include('DetalleServicio')
+    end
+
+    # El XSD la declara obligatoria (`maxOccurs="10"` sin `minOccurs`), igual
+    # que en las notas.
+    it 'exige que diga a qué documento se refiere' do
+      document = compra
+      document['InformacionReferencia'] = []
+
+      expect(validate_fec(document).errors.map(&:field)).to include('InformacionReferencia')
+    end
+
+    # Pero `Validations.cs` L817 excluye al `08` del bloque que la revisa por
+    # dentro: si viene, pasa sin mirarse. Las dos cosas a la vez.
+    it 'no revisa por dentro la referencia que trae' do
+      document = compra
+      document['InformacionReferencia'] = [{ 'TipoDocIR' => '99', 'Numero' => nil }]
+
+      expect(validate_fec(document)).to be_valid
+      expect(validate(document)).not_to be_valid
+    end
+
+    # `Validations.cs` L639: el tercero de otros cargos está PROHIBIDO, no
+    # simplemente exento.
+    it 'rechaza el cobro por cuenta de un tercero en otros cargos' do
+      document = compra
+      document['OtrosCargos'] = [{
+        'TipoDocumentoOC' => '01', 'TipoDocumentoOTROS' => nil,
+        'IdentificacionTercero' => { 'Tipo' => '01', 'Numero' => '123456789' },
+        'NombreTercero' => 'Un tercero', 'Detalle' => 'Timbre',
+        'PorcentajeOC' => BigDecimal(0), 'MontoCargo' => BigDecimal(10)
+      }]
+
+      expect(validate_fec(document).errors.map(&:field))
+        .to include('IdentificacionTercero.Numero', 'NombreTercero')
+    end
+
+    it 'revisa las líneas y los totales, igual que la factura de venta' do
+      document = compra
+      document['DetalleServicio'] = [valid_line('CodigoCABYS' => nil)]
+
+      expect(validate_fec(document).errors.map(&:field)).to include('CodigoCABYS')
     end
   end
 end

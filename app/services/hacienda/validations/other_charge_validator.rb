@@ -5,22 +5,43 @@ module Hacienda
     # Reglas de un elemento de `OtrosCargos`. Origen: `Validations.cs`,
     # bloque de otros cargos (reglas #42, #45-48 del reporte de la migración).
     #
-    # No depende del tipo de comprobante: el legacy corre este bloque para
-    # todos menos Recibo de Pago (`Validations.cs` L630), así que factura y
-    # tiquete lo comparten tal cual. La regla #43 (bloquear tercero) sí es por
-    # tipo, pero solo aplica a FEE/FEC, que este producto todavía no emite.
+    # El bloque entero corre para todos los tipos menos Recibo de Pago
+    # (`Validations.cs` L630). Lo único que depende del tipo es el tercero:
+    # ver `TERCERO_PROHIBIDO`.
     class OtherChargeValidator
       include Catalogs
 
-      def initialize(charge)
+      # Tipos donde el cobro por cuenta de un tercero NO EXISTE.
+      #
+      # `Validations.cs` L639 no lo vuelve opcional: lo **prohíbe**. Si la
+      # factura de compra o la de exportación traen `NumeroIdentidadTercero` o
+      # `NombreTercero`, el legacy corta con "es inexistente en este tipo de
+      # documento", y el `else` —el que exige los dos cuando el tipo de
+      # documento del cargo es `04`— no llega a correr.
+      #
+      # Es coherente con lo que esos comprobantes son: un cargo que se le
+      # cobra a un tercero supone que hay un tercero en la operación, y en una
+      # compra a un proveedor que no factura la operación tiene dos partes.
+      #
+      # FEE se lista porque el legacy lo exime igual, aunque este producto
+      # todavía no lo emita — la lista describe la regla, no lo que hoy se
+      # puede mandar.
+      TERCERO_PROHIBIDO = [DocType::FEC, DocType::FEE].freeze
+
+      # @param charge [Hash] un elemento de `document['OtrosCargos']`.
+      # @param doc_type [String] código de Hacienda. Sin default a propósito:
+      #   de él depende si el tercero es obligatorio o está prohibido, y un
+      #   default silencioso haría que un tipo nuevo herede la regla contraria.
+      def initialize(charge, doc_type:)
         @charge = charge
+        @doc_type = doc_type
       end
 
       # @return [Array<Hacienda::DocumentValidationError>]
       def call
         [
           tipo_documento_valido,
-          *tercero_requerido,
+          *validate_tercero,
           detalle_requerido,
           porcentaje_no_negativo,
           porcentaje_o_monto_presente,
@@ -30,7 +51,7 @@ module Hacienda
 
       private
 
-      attr_reader :charge
+      attr_reader :charge, :doc_type
 
       # Regla #42.
       def tipo_documento_valido
@@ -39,6 +60,31 @@ module Hacienda
 
         error("El tipo de documento de otros cargos #{tipo.inspect} no es válido.",
               field: 'TipoDocumentoOC')
+      end
+
+      # Regla #43/#44. Las dos mitades del mismo `if/else` del legacy: o el
+      # tercero está prohibido, o es obligatorio cuando el cargo es un cobro
+      # por su cuenta. Nunca las dos, nunca ninguna.
+      def validate_tercero
+        return tercero_prohibido if TERCERO_PROHIBIDO.include?(doc_type)
+
+        tercero_requerido
+      end
+
+      # Regla #43 (`Validations.cs` L639).
+      def tercero_prohibido
+        errors = []
+        if charge.dig('IdentificacionTercero', 'Numero').present?
+          errors << error("#{DocType.label(doc_type)} no lleva cobros por cuenta de un tercero, " \
+                          'así que su identificación no corresponde.',
+                          field: 'IdentificacionTercero.Numero')
+        end
+        if charge['NombreTercero'].present?
+          errors << error("#{DocType.label(doc_type)} no lleva cobros por cuenta de un tercero, " \
+                          'así que su nombre no corresponde.',
+                          field: 'NombreTercero')
+        end
+        errors
       end
 
       # Regla #44: cobro de un tercero exige su identificación y nombre.

@@ -207,6 +207,75 @@ RSpec.describe Documents::UnifiedBuilder do
     end
   end
 
+  # La factura de compra la emite el proveedor que no puede facturar, y la
+  # compañía es el receptor. Poner ahí la cédula de la compañía sería declararle
+  # a Hacienda que se compró a sí misma.
+  describe 'factura electrónica de compra — el emisor es el proveedor' do
+    let(:proveedor) do
+      { 'EmsrNombre' => 'Proveedor del Sur S.A.', 'EmsrIdeTipo' => '02',
+        'EmsrIdeNumero' => '3101999999', 'EmsrNombreComercial' => 'Prosur',
+        'EmsrRegistrofiscal8707' => '8707-11' }
+    end
+
+    it 'toma la identidad del emisor de la cabecera y no de la compañía' do
+      payload = build(header: proveedor, doc_type: DocType::FEC)
+
+      expect(payload['Document']['Emisor']).to include(
+        'Nombre' => 'Proveedor del Sur S.A.',
+        'Identificacion' => { 'Tipo' => '02', 'Numero' => '3101999999' },
+        'NombreComercial' => 'Prosur',
+        'Registrofiscal8707' => '8707-11'
+      )
+    end
+
+    # Si el cuerpo del POST y el comprobante no coinciden, Hacienda rechaza el
+    # envío — así que los dos tienen que invertirse a la vez.
+    it 'manda la identificación del proveedor también en el cuerpo del envío' do
+      payload = build(header: proveedor, doc_type: DocType::FEC)
+
+      expect(payload['SendDocumentHacienda']['emisor'])
+        .to eq('numeroIdentificacion' => '3101999999', 'tipoIdentificacion' => '02')
+    end
+
+    # Las señas en el exterior del emisor solo existen en este tipo; en los
+    # demás el emisor es la compañía y el esquema ni siquiera las declara.
+    it 'mapea las señas en el exterior del emisor' do
+      payload = build(header: proveedor.merge('EmsrOtrasSenasExtranjero' => 'Miami, Florida'),
+                      doc_type: DocType::FEC)
+
+      expect(payload['Document']['Emisor']['OtrasSenasExtranjero']).to eq('Miami, Florida')
+    end
+
+    # El respaldo de `companies` le prestaría al proveedor una inscripción que
+    # no tiene. En FEC ese código además es opcional.
+    it 'no le presta al proveedor el código de actividad de la compañía' do
+      payload = build(header: proveedor, doc_type: DocType::FEC)
+
+      expect(payload['Document']['CodigoActividadEmisor']).to be_nil
+      expect(build(doc_type: DocType::FE)['Document']['CodigoActividadEmisor']).to eq('620100')
+    end
+
+    it 'usa el de la vista si la cabecera lo trae' do
+      payload = build(header: proveedor.merge('CodigoActividadEmisor' => '999999'),
+                      doc_type: DocType::FEC)
+
+      expect(payload['Document']['CodigoActividadEmisor']).to eq('999999')
+    end
+
+    # El receptor no se toca: sigue saliendo de los `Rcpr*`, que para una
+    # factura de compra la vista llena con la compañía.
+    it 'deja el receptor donde estaba' do
+      payload = build(header: proveedor.merge('RcprNombre' => 'Acme Sociedad Anónima',
+                                              'RcprIdeTipo' => '02', 'RcprIdeNumero' => '3101123456'),
+                      doc_type: DocType::FEC)
+
+      expect(payload['Document']['Receptor']).to include(
+        'Nombre' => 'Acme Sociedad Anónima',
+        'Identificacion' => { 'Tipo' => '02', 'Numero' => '3101123456' }
+      )
+    end
+  end
+
   describe 'líneas' do
     it 'mapea el CABYS desde la columna Codigo de la vista' do
       payload = build(lines: [{ 'Codigo' => '2311101000000', 'NumeroLinea' => 1 }])
