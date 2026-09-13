@@ -2805,11 +2805,23 @@ Tres fuentes independientes lo confirman, y conviene revisarlas las tres antes d
   receptor; el XSD lo repite con las cardinalidades (`minOccurs` 0 y 1, al revés que en FE).
 - El XSD mueve `OtrasSenasExtranjero` del receptor al emisor.
 
-Del lado de este producto, la inversión vive en **un solo lugar**:
-`Documents::UnifiedBuilder#identidad_emisor`, que para FEC lee la cabecera en vez de
-`companies`. `send_document_hacienda` toma la identificación de ese mismo método —no de
-`company`— porque si el cuerpo del POST y el comprobante no coinciden, Hacienda rechaza el
-envío.
+Del lado de este producto, la inversión vive en **un solo predicado**:
+`Documents::UnifiedBuilder#compania_es_el_emisor?`. De él salen las cinco decisiones que
+cambian con el tipo —la identidad del emisor, la del receptor, los dos códigos de actividad
+y el registro 8707—, y también el cuerpo del POST (`send_document_hacienda`), que lee las
+identificaciones de `#identidad_emisor`/`#identidad_receptor` y no de `company` ni de la
+cabecera: si el cuerpo y el comprobante no coinciden, Hacienda rechaza el envío. Los dos
+lados se dan vuelta a la vez, que es la única forma de que sigan coincidiendo.
+
+**Cada rol tiene UNA sola fuente, sin respaldo en la otra.** El rol que es la compañía sale
+de `companies`; el otro, de la vista, que devuelve en NULL el bloque del primero a
+propósito. Nada de `||` entre las dos ni de copiar `Rcpr*` sobre `Emsr*` como hacía el .NET:
+un respaldo le prestaría al proveedor la identidad de la compañía el día que la vista venga
+vacía, y ese comprobante —que Hacienda aceptaría— dice que la compañía se compró a sí misma.
+
+> `Registrofiscal8707` lo declara **solo `EmisorType`**, en los tres XSD y también en el de
+> la factura de compra. No existe un `Rcpr…8707` que emitir: cuando la compañía es el
+> receptor, su registro no tiene dónde ir.
 
 > ⚠️ Si la vista de cabecera no llena los `Emsr*` con el proveedor, el documento **no se
 > emite**: `HeaderValidator` corta por tipo de identificación del emisor faltante. Ese es el

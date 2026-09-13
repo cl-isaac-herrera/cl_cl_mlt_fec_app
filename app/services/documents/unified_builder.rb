@@ -23,8 +23,8 @@ module Documents
   #
   # La forma del objeto es una sola para todos; lo que cambia por tipo es qué se
   # emite de él (`Hacienda::XmlBuilder`). La ÚNICA bifurcación de este armado es
-  # de dónde sale la identidad del emisor, porque la factura de compra invierte
-  # los roles — ver `#identidad_emisor`.
+  # CUÁL DE LOS DOS ROLES es la compañía, porque la factura de compra los
+  # invierte — ver `#compania_es_el_emisor?`.
   #
   # `Hacienda::DocumentValidator` cubre los cinco: comparten casi todas las
   # reglas, y las que no están listadas una por una en su cabecera.
@@ -68,6 +68,34 @@ module Documents
 
     def header = details.header
 
+    # ── Cuál de los dos roles es la compañía ──────────────────────────────────
+    # En todo comprobante de VENTA el emisor es la compañía y el receptor es el
+    # cliente. La Factura Electrónica de Compra invierte los roles: la emite el
+    # proveedor que no puede facturar —un extranjero no domiciliado o un no
+    # contribuyente— y la compañía es el RECEPTOR. Poner ahí la cédula de la
+    # compañía no sería un campo mal llenado: sería declararle a Hacienda que la
+    # compañía se compró a sí misma.
+    #
+    # La inversión está confirmada por tres fuentes independientes: el legacy
+    # mapea `Emisor` ← `Emsr*` también en FEC (`GetData.cs#GetDocToSendFEC`
+    # L1142), `Validations.cs` (L299/L303) exime al emisor de declarar código de
+    # actividad y se lo exige al receptor, y el XSD mueve `OtrasSenasExtranjero`
+    # del receptor al emisor.
+    #
+    # ── Cada rol tiene UNA sola fuente, y este predicado la elige ─────────────
+    # El rol que NO es la compañía sale de la vista; el que sí lo es sale de
+    # `companies`, que es donde el operador lo administra y por eso la vista lo
+    # devuelve en NULL a propósito.
+    #
+    # No hay respaldo de una fuente en la otra ni mapeo entre bloques (el .NET
+    # copiaba `Rcpr*` sobre `Emsr*` justo después de consultar la vista): un
+    # `||` entre las dos le prestaría al proveedor la identidad de la compañía
+    # el día que la vista venga vacía, y ese comprobante —que Hacienda
+    # aceptaría— dice que la compañía se compró a sí misma. Sin respaldo, la
+    # vista vacía corta en `Hacienda::Validations::HeaderValidator` y el
+    # documento queda en `Error` en la cola, que es el desenlace correcto.
+    def compania_es_el_emisor? = doc_type != DocType::FEC
+
     # ── Documento ─────────────────────────────────────────────────────────────
 
     def document
@@ -77,7 +105,7 @@ module Documents
         'ProveedorSistemas' => proveedor_sistemas,
         'FechaEmision' => header.string('FechaEmision'),
         'CodigoActividadEmisor' => codigo_actividad_emisor,
-        'CodigoActividadReceptor' => header.string('CodigoActividadReceptor'),
+        'CodigoActividadReceptor' => codigo_actividad_receptor,
         'CondicionVenta' => header.string('CondicionVenta'),
         'CondicionVentaOtros' => header.string('CondicionVentaOtros'),
         'PlazoCredito' => header.integer('PlazoCredito'),
@@ -91,19 +119,28 @@ module Documents
       }
     end
 
-    # La cabecera manda si algún día la vista lo expone; mientras tanto sale de la
-    # compañía. El orden importa: si las dos tienen valor, el de SAP es el que
-    # viajó con el documento.
+    # ── Los dos códigos de actividad, cada uno con la fuente de su rol ────────
+    # Quien tiene la actividad económica inscrita ante Hacienda es la compañía, y
+    # su código sale de `companies`; el del otro rol lo trae la vista. En la
+    # factura de compra eso queda al revés que en el resto, igual que todo lo
+    # demás de esta clase (ver `#compania_es_el_emisor?`).
     #
-    # El respaldo de `companies` NO aplica a la factura de compra: ahí el emisor
-    # es el proveedor (ver `#identidad_emisor`), así que prestarle la actividad
-    # económica de la compañía sería inventarle una inscripción que no tiene. En
-    # FEC ese código además es opcional y el obligatorio es el del receptor.
+    # El XSD lo confirma por su lado: en `FacturaElectronicaCompra_V4.4.xsd`
+    # `CodigoActividadReceptor` es `minOccurs="1"` y el del emisor `minOccurs="0"`;
+    # en el de factura es exactamente al revés.
     def codigo_actividad_emisor
-      return header.string('CodigoActividadEmisor') if doc_type == DocType::FEC
+      return actividad_de_la_compania if compania_es_el_emisor?
 
-      header.string('CodigoActividadEmisor') || company.economic_activity_code.presence
+      header.string('CodigoActividadEmisor')
     end
+
+    def codigo_actividad_receptor
+      return header.string('CodigoActividadReceptor') if compania_es_el_emisor?
+
+      actividad_de_la_compania
+    end
+
+    def actividad_de_la_compania = company.economic_activity_code.presence
 
     # La cédula del proveedor de software ante Hacienda. Es un dato del
     # PRODUCTO y no del documento —la vista lo traía hardcodeado antes de que
@@ -113,22 +150,23 @@ module Documents
       Setting.value_for('GENERAL_PROVIDER_ID')
     end
 
-    # El emisor tiene DOS orígenes, y la línea que los separa es si el dato cambia
-    # por sucursal:
+    # La ubicación, el teléfono y el correo del emisor salen SIEMPRE de la
+    # cabecera, sea quien sea el emisor:
     #
-    #   · Identidad (nombre, identificación, nombre comercial, registro 8707) —
-    #     `companies`. Es una por compañía y no depende del documento: la misma
-    #     cédula jurídica emite desde cualquier sucursal.
-    #   · Ubicación, teléfono y correo — la cabecera, que los trae de la UDT
+    #   · Cuando el emisor es la compañía, los trae de la UDT
     #     `@CL_FEC_SUCURSALES` (`config/sap_schemas/sucursales_udt.json`) con el
-    #     prefijo `Emsr`. Estos SÍ cambian por sucursal, así que no podrían salir
-    #     de `companies`, que es una sola fila.
+    #     prefijo `Emsr`. Cambian por SUCURSAL, así que no podrían salir de
+    #     `companies`, que es una sola fila por compañía.
+    #   · Cuando el emisor es el proveedor (FEC), son sus propios datos, que solo
+    #     SAP conoce.
     #
-    # Por eso `#ubicacion` y `#telefono` siguen leyendo de `header` mientras el
-    # resto sale de `company` — salvo en la factura de compra, donde el emisor
-    # ni siquiera es la compañía (ver `#identidad_emisor`).
+    # Lo que sí cambia de fuente es la identidad — ver `#identidad_emisor`.
     def emisor
       identidad_emisor.merge(
+        # Solo el EMISOR lo declara, en los tres esquemas y también en el de la
+        # factura de compra (`EmisorType`): el receptor no tiene dónde ponerlo,
+        # así que no se lee ningún `Rcpr…8707` exista o no en la vista.
+        'Registrofiscal8707' => registro_fiscal8707,
         'Ubicacion' => ubicacion(header, 'Emsr'),
         # Solo lo emite el XML de FEC; en los demás tipos el emisor es la
         # compañía y el esquema no declara el elemento.
@@ -138,34 +176,59 @@ module Documents
       )
     end
 
-    # ── Quién es el emisor depende del TIPO de comprobante ────────────────────
-    # En todo comprobante de VENTA el emisor es la compañía, así que su identidad
-    # sale de `companies` y no de SAP.
+    # El receptor lleva dos campos que el emisor no tiene: la identificación de
+    # extranjero y las señas en el exterior, que Hacienda pide cuando el receptor
+    # no es costarricense. Los dos salen siempre de la cabecera, incluso en la
+    # factura de compra: ahí el receptor es la compañía y `companies` no tiene
+    # dónde guardarlos, pero tampoco hacen falta —ese esquema ni siquiera los
+    # declara— y `Hacienda::XmlBuilder` no los emite.
     #
-    # La Factura Electrónica de Compra invierte los roles: la emite el proveedor
-    # que no puede facturar —un extranjero no domiciliado o un no contribuyente—
-    # y la compañía es el RECEPTOR. Poner ahí la cédula de la compañía no sería
-    # un campo mal llenado: sería declararle a Hacienda que la compañía se
-    # compró a sí misma.
-    #
-    # La inversión está confirmada por tres fuentes independientes: el legacy
-    # mapea `Emisor` ← `Emsr*` también en FEC (`GetData.cs#GetDocToSendFEC`
-    # L1142), `Validations.cs` (L299/L303) exime al emisor de declarar código de
-    # actividad y se lo exige al receptor, y el XSD mueve `OtrasSenasExtranjero`
-    # del receptor al emisor.
-    def identidad_emisor
-      return identidad_emisor_de_la_cabecera if doc_type == DocType::FEC
+    # La ubicación, el teléfono y el correo tampoco cambian de fuente: en FEC la
+    # vista los llena con los de la compañía, que es la que compra.
+    def receptor
+      identidad_receptor.merge(
+        'IdentificacionExtranjero' => header.string('RcprIdentificacionExtranjero'),
+        'Ubicacion' => ubicacion(header, 'Rcpr'),
+        'OtrasSenasExtranjero' => header.string('RcprOtrasSenasExtranjero'),
+        'Telefono' => telefono(header, 'Rcpr'),
+        'CorreoElectronico' => primer_correo(header.string('RcprCorreoElectronico'))
+      )
+    end
 
+    # ── La identidad de cada rol, según cuál de los dos es la compañía ────────
+    # El rol que ES la compañía sale de `companies`; el otro, de la vista, que
+    # deja el bloque del primero en NULL a propósito. Sin respaldo entre las dos
+    # fuentes — el porqué está en `#compania_es_el_emisor?`.
+
+    def identidad_emisor
+      compania_es_el_emisor? ? identidad_de_la_compania : identidad_de_la_cabecera('Emsr')
+    end
+
+    def identidad_receptor
+      compania_es_el_emisor? ? identidad_de_la_cabecera('Rcpr') : identidad_de_la_compania
+    end
+
+    # Las tres llaves que los dos bloques comparten. Lo que cada rol agrega
+    # aparte —`Registrofiscal8707` en el emisor, los campos de extranjero en el
+    # receptor— se mezcla en `#emisor` y `#receptor`.
+    def identidad_de_la_cabecera(prefix)
+      {
+        'Nombre' => header.string("#{prefix}Nombre"),
+        'Identificacion' => {
+          'Tipo' => header.string("#{prefix}IdeTipo"),
+          'Numero' => header.string("#{prefix}IdeNumero")
+        },
+        'NombreComercial' => header.string("#{prefix}NombreComercial")
+      }
+    end
+
+    def identidad_de_la_compania
       {
         'Nombre' => company.issuer_legal_name.presence,
         'Identificacion' => {
           'Tipo' => company.issuer_id_type.presence,
           'Numero' => company.issuer_id_number.presence
         },
-        # La columna nació como el UDF `CL_FEC_EmsrRegFiscal8707`: es el registro
-        # del emisor, no el del receptor —que la cabecera trae aparte como
-        # `RcprRegistrofiscal8707` y no se usa acá.
-        'Registrofiscal8707' => company.tax_registry_8707.presence,
         # El nombre comercial NO tiene columna propia: es `companies.name`, que ya
         # existía y es el que usa el resto de la app. Ver la migración
         # `20260819130000_add_issuer_fields_to_companies.rb`.
@@ -173,44 +236,13 @@ module Documents
       }
     end
 
-    # El proveedor, tal como lo trae la vista de cabecera.
-    #
-    # ⚠️ Son los `Emsr*` que el builder había DEJADO de leer cuando la identidad
-    # del emisor pasó a `companies` (`TODOS.md`, 2026-09-01). Para la factura de
-    # compra vuelven a hacer falta, y la vista tiene que llenarlos con el
-    # proveedor y no con la sucursal. Si no lo hace, el documento NO se emite:
-    # `Hacienda::Validations::HeaderValidator` corta por tipo de identificación
-    # del emisor faltante, que es el desenlace correcto — mejor un error en la
-    # cola que un comprobante con el emisor equivocado. Anotado en `TODOS.md`.
-    def identidad_emisor_de_la_cabecera
-      {
-        'Nombre' => header.string('EmsrNombre'),
-        'Identificacion' => {
-          'Tipo' => header.string('EmsrIdeTipo'),
-          'Numero' => header.string('EmsrIdeNumero')
-        },
-        'Registrofiscal8707' => header.string('EmsrRegistrofiscal8707'),
-        'NombreComercial' => header.string('EmsrNombreComercial')
-      }
-    end
+    # La columna nació como el UDF `CL_FEC_EmsrRegFiscal8707`: es el registro del
+    # EMISOR. En la factura de compra ese emisor es el proveedor, así que el dato
+    # viene en la cabecera y no de `companies`.
+    def registro_fiscal8707
+      return company.tax_registry_8707.presence if compania_es_el_emisor?
 
-    # El receptor lleva dos campos que el emisor no tiene: la identificación de
-    # extranjero y las señas en el exterior, que Hacienda pide cuando el receptor
-    # no es costarricense.
-    def receptor
-      {
-        'Nombre' => header.string('RcprNombre'),
-        'Identificacion' => {
-          'Tipo' => header.string('RcprIdeTipo'),
-          'Numero' => header.string('RcprIdeNumero')
-        },
-        'IdentificacionExtranjero' => header.string('RcprIdentificacionExtranjero'),
-        'NombreComercial' => header.string('RcprNombreComercial'),
-        'Ubicacion' => ubicacion(header, 'Rcpr'),
-        'OtrasSenasExtranjero' => header.string('RcprOtrasSenasExtranjero'),
-        'Telefono' => telefono(header, 'Rcpr'),
-        'CorreoElectronico' => primer_correo(header.string('RcprCorreoElectronico'))
-      }
+      header.string('EmsrRegistrofiscal8707')
     end
 
     # Hacienda exige un único correo en `Receptor.CorreoElectronico`, pero SAP
@@ -450,22 +482,24 @@ module Documents
     # identificaciones. Llaves en camelCase porque son las del cuerpo que espera
     # Hacienda, no las del XML.
     def send_document_hacienda
-      identificacion = identidad_emisor['Identificacion']
+      emisor_id = identidad_emisor['Identificacion']
+      receptor_id = identidad_receptor['Identificacion']
 
       {
         'fecha' => header.string('FechaEmision'),
-        # La misma identificación que va en el XML, y del mismo lugar —por eso
-        # se lee de `#identidad_emisor` y no de `company`, que es una de sus dos
-        # fuentes—: si el cuerpo del POST y el comprobante no coinciden,
-        # Hacienda rechaza el envío. En la factura de compra los dos llevan al
-        # proveedor.
+        # Las MISMAS identificaciones que van en el XML, y del mismo lugar —por
+        # eso se leen de `#identidad_*` y no de `company` ni de la cabecera, que
+        # son sus dos fuentes—: si el cuerpo del POST y el comprobante no
+        # coinciden, Hacienda rechaza el envío. En la factura de compra los dos
+        # quedan invertidos a la vez, que es la única forma de que sigan
+        # coincidiendo.
         'emisor' => {
-          'numeroIdentificacion' => identificacion['Numero'],
-          'tipoIdentificacion' => identificacion['Tipo']
+          'numeroIdentificacion' => emisor_id['Numero'],
+          'tipoIdentificacion' => emisor_id['Tipo']
         },
         'receptor' => {
-          'numeroIdentificacion' => header.string('RcprIdeNumero'),
-          'tipoIdentificacion' => header.string('RcprIdeTipo')
+          'numeroIdentificacion' => receptor_id['Numero'],
+          'tipoIdentificacion' => receptor_id['Tipo']
         }
       }
     end

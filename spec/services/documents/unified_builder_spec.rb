@@ -61,18 +61,27 @@ RSpec.describe Documents::UnifiedBuilder do
     end
   end
 
-  describe 'código de actividad del emisor' do
-    # La cabecera trae el del RECEPTOR nada más. El del emisor vive en
-    # `companies` desde que la configuración de FE bajó de los UDFs de OADM.
-    it 'sale de la compañía cuando la vista no lo devuelve' do
+  describe 'códigos de actividad' do
+    # En un comprobante de venta el inscrito ante Hacienda es la compañía, y su
+    # código vive en `companies` desde que la configuración de FE bajó de los
+    # UDFs de OADM. La vista lo devuelve en NULL a propósito.
+    it 'el del emisor sale de la compañía' do
       expect(build['Document']['CodigoActividadEmisor']).to eq('620100')
     end
 
-    # Si la vista alguna vez lo expone, ese es el que viajó con el documento.
-    it 'prefiere el de SAP si la vista lo devuelve' do
+    # Sin respaldo entre las dos fuentes: el dato que el operador administra en
+    # la pantalla de la compañía no lo puede pisar un valor viejo de la vista.
+    it 'el del emisor ignora lo que traiga la vista' do
       payload = build(header: { 'CodigoActividadEmisor' => '999999' })
 
-      expect(payload['Document']['CodigoActividadEmisor']).to eq('999999')
+      expect(payload['Document']['CodigoActividadEmisor']).to eq('620100')
+    end
+
+    # El del receptor es el del cliente, y ese solo lo conoce SAP.
+    it 'el del receptor sale de la vista' do
+      payload = build(header: { 'CodigoActividadReceptor' => '722003' })
+
+      expect(payload['Document']['CodigoActividadReceptor']).to eq('722003')
     end
   end
 
@@ -247,32 +256,70 @@ RSpec.describe Documents::UnifiedBuilder do
     end
 
     # El respaldo de `companies` le prestaría al proveedor una inscripción que
-    # no tiene. En FEC ese código además es opcional.
-    it 'no le presta al proveedor el código de actividad de la compañía' do
-      payload = build(header: proveedor, doc_type: DocType::FEC)
-
-      expect(payload['Document']['CodigoActividadEmisor']).to be_nil
-      expect(build(doc_type: DocType::FE)['Document']['CodigoActividadEmisor']).to eq('620100')
-    end
-
-    it 'usa el de la vista si la cabecera lo trae' do
+    # no tiene. En FEC ese código además es opcional y el obligatorio es el del
+    # receptor.
+    it 'toma el código de actividad del emisor de la vista, no de la compañía' do
       payload = build(header: proveedor.merge('CodigoActividadEmisor' => '999999'),
                       doc_type: DocType::FEC)
 
       expect(payload['Document']['CodigoActividadEmisor']).to eq('999999')
     end
 
-    # El receptor no se toca: sigue saliendo de los `Rcpr*`, que para una
-    # factura de compra la vista llena con la compañía.
-    it 'deja el receptor donde estaba' do
-      payload = build(header: proveedor.merge('RcprNombre' => 'Acme Sociedad Anónima',
-                                              'RcprIdeTipo' => '02', 'RcprIdeNumero' => '3101123456'),
+    it 'lo deja en nil si la vista no lo trae, en vez de prestarle el de la compañía' do
+      payload = build(header: proveedor, doc_type: DocType::FEC)
+
+      expect(payload['Document']['CodigoActividadEmisor']).to be_nil
+      expect(build(doc_type: DocType::FE)['Document']['CodigoActividadEmisor']).to eq('620100')
+    end
+
+    # El inscrito ante Hacienda es la compañía, que acá es quien compra: la
+    # vista devuelve su bloque en NULL porque ese dato vive en `companies`.
+    it 'toma la identidad del receptor de la compañía y no de la vista' do
+      payload = build(header: proveedor.merge('RcprNombre' => 'lo que traiga la vista',
+                                              'RcprIdeNumero' => '999999999'),
                       doc_type: DocType::FEC)
 
       expect(payload['Document']['Receptor']).to include(
         'Nombre' => 'Acme Sociedad Anónima',
-        'Identificacion' => { 'Tipo' => '02', 'Numero' => '3101123456' }
+        'Identificacion' => { 'Tipo' => '02', 'Numero' => '3101123456' },
+        'NombreComercial' => 'ACME S.A.'
       )
+    end
+
+    it 'toma el código de actividad del receptor de la compañía' do
+      payload = build(header: proveedor.merge('CodigoActividadReceptor' => '999999'),
+                      doc_type: DocType::FEC)
+
+      expect(payload['Document']['CodigoActividadReceptor']).to eq('620100')
+    end
+
+    # `companies` no tiene dónde guardarlos y cambian por sucursal de compra.
+    it 'deja la ubicación y el correo del receptor donde estaban' do
+      payload = build(header: proveedor.merge('RcprUbBarrio' => 'Escalante',
+                                              'RcprCorreoElectronico' => 'compras@acme.cr'),
+                      doc_type: DocType::FEC)
+      receptor = payload['Document']['Receptor']
+
+      expect(receptor['Ubicacion']).to include('Barrio' => 'Escalante')
+      expect(receptor['CorreoElectronico']).to eq('compras@acme.cr')
+    end
+
+    # Los dos lados del cuerpo se invierten a la vez: si uno solo se diera
+    # vuelta, el POST y el comprobante dejarían de coincidir.
+    it 'manda la compañía como receptor en el cuerpo del envío' do
+      payload = build(header: proveedor.merge('RcprIdeNumero' => '999999999', 'RcprIdeTipo' => '01'),
+                      doc_type: DocType::FEC)
+
+      expect(payload['SendDocumentHacienda']['receptor'])
+        .to eq('numeroIdentificacion' => '3101123456', 'tipoIdentificacion' => '02')
+    end
+
+    # Solo el emisor lo declara, también en el esquema de la factura de compra:
+    # el registro de la compañía no tiene dónde ir cuando ella es el receptor.
+    it 'no le pasa al receptor el registro 8707 de la compañía' do
+      payload = build(header: proveedor, doc_type: DocType::FEC)
+
+      expect(payload['Document']['Receptor']).not_to have_key('Registrofiscal8707')
     end
   end
 

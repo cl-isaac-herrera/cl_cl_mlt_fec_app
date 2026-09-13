@@ -1303,20 +1303,32 @@ CLAUDE.md §39; lo que hay que saber acá es el reparto:
   código de actividad se invierte (L299/L303), el tercero de otros cargos pasa de
   obligatorio-si-`04` a **prohibido** (L639), `DetalleServicio` se vuelve obligatorio (L289)
   e `InformacionReferencia` también, esta última por el XSD.
-- **Identidad del emisor** — única bifurcación del objeto unificado
-  (`UnifiedBuilder#identidad_emisor`): para FEC sale de la cabecera y no de `companies`.
+- **Quién es cada rol** — única bifurcación del objeto unificado
+  (`UnifiedBuilder#compania_es_el_emisor?`): en FEC el emisor entero sale de la cabecera y el
+  receptor entero de `companies`; en el resto, al revés. Sin respaldo entre las dos fuentes.
 
 Pendientes de la factura de compra:
-- [ ] **Confirmar que la vista de cabecera llena los `Emsr*` con el PROVEEDOR cuando el
-      documento es `08`.** Es la única pieza que no se puede verificar desde este repo: la
-      consulta vive en SAP (`CL_D_CL_MLT_FEC_SLT_DOCHEADERINFO`) y la nota del 2026-09-01
-      —"la vista ya no necesita devolver ningún `Emsr*` fuera de los ocho de la UDT"— vale
-      para los comprobantes de VENTA, donde el emisor es la compañía. En FEC vuelven a hacer
-      falta `EmsrNombre`, `EmsrIdeTipo`, `EmsrIdeNumero`, `EmsrNombreComercial` y
-      `EmsrRegistrofiscal8707`, con los datos del proveedor.
-      **Si la vista no los llena, el documento no se emite** y queda en `Error` con "El tipo
-      de identificación del emisor nil no es permitido" — que es el desenlace correcto, pero
-      el mensaje no explica la causa real. Vale revisarlo apenas haya un FEC en la cola.
+- [ ] **Confirmar que la vista de cabecera reparte los bloques según el tipo.** Es la única
+      pieza que no se puede verificar desde este repo: la consulta vive en SAP
+      (`CL_D_CL_MLT_FEC_SLT_DOCHEADERINFO`) y la nota del 2026-09-01 —"la vista ya no
+      necesita devolver ningún `Emsr*` fuera de los ocho de la UDT"— vale para los
+      comprobantes de VENTA, donde el emisor es la compañía. Lo acordado (2026-09-13) es:
+      · **FEC** — la vista llena con el PROVEEDOR `EmsrNombre`, `EmsrIdeTipo`,
+        `EmsrIdeNumero`, `EmsrNombreComercial`, `EmsrRegistrofiscal8707` y
+        `CodigoActividadEmisor`, y devuelve en NULL `RcprNombre`, `RcprIdeTipo`,
+        `RcprIdeNumero`, `RcprNombreComercial` y `CodigoActividadReceptor`, que salen de
+        `companies`. La ubicación, el teléfono y el correo de los dos bloques siguen saliendo
+        de la vista (`Rcpr*` con los de la compañía, que es la que compra).
+      · **El resto de los tipos** — esos mismos `Emsr*` y `CodigoActividadEmisor` vienen en
+        NULL y salen de `companies`; los `Rcpr*` los llena la vista con el cliente.
+      **Si la vista no llena los `Emsr*` en un FEC, el documento no se emite** y queda en
+      `Error` con "El tipo de identificación del emisor nil no es permitido" — que es el
+      desenlace correcto, pero el mensaje no explica la causa real. Vale revisarlo apenas
+      haya un FEC en la cola.
+- [ ] **`RcprRegistroFiscal8707` NO hace falta en la vista.** `Registrofiscal8707` lo declara
+      solo `EmisorType`, en los tres XSD y también en el de la factura de compra: cuando la
+      compañía es el receptor, su registro no tiene dónde ir en el comprobante. Si la vista
+      igual lo devuelve, el builder lo ignora.
 - [ ] **`EmsrOtrasSenasExtranjero` no está en la lista de campos de la vista**
       (`docs/sync-documents-flow.md` L53-65) y el legacy sí lo lee. Es opcional en el XSD,
       así que un proveedor extranjero sin señas no rompe nada — pero tampoco las declara.
@@ -1676,7 +1688,9 @@ los medios de pago sin verificar y los cortes de fecha.
       ni leer la `Rcpr…` de la vista.
 
       Con esto, **la vista de cabecera ya no necesita devolver ningún `Emsr*` fuera de los
-      ocho de la UDT**.
+      ocho de la UDT** — en los comprobantes de VENTA. En la factura de compra el emisor es
+      el proveedor y esos campos vuelven a hacer falta, con su bloque de receptor en NULL;
+      ver *Emisión de documentos → factura de compra* (2026-09-13).
 
 - [x] **La UDT del emisor ya está declarada** en `config/sap_schemas/sucursales_udt.json`
       (`@CL_FEC_SUCURSALES`, 12 columnas, descripciones con el prefijo `FEC ·` como pide
