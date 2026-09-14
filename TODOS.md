@@ -2013,7 +2013,11 @@ no para este listado — decisión del 2026-09-05). Lo que sigue sin migrar:
       el código no reciba `undefined`, pero ningún backend nativo lo resuelve todavía).
       **Pendiente:** una migración por acción (o por grupo), decidiendo primero si cada
       una se resuelve por `DocEntry`+`DocType` contra SAP o necesita datos que hoy solo
-      tiene el .NET (el PDF sale de un Crystal Report).
+      tiene el .NET (el PDF salía de un Crystal Report, sin URL accesible desde acá).
+      **Actualización 2026-09-14:** la vista `CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery`
+      (`getDocuments01`..`10`, `db/seeds.rb` sección 5) ya expone `PdfUrl` — falta
+      confirmar qué URL es (¿Azure, como el XML? ¿el Service Layer sirviéndolo directo?) y
+      cablear "Ver/Descargar comprobante" contra ese campo en vez del proxy .NET.
       **"Ver XML respuesta" es el más barato de los que faltan:** el archivo ya lo sabe
       resolver `Api::Documents::XmlFilesController` (entrada de acá abajo) — lo único que
       cambia es abrirlo en una pestaña en vez de bajarlo, así que es `disposition:
@@ -2166,13 +2170,18 @@ no para este listado — decisión del 2026-09-05). Lo que sigue sin migrar:
       **Pendiente:** junto con la migración de la acción en sí (ver el primer punto),
       decidir dónde vive esa marca — ¿un UDF nuevo?, ¿se infiere de otra forma?
 
-- [ ] **El filtro de "Tipo de Documento" pasó de ser un `$filter` a elegir el recurso.**
-      Cada tipo pega a una fila `getDocuments<tipo>` distinta del catálogo — ya no hay
-      forma de traer "todos los tipos" en una sola consulta como hacía `spGetDocuments`.
-      Es una limitación conocida y aceptada (`db/seeds.rb` sección 5, comentario de
-      `SL_RESOURCES_DOCUMENT_QUERIES`), no un olvido — se documenta acá para que quien
-      toque la pantalla no intente "arreglar" el select para que admita blanco/todos sin
-      antes leer esa nota.
+- [x] **El filtro de "Tipo de Documento" volvió a ser un `$filter`.** Resuelto: las
+      siete filas `getDocuments01`..`10` (`db/seeds.rb` sección 5,
+      `SL_RESOURCES_DOCUMENT_QUERIES`) apuntan ahora a la vista unificada
+      `CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery` (que expone `DocType`, calculado
+      por `dbo.CL_D_CL_MLT_FEC_SLT_FEDOCUMENTTYPE`) en vez de a una entidad estándar
+      distinta por tipo, y cada una filtra `DocType eq '<tipo>'` contra la misma vista
+      (`20260914100000_point_get_documents_sl_resources_to_view.rb`). Las ESCRITURAS
+      (`updateDocument01`..`10`, `SL_RESOURCES_STATUS_UPDATES`) NO se tocaron: siguen
+      yendo directo a la entidad de SAP que le corresponde a cada tipo.
+      **Sigue pendiente, y es otra tarea:** una sola consulta que traiga "todos los
+      tipos" a la vez (el catálogo sigue modelando una fila por tipo, aunque ahora
+      todas compartan la misma vista de origen).
 
 ## Base de documentos — conector ODBC (`ExternalDb`)
 

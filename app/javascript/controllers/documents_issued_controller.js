@@ -32,10 +32,11 @@ import { relativeDate } from 'vendor/clavisco/format/dates';
  *
  * Las DOS descargas de XML también: `GET /api/documents/:id/xml_files/sent` y
  * `…/response` (`Api::Documents::XmlFilesController`). El XML no vive en SAP
- * sino en Azure (`Documents::XmlArchive`) y SAP guarda su URL en
- * `U_CL_FEC_XmlSentUrl`/`U_CL_FEC_XmlResponseUrl`; el listado las trae para
- * saber si hay algo que bajar, pero la URL que se baja la resuelve el servidor
- * por `DocEntry` — ver `#downloadXmlFile` y `#xmlFileOption`.
+ * sino en Azure (`Documents::XmlArchive`) y SAP guarda su URL en los UDFs
+ * `U_CL_FEC_XmlSentUrl`/`U_CL_FEC_XmlResponseUrl` (la vista del listado los
+ * expone como `XmlSentUrl`/`XmlResponseUrl`); el listado las trae para saber
+ * si hay algo que bajar, pero la URL que se baja la resuelve el servidor por
+ * `DocEntry` — ver `#downloadXmlFile` y `#xmlFileOption`.
  */
 export default class extends TabulatorController {
   static targets = [
@@ -317,13 +318,18 @@ export default class extends TabulatorController {
       Consecutivo: doc.DocNum,
       RcprNombre: doc.CardName,
       Clave: doc.U_CL_FEC_Clave,
-      // `U_CL_FEC_ErrorDetails` NO viaja acá a propósito: la sincronización lo
-      // pisa constantemente (reprocesos, `CheckSentDocumentsJob`), así que el
-      // valor de esta búsqueda puede quedar desactualizado frente al estado
-      // ACTUAL del documento. El panel "Información del documento" lo consulta
-      // fresco cada vez que se abre (`#loadErrorDetails`, `GET /api/documents/:id`).
-      Status: doc.U_CL_FEC_Status,
-      StatusForTable: this.#statusLabel(doc.U_CL_FEC_Status),
+      // `ErrorMessage` (la vista renombra el UDF `U_CL_FEC_ErrorDetails`) NO
+      // viaja acá a propósito: la sincronización lo pisa constantemente
+      // (reprocesos, `CheckSentDocumentsJob`), así que el valor de esta
+      // búsqueda puede quedar desactualizado frente al estado ACTUAL del
+      // documento. El panel "Información del documento" lo consulta fresco
+      // cada vez que se abre (`#loadErrorDetails`, `GET /api/documents/:id`).
+      //
+      // `FEDocumentStatus`, no `U_CL_FEC_Status`: la vista
+      // (`CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery`) renombra ese UDF al
+      // exponerlo.
+      Status: doc.FEDocumentStatus,
+      StatusForTable: this.#statusLabel(doc.FEDocumentStatus),
       FechaFactura: this.#formatDate(doc.DocDate),
       // Sin columna propia en la tabla (se sacó a pedido): sigue viajando
       // cruda para el panel "Consultar Información" (`#openInfoModal`).
@@ -333,11 +339,15 @@ export default class extends TabulatorController {
       // `DocEntry`, ver `Api::Documents::XmlFilesController`— sino para saber si
       // hay algo que bajar antes de ofrecer la opción del dropdown.
       //
-      // ⚠️ Se copian TAL CUAL, sin `|| ''`: `undefined` (el `$select` de la
-      // instalación no pidió el campo) y `''`/`null` (SAP lo devolvió vacío) son
-      // dos cosas distintas — ver `#xmlFileOption`.
-      XmlSentUrl: doc.U_CL_FEC_XmlSentUrl,
-      XmlResponseUrl: doc.U_CL_FEC_XmlResponseUrl,
+      // `XmlSentUrl`/`XmlResponseUrl`, no `U_CL_FEC_XmlSentUrl`/
+      // `U_CL_FEC_XmlResponseUrl`: la vista renombra esos dos UDFs al
+      // exponerlos.
+      //
+      // ⚠️ Se copian TAL CUAL, sin `|| ''`: `undefined` (un `$select`
+      // personalizado que no pidiera el campo) y `''`/`null` (SAP lo devolvió
+      // vacío) son dos cosas distintas — ver `#xmlFileOption`.
+      XmlSentUrl: doc.XmlSentUrl,
+      XmlResponseUrl: doc.XmlResponseUrl,
       TotalComprobante: this.#normalizeCurrency(doc.DocCurrency) + ' ' +
                         Number(doc.DocTotal || 0).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,'),
     };
@@ -406,7 +416,8 @@ export default class extends TabulatorController {
    * Una opción de descarga de XML, habilitada según haya o no archivo archivado.
    *
    * El estado NO decide esto: lo decide la URL que SAP guardó en el UDF
-   * (`U_CL_FEC_XmlSentUrl` / `U_CL_FEC_XmlResponseUrl`). Antes se adivinaba por
+   * (`U_CL_FEC_XmlSentUrl` / `U_CL_FEC_XmlResponseUrl`, expuestos por la vista
+   * del listado como `XmlSentUrl`/`XmlResponseUrl`). Antes se adivinaba por
    * `Status`, que es una correlación y no el dato —un documento Aceptado cuyo
    * archivado falló ofrecía una descarga que no existía, y uno Rechazado sin
    * respuesta archivada también—.

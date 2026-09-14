@@ -609,13 +609,23 @@ SL_RESOURCES_STATUS_UPDATES = [
 # El `code` lleva el CÓDIGO NUMÉRICO de Hacienda (`getDocuments01`, no
 # `getDocumentsFE`) — mismo criterio que `updateDocument01`..`10` de arriba.
 #
-# `resource` es la entidad ESTÁNDAR de SAP completa, sin `(#DocumentEntry#)`:
-# es un listado, no un documento puntual. Mismo mapeo tipo→objeto que
-# `SL_RESOURCES_STATUS_UPDATES` (Invoices para FE/ND/TE/FEE, CreditNotes para
-# NC, PurchaseInvoices para FEC, IncomingPayments para REP) — no son vistas, no
-# llevan prefijo, y el mismo `code` sirve en SQL Server y en HANA.
+# ── Las siete apuntan a la MISMA vista, filtradas por `DocType` ─────────────
+# `resource` es la vista `CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery`
+# (`_B1SLQuery`: `SlResourceSeed.qualify` le agrega el prefijo `sml.svc/`/
+# `view.svc/` según el motor) — NO la entidad estándar por tipo que usa
+# `SL_RESOURCES_STATUS_UPDATES` (Invoices/CreditNotes/PurchaseInvoices/
+# IncomingPayments): esa entidad sigue siendo el destino de las ESCRITURAS
+# (`updateDocument01`..`10`, arriba), que no cambian. Solo la LECTURA/listado se
+# movió a la vista.
 #
-# `query_params` lleva el `$select` y un `$orderby=DocEntry desc` fijo —los
+# La vista une los cuatro objetos de SAP que sincronizan documentos
+# (OINV/ORIN/OPCH/ORCT) y calcula `DocType` con la misma función que arma la
+# cola de sincronización, `dbo.CL_D_CL_MLT_FEC_SLT_FEDOCUMENTTYPE`
+# (`db/external/sql_server/fe_doc_type_function.sql`) — así que lo único que
+# distingue una fila de otra acá es el `$filter=DocType eq '<tipo>'`, horneado
+# en el catálogo (no un ajuste por instalación, ver más abajo).
+#
+# `query_params` lleva el `$filter` y un `$orderby=DocEntry desc` fijo —los
 # documentos más recientes primero, sea cual sea la página— para que la
 # paginación (`$top`/`$skip`) sea estable entre requests: sin un orden
 # explícito, SAP no garantiza devolver las filas siempre en el mismo orden, y
@@ -623,6 +633,32 @@ SL_RESOURCES_STATUS_UPDATES = [
 # en sí los agrega el llamador con `Sap::ResourceQuery#merge` en cada página —no
 # se hornean acá porque cambian en cada request, no son parte del catálogo.
 # Mismo criterio que `GetSapDocuments` (arriba, en `SL_RESOURCES`).
+#
+# ── Sin `$select`: la vista ya devuelve justo lo que el listado necesita ────
+# A diferencia de la entidad estándar (que trae todas las columnas de SAP si no
+# se acota), la vista `DOCDISPLAYINFO` se diseñó para este listado: solo expone
+# las columnas que hacen falta, así que no hay nada que acotar ni riesgo de que
+# un `$select` personalizado omita por accidente una que el listado necesita
+# (como pasaba con `U_CL_FEC_XmlSentUrl`/`U_CL_FEC_XmlResponseUrl` contra la
+# entidad estándar).
+#
+# ⚠️ La vista RENOMBRA algunos UDFs al exponerlos — el JSON que devuelve NO usa
+# los mismos nombres que la entidad estándar (`Sap::IssuedDocumentsSearch` y
+# `documents_issued_controller.js#mapDocument` ya están al tanto, pero
+# cualquier consumidor nuevo tiene que usar el nombre de la VISTA, no el UDF):
+#
+#   UDF (entidad estándar)      → columna de la vista
+#   U_CL_FEC_Status             → FEDocumentStatus
+#   U_CL_FEC_ErrorDetails       → ErrorMessage
+#   U_CL_FEC_XmlSentUrl         → XmlSentUrl
+#   U_CL_FEC_XmlResponseUrl     → XmlResponseUrl
+#
+# `DocEntry`, `DocDate`, `CardCode`, `CardName`, `DocCurrency`, `DocNum`,
+# `DocTotal`, `U_CL_FEC_Clave` y `U_CL_FEC_NumConsecutivo` SÍ conservan su
+# nombre. La vista además expone `PdfUrl`, que no existe en la entidad
+# estándar — pendiente de aprovechar para la acción "Ver/Descargar
+# comprobante" (`TODOS.md` → Emisión de documentos, hoy bloqueada porque el
+# PDF salía de un Crystal Report sin URL accesible).
 #
 # ⚠️ `page_size: 0` a propósito, y NO un valor alto tipo 999: el Service Layer
 # nunca devuelve más de 20 filas por respuesta si no se manda el header
@@ -633,65 +669,39 @@ SL_RESOURCES_STATUS_UPDATES = [
 # Quien construya el listado tiene que paginar de a 20 filas o menos por
 # request hasta que el submódulo agregue el header.
 #
-# ⚠️ El `$select` de acá abajo es el de referencia, NO necesariamente el que
-# corre en una instalación real: `Invoices` es compartido por FE/ND/TE/FEE
-# dentro de SAP, y lo único que distingue un subtipo de otro es la `Series` de
-# numeración — configurada por instalación (varía de un cliente a otro), así
-# que ese `$filter` se agrega directamente en la fila `sl_resources` de cada
-# instalación (pantalla de mantenimiento, `Configurations_SlResources_Update`),
-# NUNCA acá. `Sap::IssuedDocumentsSearch` (el consumidor) no conoce la `Series`:
-# solo agrega los filtros que sí varían por request (fechas, receptor, etc.) al
-# `$filter` que la fila ya trae.
-#
-# También conviene sumar al `$select` real, si el listado los va a mostrar:
-# `DocNum` (el "N° Ref" interno de SAP), `DocTotal` (el monto) y
-# `U_CL_FEC_ErrorDetails` (el detalle de error del panel de información) — acá
-# se dejaron fuera para no repetir columnas ya cubiertas por otras filas del
-# catálogo, pero `app/javascript/controllers/documents_issued_controller.js` sí
-# los necesita.
-#
-# ⚠️ `U_CL_FEC_XmlSentUrl`/`U_CL_FEC_XmlResponseUrl` SÍ tienen que estar en el
-# `$select` de la instalación: es con ellas que el listado sabe si hay un XML
-# archivado para ofrecer "Descargar XML comprobante"/"Descargar XML respuesta"
-# (`SL_RESOURCES_DOCUMENT_XML_URLS`, más abajo, es lo que después resuelve la
-# descarga). Un `$select` personalizado que las omita deja las dos acciones
-# habilitadas —no se puede saber— y el error recién aparece al hacer click.
+# ── Ya NO hace falta el `$filter` de Series por instalación ────────────────
+# Antes de la vista, `Invoices` (compartida por FE/ND/TE/FEE dentro de SAP) no
+# tenía columna `DocType`: lo único que distinguía un subtipo de otro era la
+# `Series` de numeración, configurada por instalación, así que ese `$filter` se
+# agregaba a mano en la fila `sl_resources` de cada cliente (pantalla de
+# mantenimiento, `Configurations_SlResources_Update`). La vista SÍ tiene
+# `DocType`, así que ese ajuste por instalación deja de hacer falta — el
+# `$filter=DocType eq '<tipo>'` de acá alcanza solo, igual en todas las
+# instalaciones. `Sap::IssuedDocumentsSearch` (el consumidor) sigue sin conocer
+# ninguno de los dos: solo agrega los filtros que varían por request (fechas,
+# receptor, etc.) al `$filter` que la fila ya trae.
 SL_RESOURCES_DOCUMENT_QUERIES = [
   ['getDocuments01', 'Obtiene el listado paginado de facturas electrónicas desde SAP',
-   'Invoices',
-   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
-   '&$orderby=DocEntry desc', 0],
+   'CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery',
+   "$filter=DocType eq '01'&$orderby=DocEntry desc", 0],
   ['getDocuments02', 'Obtiene el listado paginado de notas de débito electrónicas desde SAP',
-   'Invoices',
-   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
-   '&$orderby=DocEntry desc', 0],
+   'CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery',
+   "$filter=DocType eq '02'&$orderby=DocEntry desc", 0],
   ['getDocuments03', 'Obtiene el listado paginado de notas de crédito electrónicas desde SAP',
-   'CreditNotes',
-   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
-   '&$orderby=DocEntry desc', 0],
+   'CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery',
+   "$filter=DocType eq '03'&$orderby=DocEntry desc", 0],
   ['getDocuments04', 'Obtiene el listado paginado de tiquetes electrónicos desde SAP',
-   'Invoices',
-   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
-   '&$orderby=DocEntry desc', 0],
+   'CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery',
+   "$filter=DocType eq '04'&$orderby=DocEntry desc", 0],
   ['getDocuments08', 'Obtiene el listado paginado de facturas electrónicas de compra desde SAP',
-   'PurchaseInvoices',
-   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
-   '&$orderby=DocEntry desc', 0],
+   'CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery',
+   "$filter=DocType eq '08'&$orderby=DocEntry desc", 0],
   ['getDocuments09', 'Obtiene el listado paginado de facturas electrónicas de exportación desde SAP',
-   'Invoices',
-   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
-   '&$orderby=DocEntry desc', 0],
+   'CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery',
+   "$filter=DocType eq '09'&$orderby=DocEntry desc", 0],
   ['getDocuments10', 'Obtiene el listado paginado de recibos electrónicos de pago desde SAP',
-   'IncomingPayments',
-   '$select=DocEntry,DocDate,CardCode,CardName,DocCurrency,U_CL_FEC_Clave,U_CL_FEC_NumConsecutivo,' \
-   'U_CL_FEC_Status,U_CL_FEC_FechaEmision,U_CL_FEC_XmlSentUrl,U_CL_FEC_XmlResponseUrl' \
-   '&$orderby=DocEntry desc', 0]
+   'CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery',
+   "$filter=DocType eq '10'&$orderby=DocEntry desc", 0]
 ].freeze
 
 # ── Cola de correos de recepción electrónica (UDT `@CL_FEC_MAILSDETAILS`) ───

@@ -14,7 +14,7 @@ RSpec.describe Sap::IssuedDocumentsSearch do
   # contra la base de test (es una migración, no un seed) — un `create!` con el
   # mismo código chocaría contra esa fila.
   def create_resource(code, resource, filter: nil)
-    query_params = '$select=DocEntry,DocNum,CardCode,CardName,U_CL_FEC_Status,U_CL_FEC_FechaEmision'
+    query_params = '$select=DocEntry,DocNum,CardCode,CardName,FEDocumentStatus,U_CL_FEC_FechaEmision'
     query_params += "&$filter=(#{filter})" if filter
     record = SlResource.unscoped.find_or_initialize_by(code: code)
     record.update!(resource: resource, query_params: query_params, page_size: 0, is_active: true)
@@ -138,13 +138,13 @@ RSpec.describe Sap::IssuedDocumentsSearch do
     it 'ignora un status no numérico' do
       search(filters: { status: 'todos' })
 
-      expect(client).not_to have_received(:get).with(/U_CL_FEC_Status eq/)
+      expect(client).not_to have_received(:get).with(/FEDocumentStatus eq/)
     end
 
     it 'filtra por status cuando es numérico' do
       search(filters: { status: '4' })
 
-      expect(client).to have_received(:get).with(/U_CL_FEC_Status eq 4/)
+      expect(client).to have_received(:get).with(/FEDocumentStatus eq 4/)
     end
 
     it 'no agrega ninguna condición opcional cuando solo llegan las fechas (obligatorias)' do
@@ -158,7 +158,7 @@ RSpec.describe Sap::IssuedDocumentsSearch do
 
       expect(captured_path).to match(/Invoices\?\$select=.*Series eq 72\) and DocDate ge datetime'2026-01-01T00:00:00'/)
       expect(captured_path).to match(/DocDate le datetime'2026-01-31T23:59:59'&\$top=/)
-      expect(captured_path).not_to match(/contains\(|U_CL_FEC_Status eq/)
+      expect(captured_path).not_to match(/contains\(|FEDocumentStatus eq/)
     end
   end
 end

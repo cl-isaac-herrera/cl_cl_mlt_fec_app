@@ -4,9 +4,11 @@ module Sap
   # Búsqueda paginada de documentos emitidos, en vivo contra SAP Service Layer.
   #
   # Consume el catálogo `getDocuments01`..`10` (`db/seeds.rb` sección 5,
-  # `SL_RESOURCES_DOCUMENT_QUERIES`): una fila por tipo de comprobante,
-  # cada una apuntando a la entidad estándar de SAP que le corresponde
-  # (`Invoices`, `CreditNotes`, `PurchaseInvoices`, `IncomingPayments`).
+  # `SL_RESOURCES_DOCUMENT_QUERIES`): una fila por tipo de comprobante, todas
+  # apuntando a la MISMA vista (`CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery`)
+  # con un `$filter=DocType eq '<tipo>'` distinto cada una. Las ESCRITURAS
+  # (`updateDocument01`..`10`) siguen yendo directo a la entidad de SAP que le
+  # corresponde a cada tipo — eso no cambió.
   #
   #   result = Sap::IssuedDocumentsSearch.new(
   #     doc_type: DocType::FE, client: client, page: 1, per_page: 10,
@@ -28,15 +30,16 @@ module Sap
   # nunca choque contra ese límite y el "espiar una fila de más" siga siendo
   # confiable.
   #
-  # ── Por qué el tipo de documento decide el objeto de SAP, no un `$filter` ────
-  # `Invoices` es compartido por FE/ND/TE/FEE dentro de SAP: lo que distingue un
-  # subtipo de otro es la `Series` de numeración, configurada por instalación
-  # (varía de un cliente a otro) — por eso NO se hornea en `db/seeds.rb` (que es
-  # compartido) sino directamente en el `query_params` de la fila `sl_resources`
-  # de esta instalación, vía la pantalla de mantenimiento
-  # (`Configurations_SlResources_Update`). Esta clase no conoce la `Series`: solo
-  # agrega los filtros que SÍ varían por request (fechas, receptor, etc.) al
-  # `$filter` que el catálogo ya trae.
+  # ── Por qué el tipo de documento vuelve a ser un `$filter` ───────────────────
+  # Antes de la vista, `Invoices` (compartida por FE/ND/TE/FEE dentro de SAP) no
+  # tenía columna `DocType`: lo único que distinguía un subtipo de otro era la
+  # `Series` de numeración, configurada por instalación, así que ese `$filter`
+  # se agregaba a mano en la fila `sl_resources` de cada cliente. La vista
+  # (`CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery`) sí tiene `DocType`, así que
+  # el `$filter=DocType eq '<tipo>'` va horneado en el catálogo, igual en todas
+  # las instalaciones (`db/seeds.rb`). Esta clase sigue sin conocer ninguno de
+  # los dos: solo agrega los filtros que SÍ varían por request (fechas,
+  # receptor, etc.) al `$filter` que el catálogo ya trae.
   class IssuedDocumentsSearch
     # El tipo pedido no tiene una fila `getDocuments<tipo>` en el catálogo (no es
     # de los 7 que `DocType` admite para esto, o la fila fue dada de baja).
@@ -106,7 +109,11 @@ module Sap
         text_contains('CardName', filters[:receptor]),
         text_contains('U_CL_FEC_NumConsecutivo', filters[:consecutivo_fe]),
         numeric_eq('DocNum', filters[:consecutivo]),
-        numeric_eq('U_CL_FEC_Status', filters[:status])
+        # `FEDocumentStatus`, no `U_CL_FEC_Status`: la vista
+        # (`CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery`) renombra el UDF al
+        # exponerlo — no es el nombre crudo que usan `updateDocument<tipo>` ni
+        # `getDocumentErrorDetails<tipo>`, que sí pegan contra la entidad.
+        numeric_eq('FEDocumentStatus', filters[:status])
       ].compact.join(' and ')
     end
 
