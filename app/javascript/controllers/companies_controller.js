@@ -6,13 +6,13 @@ import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'contr
 /**
  * CompaniesController — Listado de compañías (/configurations/companies).
  *
- * Endpoint nativo de Rails: GET /api/companies?name=&page=&per_page=
+ * Endpoint nativo de Rails: GET /api/companies?name=&issuer_id_number=&page=&per_page=
  * (reemplaza GET /api/Companies/GetCompanies del .NET — ver CLAUDE.md §28).
  *
- * La tabla muestra nombre, estado y acciones. El nombre legal, el nombre
- * comercial y la identificación salieron del listado por decisión de producto —
- * son columnas de `companies`, así que volver a mostrarlas o filtrar por ellas es
- * sumarlas a `getColumns()` y al scope `search` del modelo.
+ * La tabla muestra nombre, cédula, estado y acciones, filtrables por nombre y
+ * cédula. El nombre legal salió del listado por decisión de producto — es
+ * columna de `companies`, así que volver a mostrarlo o filtrar por él es
+ * sumarlo a `getColumns()` y al scope `search` del modelo.
  *
  * Permisos (CLAUDE.md §26 — se deshabilita con tooltip, no se oculta):
  *   - Configurations_Companies_ListAccess → gatea la pantalla (menú + endpoint)
@@ -22,7 +22,7 @@ import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'contr
 export default class extends TabulatorController {
   static targets = [
     ...TabulatorController.targets,
-    'searchName',
+    'searchName', 'searchIdNumber',
     'btnCreate', 'btnCreateWrap',
   ];
 
@@ -87,6 +87,7 @@ export default class extends TabulatorController {
   getColumns() {
     return [
       { title: 'Nombre', field: 'Name', widthGrow: 3 },
+      { title: 'Cédula', field: 'EmsrIdeNumero', widthGrow: 2 },
       {
         title: 'Estado', field: 'Active', width: 120,
         formatter: (cell) => this.#statusBadge(cell.getValue() ? 'active' : 'inactive'),
@@ -112,9 +113,10 @@ export default class extends TabulatorController {
     const size = params.size || 10;
 
     const qp = new URLSearchParams({
-      name:     this.searchNameTarget.value.trim(),
-      page:     String(params.page || 1),
-      per_page: String(size),
+      name:             this.searchNameTarget.value.trim(),
+      issuer_id_number: this.searchIdNumberTarget.value.trim(),
+      page:             String(params.page || 1),
+      per_page:         String(size),
     });
 
     try {

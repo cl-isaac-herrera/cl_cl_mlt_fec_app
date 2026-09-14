@@ -7,11 +7,10 @@ module Api
   # Identification=&StartPos=&StepPos=` del API .NET por un recurso REST: el verbo
   # va en el método HTTP y la paginación en la query string (`CLAUDE.md` §28).
   #
-  # Los filtros por nombre legal, nombre comercial e identificación no se migran:
-  # el listado filtra solo por `name`, que además ES el nombre comercial. El legal
-  # y la identificación sí son columnas aparte (`issuer_legal_name`,
-  # `issuer_id_number`): filtrar por ellas es sumarlas al scope `search`, no falta
-  # el dato.
+  # El filtro por nombre legal no se migra: el listado filtra por `name` (el
+  # comercial) y por `issuer_id_number` (la cédula, columna "Cédula" del
+  # listado). El legal sí es una columna aparte (`issuer_legal_name`): filtrar
+  # por ella es sumarla al scope `search`, no falta el dato.
   #
   # `GET /api/companies` NO son las compañías del usuario de la sesión — esas son
   # `GET /api/profile/companies`.
@@ -39,14 +38,15 @@ module Api
       'show'  => 'Configurations_Companies_Update'
     }.freeze
 
-    # GET /api/companies?name=&page=1&per_page=10
+    # GET /api/companies?name=&issuer_id_number=&page=1&per_page=10
     #
     # Paginación por query string y total en el cuerpo, igual que el resto de los
     # listados migrados (`CLAUDE.md` §17 y §28). El .NET la pedía por los headers
     # `cl-dba-pagination-*` y devolvía el total pegado a cada fila
     # (`MaxQtyRowsFetch`).
     def index
-      scope = visible_companies.search(name: params[:name]).order(:name)
+      scope = visible_companies.search(name: params[:name], issuer_id_number: params[:issuer_id_number])
+                                .order(:name)
       total = scope.count
       items = scope.limit(per_page).offset((page - 1) * per_page)
 
@@ -118,14 +118,15 @@ module Api
       [requested, MAX_PER_PAGE].min
     end
 
-    # Solo lo que pinta el listado. Nombre legal, nombre comercial e
-    # identificación no salen de acá: el listado no los muestra (los devuelve
-    # `show`, para el formulario).
+    # Solo lo que pinta el listado. Nombre legal y nombre comercial no salen de
+    # acá: el listado no los muestra (los devuelve `show`, para el formulario).
+    # La identificación (`EmsrIdeNumero`) sí se muestra, como columna "Cédula".
     def serialize(company)
       {
-        Id:     company.id,
-        Name:   company.name,
-        Active: company.is_active
+        Id:            company.id,
+        Name:          company.name,
+        Active:        company.is_active,
+        EmsrIdeNumero: company.issuer_id_number
       }
     end
 

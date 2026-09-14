@@ -98,13 +98,19 @@ class Company < ApplicationRecord
     joins(:users_by_companies).where(users_by_companies: { user_id: user_id, is_active: true })
   }
 
-  # Filtro del listado de administración. Se aplica como "contiene"; en blanco no
-  # filtra nada. Solo por `name` por decisión de producto: el nombre legal, el
-  # comercial y la identificación sí son columnas y se podrían agregar acá.
-  scope :search, lambda { |name: nil|
-    next all if name.blank?
-
-    where(arel_table[:name].matches("%#{sanitize_sql_like(name.to_s.strip)}%"))
+  # Filtro del listado de administración. Cada parámetro se aplica como
+  # "contiene"; en blanco no filtra nada. Por decisión de producto solo
+  # `name` (el comercial) e `issuer_id_number` (la cédula) son filtrables — el
+  # nombre legal es columna pero no se ofrece como filtro.
+  scope :search, lambda { |name: nil, issuer_id_number: nil|
+    scope = all
+    scope = scope.where(arel_table[:name].matches("%#{sanitize_sql_like(name.to_s.strip)}%")) if name.present?
+    if issuer_id_number.present?
+      scope = scope.where(
+        arel_table[:issuer_id_number].matches("%#{sanitize_sql_like(issuer_id_number.to_s.strip)}%")
+      )
+    end
+    scope
   }
 
   # Alarma de vencimiento del certificado digital, la que pinta el toast del home.

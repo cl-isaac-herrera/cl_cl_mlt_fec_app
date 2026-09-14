@@ -48,15 +48,17 @@ RSpec.describe 'GET /api/companies', type: :request do
     expect(body['Code']).to eq(200)
   end
 
-  # Solo lo que pinta la tabla: nombre, estado y el id para las acciones. El
-  # nombre legal, el comercial y la identificación viven en SAP, no acá.
-  it 'expone únicamente el id, el nombre y el estado' do
+  # Solo lo que pinta la tabla: nombre, cédula, estado y el id para las acciones.
+  # El nombre legal y el comercial no salen de acá.
+  it 'expone únicamente el id, el nombre, la cédula y el estado' do
+    acme.update!(issuer_id_number: '3101822733')
     sign_in_with('Configurations_Companies_ListAccess')
 
     get '/api/companies'
 
     expect(body_data['Items'].first).to eq(
-      'Id' => acme.id, 'Name' => 'ACME S.A.', 'Active' => true
+      'Id' => acme.id, 'Name' => 'ACME S.A.', 'Active' => true,
+      'EmsrIdeNumero' => '3101822733'
     )
   end
 
@@ -237,6 +239,35 @@ RSpec.describe 'GET /api/companies', type: :request do
       get '/api/companies', params: { name: '  ' }
 
       expect(body_data['Total']).to eq(2)
+    end
+  end
+
+  describe 'filtro por cédula' do
+    before do
+      acme.update!(issuer_id_number: '3101822733')
+      UsersByCompany.create!(
+        user: user, company: Company.create!(name: 'Beta Industrial', issuer_id_number: '3101999999')
+      )
+      sign_in_with('Configurations_Companies_ListAccess')
+    end
+
+    it 'filtra como "contiene"' do
+      get '/api/companies', params: { issuer_id_number: '822733' }
+
+      expect(body_data['Items'].map { |c| c['Name'] }).to eq(['ACME S.A.'])
+      expect(body_data['Total']).to eq(1)
+    end
+
+    it 'en blanco no filtra nada' do
+      get '/api/companies', params: { issuer_id_number: '  ' }
+
+      expect(body_data['Total']).to eq(2)
+    end
+
+    it 'se combina con el filtro por nombre' do
+      get '/api/companies', params: { name: 'beta', issuer_id_number: '822733' }
+
+      expect(body_data['Total']).to eq(0)
     end
   end
 end
