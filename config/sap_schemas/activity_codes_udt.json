@@ -1,0 +1,33 @@
+{
+  "table_name": "@CL_FEC_ACTIVITYCODE",
+  "IsUDT": true,
+  "table_description": "FEC · Códigos de actividad",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "ActivityCode", "Description": "FEC · Código de actividad económica",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 6, "Mandatory": "tYES" },
+
+    { "Name": "Description", "Description": "FEC · Descripción de la actividad económica",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 254, "Mandatory": "tYES" },
+
+    { "Name": "CreatedAt", "Description": "FEC · Fecha ISO 8601 de creación del registro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tYES" },
+
+    { "Name": "CreatedBy", "Description": "FEC · Usuario que creó el registro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "UpdatedAt", "Description": "FEC · Fecha ISO 8601 de la última actualización",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "UpdatedBy", "Description": "FEC · Usuario que hizo la última actualización",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "Active", "Description": "FEC · Indica si el código de actividad está activo",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 1, "Mandatory": "tYES", "DefaultValue": "Y",
+      "ValidValues": [
+        { "Value": "Y", "Description": "Sí" },
+        { "Value": "N", "Description": "No" }
+      ]
+    }
+  ]
+}
