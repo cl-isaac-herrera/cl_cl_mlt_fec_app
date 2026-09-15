@@ -360,12 +360,12 @@ export default class extends Controller {
    * Carga de la pantalla de edición.
    *
    * Solo se piden los datos de las secciones que están migradas — "Datos
-   * Generales", "Hacienda (ATV)" y "Adjuntos", que salen de la misma petición.
-   * Las consultas de las otras secciones (`warehouse`, `Tax`, `currencies`,
-   * `currency-map`, `activity-codes`) se quitaron: van al proxy .NET, que hoy
-   * responde 401, así que no llenaban nada — solo sumaban cinco peticiones
-   * fallidas y demoraban el cierre del loader. Vuelven cuando se migre cada
-   * sección (TODOS.md → Compañías).
+   * Generales", "Hacienda (ATV)" y "Adjuntos", que salen de la misma petición,
+   * y "Códigos de actividad", que tiene su propio endpoint (UDT de SAP). Las
+   * consultas de las otras secciones (`warehouse`, `Tax`, `currencies`,
+   * `currency-map`) se quitaron: van al proxy .NET, que hoy responde 401, así
+   * que no llenaban nada — solo sumaban peticiones fallidas y demoraban el
+   * cierre del loader. Vuelven cuando se migre cada sección (TODOS.md → Compañías).
    *
    * Cada loader se oculta cuando resuelve LO SUYO, no cuando resuelven todas: el
    * `Promise.allSettled` + un único `hideSectionLoaders()` hacía que la sección
@@ -400,11 +400,25 @@ export default class extends Controller {
         });
       });
 
+    // Sección "Códigos de actividad": lista real desde la UDT de SAP
+    // (`Api::Companies::ActivityCodesController`). Solo trae los ACTIVOS: no
+    // hay un estado que editar en la pantalla, "eliminar" los saca de acá.
+    const activityCodes = this.#railsFetch(`/api/companies/${companyId}/activity_codes?per_page=19`)
+      .then((resp) => {
+        this.#activityCodes = (resp.Data?.Items || []).map(item => ({
+          Code:         item.Code,
+          ActivityCode: item.ActivityCode,
+          Description:  item.Description,
+        }));
+        this.#renderActivityCodes();
+      })
+      .catch(err => showToast(`No se pudieron cargar los códigos de actividad: ${err.message}`, 'error'));
+
     try {
       // El orden importa: las conexiones tienen que estar en el <select> antes de
       // aplicarle el valor de la compañía, o el `select.value = …` no encuentra
       // la opción y queda en blanco.
-      await Promise.all([connections, inboxes, general]);
+      await Promise.all([connections, inboxes, general, activityCodes]);
       if (this.#companyData) {
         this.#fillGeneralSection(this.#companyData);
         this.#fillAtvSection(this.#companyData);
@@ -414,6 +428,7 @@ export default class extends Controller {
       this.#hideLoader(this.loaderGeneralTarget);
       this.#hideLoader(this.loaderAtvTarget);
       this.#hideLoader(this.loaderAttachmentsTarget);
+      this.#hideLoader(this.loaderActivityCodesTarget);
     }
   }
 
@@ -425,6 +440,7 @@ export default class extends Controller {
     this.#showLoader(this.loaderGeneralTarget);
     this.#showLoader(this.loaderAtvTarget);
     this.#showLoader(this.loaderAttachmentsTarget);
+    this.#showLoader(this.loaderActivityCodesTarget);
   }
 
   #showLoader(loaderTarget) { loaderTarget?.classList.remove('hidden'); }
@@ -1439,16 +1455,57 @@ export default class extends Controller {
   }
 
   // ── Códigos de actividad ───────────────────────────────────────────────────
+  //
+  // Cada fila es un recurso propio en `Api::Companies::ActivityCodesController`
+  // (UDT `@CL_FEC_ACTIVITYCODE`, ver `Sap::ActivityCodes`), no una lista que se
+  // reemplaza entera. `Code` es la llave que asigna SAP: `null` mientras la fila
+  // no se ha guardado.
+  //
+  // No hay un estado "Activo" en la pantalla: un código que aparece en la lista
+  // está activo. "Eliminar" lo inactiva de inmediato (nunca `destroy` — un
+  // comprobante viejo pudo referenciarlo) y desaparece; si más tarde se agrega
+  // el MISMO código, el servidor lo reactiva solo (`Sap::ActivityCodes#create`),
+  // sin que esta pantalla tenga que saber que existía antes.
 
   addActivityCode() {
-    this.#activityCodes.push({ Code: '', Name: '' });
+    this.#activityCodes.push({ Code: null, ActivityCode: '', Description: '' });
     this.#renderActivityCodes();
   }
 
-  removeActivityCode(event) {
-    const idx = parseInt(event.currentTarget.dataset.index);
-    this.#activityCodes.splice(idx, 1);
-    this.#renderActivityCodes();
+  /**
+   * "Eliminar" de la fila. Una fila que nunca se guardó (sin `Code`) se quita
+   * sin llamar al servidor. Una ya guardada se INACTIVA (`PATCH …/deactivate`)
+   * y recién si eso responde bien se saca de la pantalla — no antes, para que
+   * un error de red no la haga desaparecer sin haberse desactivado de verdad.
+   */
+  async removeActivityCode(event) {
+    const idx  = parseInt(event.currentTarget.dataset.index);
+    const item = this.#activityCodes[idx];
+
+    if (!item.Code) {
+      this.#activityCodes.splice(idx, 1);
+      this.#renderActivityCodes();
+      return;
+    }
+
+    const confirmed = await confirm(
+      `¿Está seguro de que desea eliminar el código de actividad "${item.ActivityCode}"?`,
+      'Eliminar código de actividad',
+    );
+    if (!confirmed) return;
+
+    this.#showLoader(this.loaderActivityCodesTarget);
+    try {
+      await this.#railsFetch(`/api/companies/${this.companyIdValue}/activity_codes/${item.Code}/deactivate`,
+        { method: 'PATCH' });
+      this.#activityCodes.splice(idx, 1);
+      this.#renderActivityCodes();
+      showToast('Código de actividad eliminado con éxito.', 'success');
+    } catch (err) {
+      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al eliminar código de actividad', message: err.message });
+    } finally {
+      this.#hideLoader(this.loaderActivityCodesTarget);
+    }
   }
 
   #renderActivityCodes() {
@@ -1466,20 +1523,20 @@ export default class extends Controller {
       row.className = 'flex items-center gap-2';
       row.setAttribute('data-testid', 'activity-code-row');
       row.innerHTML = `
-        <input type="text" placeholder="Código (6)" maxlength="6" minlength="6"
-               value="${this.#esc(item.Code)}"
-               class="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <input type="text" placeholder="Nombre"
-               value="${this.#esc(item.Name)}"
+        <input type="text" placeholder="Código (máx. 6)" maxlength="6"
+               value="${this.#esc(item.ActivityCode)}"
+               class="w-28 flex-shrink-0 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <input type="text" placeholder="Descripción" maxlength="254"
+               value="${this.#esc(item.Description)}"
                class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
         <button type="button" data-index="${i}"
-                class="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors">
+                class="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors flex-shrink-0">
           <span class="material-icons text-base">delete_outline</span>
         </button>
       `;
-      const [codeInput, nameInput] = row.querySelectorAll('input');
-      codeInput.addEventListener('input', e => { this.#activityCodes[i].Code = e.target.value; this.#validateActivityCodes(); });
-      nameInput.addEventListener('input', e => { this.#activityCodes[i].Name = e.target.value; });
+      const [codeInput, descriptionInput] = row.querySelectorAll('input[type="text"]');
+      codeInput.addEventListener('input', e => { this.#activityCodes[i].ActivityCode = e.target.value; this.#validateActivityCodes(); });
+      descriptionInput.addEventListener('input', e => { this.#activityCodes[i].Description = e.target.value; });
       row.querySelector('button').addEventListener('click', e => this.removeActivityCode(e));
       container.appendChild(row);
     });
@@ -1487,28 +1544,69 @@ export default class extends Controller {
   }
 
   #validateActivityCodes() {
-    const codes  = this.#activityCodes.map(a => a.Code).filter(Boolean);
+    const codes  = this.#activityCodes.map(a => a.ActivityCode).filter(Boolean);
     const dupErr = codes.length !== new Set(codes).size;
     this.activityCodesDupErrorTarget.classList.toggle('hidden', !dupErr);
     return !dupErr;
   }
 
+  /**
+   * Guarda la sección: las filas nuevas (sin `Code`) se registran con `POST`
+   * —el servidor reactiva solo si el código coincide con uno eliminado antes—
+   * y las que ya existen se actualizan con `PATCH`, siempre y no solo las que
+   * cambiaron, mismo criterio que `saveGeneralData` (el formulario es el
+   * estado completo de cada fila).
+   *
+   * Se procesa una fila a la vez y en orden: si una falla, se corta ahí (con el
+   * motivo puesto por `Sap::ActivityCodes`, ya en español) y no se intentan las
+   * siguientes con la pantalla a medio guardar. Al final se vuelve a pedir la
+   * lista del servidor, haya o no fallado algo, para que las filas que sí se
+   * guardaron muestren su `Code` real y las que quedaron a medias conserven lo
+   * que el usuario escribió.
+   */
   async saveActivityCodes() {
     if (!this.#validateActivityCodes()) {
       showToast('Revise los códigos de actividad (duplicados).', 'error');
       return;
     }
+
     this.#showLoader(this.loaderActivityCodesTarget);
+    let failed = null;
     try {
-      await this.#apiFetch(`/api/Companies/${this.companyIdValue}/activity-codes`, {
-        method: 'PUT',
-        body:   JSON.stringify(this.#activityCodes.map(({ Code, Name }) => ({ Code, Name }))),
-      });
+      for (const item of this.#activityCodes) {
+        const payload = { ActivityCode: item.ActivityCode, Description: item.Description };
+
+        if (item.Code) {
+          await this.#railsFetch(`/api/companies/${this.companyIdValue}/activity_codes/${item.Code}`,
+            { method: 'PATCH', body: JSON.stringify(payload) });
+        } else {
+          const json = await this.#railsFetch(`/api/companies/${this.companyIdValue}/activity_codes`,
+            { method: 'POST', body: JSON.stringify(payload) });
+          item.Code = json.Data?.Code ?? item.Code;
+        }
+      }
       showToast('Códigos de actividad actualizados con éxito.', 'success');
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al actualizar códigos de actividad', message: err.message });
+      failed = err;
     } finally {
+      try {
+        const resp = await this.#railsFetch(`/api/companies/${this.companyIdValue}/activity_codes?per_page=19`);
+        const saved = resp.Data?.Items || [];
+        // Las filas que el servidor ya tiene se repintan con lo que quedó
+        // guardado; las que siguen sin `Code` (nunca llegaron a guardarse, por
+        // el corte al primer error) se conservan tal como el usuario las dejó.
+        this.#activityCodes = [
+          ...saved.map(item => ({ Code: item.Code, ActivityCode: item.ActivityCode, Description: item.Description })),
+          ...this.#activityCodes.filter(item => !item.Code),
+        ];
+        this.#renderActivityCodes();
+      } catch { /* si esto falla, se deja lo que ya estaba en pantalla */ }
+
       this.#hideLoader(this.loaderActivityCodesTarget);
+    }
+
+    if (failed) {
+      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al actualizar códigos de actividad', message: failed.message });
     }
   }
 

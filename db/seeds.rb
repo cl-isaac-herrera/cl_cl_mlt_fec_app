@@ -1015,6 +1015,35 @@ SL_RESOURCES_BRANCHES = [
    'U_CL_FEC_SUCURSALES(#Code#)', nil, 0]
 ].freeze
 
+# Códigos de actividad económica de la compañía, en la UDT
+# `@CL_FEC_ACTIVITYCODE` (`config/sap_schemas/activity_codes_udt.json`).
+# Reemplazan la tabla `ActivityCode` de la base del .NET
+# (`spGetActivityCodesByCompany`, `spSaveCompanyActivityCodes` — este último
+# reemplazaba la lista ENTERA en cada guardado). Los consume
+# `Sap::ActivityCodes` desde la sección "Códigos de actividad" del formulario
+# de compañías; sin `destroy`, un código se inactiva con `Active: N`.
+#
+# Mismo criterio que `SL_RESOURCES_BRANCHES` en todo lo demás: sin
+# `CompanyId` (la compañía ES la base de SAP), `$filter` lo arma el request y
+# no el catálogo, `$orderby` explícito para que `$top`/`$skip` no repita ni
+# salte filas entre páginas, y la llave del `get`/`update` SIN comillas
+# (`Code` es numérico, autoincremental).
+SL_RESOURCES_ACTIVITY_CODES = [
+  ['getActivityCodes',
+   'Códigos de actividad económica de la compañía (UDT)',
+   'U_CL_FEC_ACTIVITYCODE',
+   '$orderby=U_ActivityCode asc', 0],
+  ['getActivityCodeByCode',
+   'Código de actividad por su Code (UDT)',
+   'U_CL_FEC_ACTIVITYCODE(#Code#)', nil, 0],
+  ['createActivityCode',
+   'Registra un código de actividad económica (UDT)',
+   'U_CL_FEC_ACTIVITYCODE', nil, 0],
+  ['updateActivityCode',
+   'Actualiza un código de actividad económica (UDT)',
+   'U_CL_FEC_ACTIVITYCODE(#Code#)', nil, 0]
+].freeze
+
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
   # sin haber escrito ninguna fila.
@@ -1026,7 +1055,7 @@ ActiveRecord::Base.transaction do
                      SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE +
                      SL_RESOURCES_MAIL_DOCUMENT_INFO + SL_RESOURCES_DOCUMENT_ERROR_DETAILS +
                      SL_RESOURCES_DOCUMENT_XML_URLS + SL_RESOURCES_DOC_SYNC_ATTEMPTS +
-                     SL_RESOURCES_BRANCHES
+                     SL_RESOURCES_BRANCHES + SL_RESOURCES_ACTIVITY_CODES
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el

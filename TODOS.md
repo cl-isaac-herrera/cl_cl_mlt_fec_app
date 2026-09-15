@@ -809,8 +809,18 @@ controller en `app/controllers/api/companies/`. Faltan las tres restantes:
       el generador del PDF (`CreatePdf(DocId, FEPrintFormat)`). Un blob con nombre de hash
       dejaría a los dos sin poder abrir nada. La mecánica quedó compartida con el
       certificado en `CompanyFiles::Store` (`CLAUDE.md` §34).
-- [ ] `PATCH .../economic_activities` — sección "Códigos de actividad". **No tiene tabla en
-      la base nueva**: hay que crearla primero.
+- [x] Sección "Códigos de actividad" — hecho, distinto de lo planteado acá. **No fue una
+      tabla en la base de la aplicación**: los códigos viven en la UDT de SAP
+      `@CL_FEC_ACTIVITYCODE` (`config/sap_schemas/activity_codes_udt.json`), igual criterio
+      que `Sap::Branches`. Cada código es su propio recurso —
+      `GET/POST/PATCH /api/companies/:company_id/activity_codes(/:id)` +
+      `PATCH …/:id/deactivate` (`Api::Companies::ActivityCodesController` +
+      `Sap::ActivityCodes`)— y no hay `PUT .../economic_activities` que reemplace la lista
+      entera como hacía `spSaveCompanyActivityCodes` en el .NET. **No hay un estado "Activo"
+      visible en la pantalla:** "eliminar" inactiva (nunca `destroy`) y desaparece de la
+      lista; volver a dar de alta el MISMO código lo reactiva solo, sin que el usuario tenga
+      que saber que existía antes. Falta correr `rake sap:schema:sync` contra cada
+      instalación viva para que la UDT exista en SAP.
 - [ ] `PATCH .../purchase_invoice` — sección "Factura a proveedor".
       `use_ap_invoice`, `auto_send_ap_inv`, `purchase_invoice_series`,
       `default_xml_tax_code`, `default_warehouse`. Las tolerancias del XML y el mapeo de
@@ -901,9 +911,10 @@ controller en `app/controllers/api/companies/`. Faltan las tres restantes:
 
 ### Escritura que sigue en el .NET
 
-- [ ] **Las secciones "Adicional", "Códigos de actividad" y "Factura a proveedor" siguen
-      llamando a `#sendEditRequest`.** Van a `PATCH /api/Companies` con el shape viejo y hoy
-      responden 401. Se reemplazan con los endpoints de arriba.
+- [ ] **Las secciones "Adicional" y "Factura a proveedor" siguen llamando a
+      `#sendEditRequest`.** Van a `PATCH /api/Companies` con el shape viejo y hoy responden
+      401. Se reemplazan con los endpoints de arriba. "Códigos de actividad" ya salió de
+      esta lista: usa `#railsFetch` contra `Api::Companies::ActivityCodesController`.
       **Ojo con los dos secretos:** `#buildCompanyFormData` manda `CertPin` y `TokenPass`
       con lo que haya en pantalla, que desde esta migración es siempre vacío (el valor
       guardado no vuelve del servidor). Si esos endpoints revivieran antes de migrarse,
@@ -949,7 +960,11 @@ proxy .NET:
       `…_DownloadFEPrintFormat`, o su variante global) y según haya archivo guardado, con el
       motivo en el tooltip (§26). El de "Restablecer formato" sigue apuntando al .NET (ver
       más arriba).
-- [ ] **Códigos de actividad** — no tienen tabla en la base nueva ni UDT declarada.
+- [x] **Códigos de actividad** — cableada. La sección lista, crea y actualiza contra
+      `Api::Companies::ActivityCodesController` (UDT `@CL_FEC_ACTIVITYCODE`). Sin estado
+      "Activo" visible: el botón "eliminar" inactiva (`PATCH …/deactivate`, nunca
+      `destroy`) y la fila desaparece de la lista; volver a ingresar el mismo código la
+      reactiva sola, del lado del servidor.
 - [ ] **Factura a proveedor** — `PurchInvSeriesNum`, `DefaultXmlTaxCode` y
       `DefaultWarehouse` ya llegan en la respuesta. Falta exponer `UseApInvoice`
       (`use_ap_invoice`) y `auto_send_ap_inv` en `serialize_detail`, y cablear la sección.

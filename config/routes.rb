@@ -66,6 +66,24 @@ Rails.application.routes.draw do
       resource :logo, only: [:show], module: :companies, controller: 'logo'
       resource :print_format, only: [:show], module: :companies,
                               controller: 'print_format'
+
+      # Sección "Códigos de actividad". Reemplaza
+      # `PUT /api/Companies/:companyId/activity-codes` del .NET, que reemplazaba
+      # la lista entera en cada guardado. Acá cada código es su propio recurso,
+      # igual que `branches` (§28): el `companyId` sale del path (la compañía
+      # que se está editando, no necesariamente la activa de la sesión) y el
+      # alta/edición van uno a la vez.
+      #
+      # Sin `destroy`: "eliminar" en la pantalla es `PATCH …/deactivate`, no un
+      # DELETE — un comprobante viejo pudo referenciar el código. No hay un
+      # campo "Activo" que el usuario vea o edite: dar de alta el mismo código
+      # que se había desactivado lo reactiva solo (`Sap::ActivityCodes#create`).
+      #
+      # `:id` es el `Code` de la UDT `@CL_FEC_ACTIVITYCODE` (la llave que
+      # autoincrementa SAP), no el código de actividad ante Hacienda.
+      resources :activity_codes, only: %i[index show create update], module: :companies do
+        patch :deactivate, on: :member
+      end
     end
 
     # `index` son los permisos EFECTIVOS del usuario de la sesión; `catalog` es
