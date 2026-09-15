@@ -652,11 +652,17 @@ SL_RESOURCES_STATUS_UPDATES = [
 #   U_CL_FEC_ErrorDetails       → ErrorMessage
 #   U_CL_FEC_XmlSentUrl         → XmlSentUrl
 #   U_CL_FEC_XmlResponseUrl     → XmlResponseUrl
+#   U_CL_FEC_Clave              → Clave
+#   U_CL_FEC_NumConsecutivo     → NumeroConsecutivo
 #
-# `DocEntry`, `DocDate`, `CardCode`, `CardName`, `DocCurrency`, `DocNum`,
-# `DocTotal`, `U_CL_FEC_Clave` y `U_CL_FEC_NumConsecutivo` SÍ conservan su
-# nombre. La vista además expone `PdfUrl`, que no existe en la entidad
-# estándar — pendiente de aprovechar para la acción "Ver/Descargar
+# ⚠️ Corregido: esta nota decía antes que `U_CL_FEC_Clave`/
+# `U_CL_FEC_NumConsecutivo` SÍ conservaban su nombre de UDF. Es falso contra la
+# vista real — pedirle esos dos nombres devuelve `nil` sin ningún error, y eso
+# dejaba la columna "N° FE" y la Clave del panel de información siempre vacías.
+#
+# `DocEntry`, `DocDate`, `CardCode`, `CardName`, `DocCurrency` y `DocNum` SÍ
+# conservan su nombre. La vista además expone `PdfUrl`, que no existe en la
+# entidad estándar — pendiente de aprovechar para la acción "Ver/Descargar
 # comprobante" (`TODOS.md` → Emisión de documentos, hoy bloqueada porque el
 # PDF salía de un Crystal Report sin URL accesible).
 #

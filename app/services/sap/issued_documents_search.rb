@@ -105,9 +105,12 @@ module Sap
         date_range,
         text_contains('FederalTaxID', filters[:cedula]),
         text_contains('DocCurrency', filters[:codigo_moneda]),
-        text_contains('U_CL_FEC_Clave', filters[:clave]),
+        # `Clave`/`NumeroConsecutivo`, no `U_CL_FEC_Clave`/`U_CL_FEC_NumConsecutivo`:
+        # la vista renombra estos dos UDFs al exponerlos (ver `#mapDocument` en
+        # `documents_issued_controller.js` y el comentario corregido en `db/seeds.rb`).
+        text_contains('Clave', filters[:clave]),
         text_contains('CardName', filters[:receptor]),
-        text_contains('U_CL_FEC_NumConsecutivo', filters[:consecutivo_fe]),
+        text_contains('NumeroConsecutivo', filters[:consecutivo_fe]),
         numeric_eq('DocNum', filters[:consecutivo]),
         # `FEDocumentStatus`, no `U_CL_FEC_Status`: la vista
         # (`CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery`) renombra el UDF al

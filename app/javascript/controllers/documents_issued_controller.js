@@ -314,10 +314,15 @@ export default class extends TabulatorController {
     return {
       Id: doc.DocEntry,
       DocType: docType,
-      NumeroConsecutivo: doc.U_CL_FEC_NumConsecutivo,
+      // `NumeroConsecutivo`/`Clave`, no `U_CL_FEC_NumConsecutivo`/`U_CL_FEC_Clave`:
+      // la vista (`CL_D_CL_MLT_FEC_SLT_DOCDISPLAYINFO_B1SLQuery`) también renombra
+      // estos dos UDFs al exponerlos, igual que `FEDocumentStatus`/`XmlSentUrl`/
+      // `XmlResponseUrl` más abajo — corregido en `db/seeds.rb` (documentaba lo
+      // contrario, y por eso la columna "N° FE" y la Clave del panel quedaban vacías).
+      NumeroConsecutivo: doc.NumeroConsecutivo,
       Consecutivo: doc.DocNum,
       RcprNombre: doc.CardName,
-      Clave: doc.U_CL_FEC_Clave,
+      Clave: doc.Clave,
       // `ErrorMessage` (la vista renombra el UDF `U_CL_FEC_ErrorDetails`) NO
       // viaja acá a propósito: la sincronización lo pisa constantemente
       // (reprocesos, `CheckSentDocumentsJob`), así que el valor de esta
