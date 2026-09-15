@@ -7,8 +7,9 @@ module Hacienda
     # cantidad/precio/descuento/impuesto/totales de la línea.
     #
     # Origen: `Validations.cs#OwnValidations`, bloque de líneas (reglas #17,
-    # #19-41 del reporte de la migración). Excluidas por no aplicar a Factura
-    # Electrónica: #18 (partida arancelaria, solo Factura de Exportación).
+    # #19-41 del reporte de la migración). La #18 (partida arancelaria) es
+    # exclusiva de Factura Electrónica de Exportación — ver
+    # `#partida_arancelaria_requerida`.
     #
     # Los códigos de impuesto `08` (IVA Régimen de Bienes Usados) y el monto de
     # exportación (`MontoExportacion`) están BLOQUEADOS a propósito (reglas #24
@@ -27,9 +28,13 @@ module Hacienda
 
       # @param line [Hash] un elemento de `document['DetalleServicio']`.
       # @param line_number [Integer] para identificar la línea en el mensaje.
-      def initialize(line, line_number)
+      # @param doc_type [String] código de Hacienda. Sin default a propósito:
+      #   de él depende qué reglas se eximen (REP, FEE) y un default silencioso
+      #   haría que un tipo nuevo herede la regla equivocada.
+      def initialize(line, line_number, doc_type:)
         @line = line
         @line_number = line_number
+        @doc_type = doc_type
       end
 
       # @return [Array<Hacienda::DocumentValidationError>]
@@ -41,6 +46,7 @@ module Hacienda
           naturaleza_descuento_requerida,
           sub_total_cuadra,
           base_imponible_requerida,
+          partida_arancelaria_requerida,
           *validate_impuesto,
           *validate_exoneracion,
           # Regla #41: a diferencia de #33-40, aplica SIEMPRE — con o sin
@@ -53,10 +59,12 @@ module Hacienda
 
       private
 
-      attr_reader :line, :line_number
+      attr_reader :line, :line_number, :doc_type
 
-      # Regla #17.
+      # Regla #17. Exenta en REP (`Validations.cs` L413): sus líneas son
+      # renglones de pago, no de producto/servicio, y no llevan CABYS.
       def cabys_requerido
+        return nil if doc_type == DocType::REP
         return nil if line['CodigoCABYS'].present?
 
         error('El código CABYS es requerido.', field: 'CodigoCABYS')
@@ -99,7 +107,14 @@ module Hacienda
       end
 
       # Regla #22: `SubTotal` tiene que ser `MontoTotal − MontoDescuento`.
+      # Exenta en REP (`Validations.cs` L453): el XSD documenta que en REP
+      # `SubTotal` es editable y corresponde al monto del PAGO a registrar
+      # para el cálculo del IVA, no a una resta contra `MontoTotal` — un pago
+      # parcial legítimamente deja `SubTotal` por debajo de `MontoTotal` sin
+      # que haya descuento de por medio.
       def sub_total_cuadra
+        return nil if doc_type == DocType::REP
+
         monto_total = line['MontoTotal']
         descuento   = line.dig('Descuento', 'MontoDescuento') || BigDecimal(0)
         sub_total   = line['SubTotal']
@@ -113,8 +128,11 @@ module Hacienda
       end
 
       # Regla #23: solo se exige > 0 cuando el impuesto es IVA de cálculo
-      # especial (07) — no es una obligatoriedad general del campo.
+      # especial (07) — no es una obligatoriedad general del campo. Exenta en
+      # FEE y REP (`Validations.cs` L462): ninguno de los dos declara
+      # `BaseImponible` en su XSD.
       def base_imponible_requerida
+        return nil if [DocType::FEE, DocType::REP].include?(doc_type)
         return nil unless line.dig('Impuesto', 'Codigo') == '07'
 
         base = line['BaseImponible']
@@ -122,6 +140,18 @@ module Hacienda
 
         error('La base imponible es requerida cuando el impuesto es de cálculo especial (07).',
               field: 'BaseImponible')
+      end
+
+      # Regla propia de FEE (`Validations.cs` L422-427): partida arancelaria
+      # obligatoria cuando la línea es una venta de mercancía — es decir, su
+      # unidad de medida no es una de las de `UNIDADES_DE_SERVICIO`.
+      def partida_arancelaria_requerida
+        return nil unless doc_type == DocType::FEE
+        return nil if UNIDADES_DE_SERVICIO.include?(line['UnidadMedida'])
+        return nil if line['PartidaArancelaria'].present?
+
+        error('La partida arancelaria es requerida cuando la línea es una venta de ' \
+              'mercancía en Factura Electrónica de Exportación.', field: 'PartidaArancelaria')
       end
 
       def validate_impuesto

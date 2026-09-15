@@ -3,8 +3,8 @@
 require 'rails_helper'
 
 RSpec.describe Hacienda::Validations::SummaryTotalsValidator do
-  def errors_for(document) = described_class.new(document).call
-  def fields_for(document) = errors_for(document).map(&:field)
+  def errors_for(document, doc_type: DocType::FE) = described_class.new(document, doc_type: doc_type).call
+  def fields_for(document, doc_type: DocType::FE) = errors_for(document, doc_type: doc_type).map(&:field)
 
   it 'no reporta nada para un documento consistente' do
     expect(errors_for(valid_unified_document)).to eq([])
@@ -118,6 +118,46 @@ RSpec.describe Hacienda::Validations::SummaryTotalsValidator do
 
         expect(errors_for(document)).to eq([])
       end
+    end
+  end
+
+  # REP no tiene la forma de una venta: su `ResumenFactura` no declara
+  # `TotalGravado`/`TotalExento`/etc., así que corre un bloque de fórmulas
+  # propio en vez del recalculo/cuadre general de arriba.
+  describe 'REP (Recibo Electrónico de Pago)' do
+    def rep_document(resumen_overrides = {})
+      document = valid_unified_document
+      document['DetalleServicio'] = [valid_line('MontoTotal' => BigDecimal(150))]
+      document['ResumenFactura'] = {
+        'TotalVenta' => BigDecimal(150), 'TotalVentaNeta' => BigDecimal(150)
+      }.merge(resumen_overrides)
+      document
+    end
+
+    it 'no reporta nada cuando TotalVenta es la suma de MontoTotal y TotalVentaNeta es igual' do
+      expect(errors_for(rep_document, doc_type: DocType::REP)).to eq([])
+    end
+
+    it 'no corre el recalculo/cuadre general de FE aunque el resumen no tenga esos campos' do
+      # Sin TotalGravado/TotalExento/etc.: si corriera el bloque general, un
+      # `suma_igual` trataría cada campo ausente como cero y rechazaría
+      # cualquier TotalVenta real declarado.
+      expect(errors_for(rep_document, doc_type: DocType::REP)).to eq([])
+    end
+
+    it 'detecta que TotalVenta no coincide con la suma de los montos totales de las líneas' do
+      # TotalVentaNeta se ajusta junto con TotalVenta para aislar la regla que
+      # se quiere probar: la de TotalVentaNeta (TotalVenta == TotalVentaNeta)
+      # se prueba aparte, más abajo.
+      document = rep_document('TotalVenta' => BigDecimal(999), 'TotalVentaNeta' => BigDecimal(999))
+
+      expect(fields_for(document, doc_type: DocType::REP)).to eq(['ResumenFactura.TotalVenta'])
+    end
+
+    it 'detecta que TotalVentaNeta no es igual a TotalVenta' do
+      document = rep_document('TotalVentaNeta' => BigDecimal(999))
+
+      expect(fields_for(document, doc_type: DocType::REP)).to eq(['ResumenFactura.TotalVentaNeta'])
     end
   end
 end

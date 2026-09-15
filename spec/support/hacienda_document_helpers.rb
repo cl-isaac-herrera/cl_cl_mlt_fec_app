@@ -133,6 +133,72 @@ module HaciendaDocumentHelpers
     }.merge(overrides)
   end
 
+  # REP (Recibo Electrónico de Pago) tiene una forma propia y mucho más chica:
+  # sin `CodigoActividadEmisor`/`CodigoActividadReceptor`, sin
+  # `CondicionVentaOtros`/`PlazoCredito`, sin `OtrosCargos`, líneas sin
+  # `Cantidad`/`PrecioUnitario`/`CodigoCABYS`, y un `ResumenFactura` con solo
+  # `TotalVenta`/`TotalVentaNeta`/`TotalDesgloseImpuesto`/`TotalImpuesto`/
+  # `MedioPago`/`TotalComprobante` — verificado contra
+  # `ReciboElectronicoPago_V4.4.xsd`. `TotalVenta` es la suma de `MontoTotal`
+  # de las líneas y `TotalVentaNeta` es igual a `TotalVenta` (REP no tiene
+  # descuentos).
+  def valid_rep_document
+    {
+      'NumeroConsecutivo' => '00100001100000000001',
+      'Clave' => '5' * 50,
+      'ProveedorSistemas' => '3101822733',
+      'FechaEmision' => '2026-09-05T10:00:00-06:00',
+      'CodigoActividadEmisor' => nil,
+      'CodigoActividadReceptor' => nil,
+      'CondicionVenta' => '09',
+      'CondicionVentaOtros' => nil,
+      'PlazoCredito' => nil,
+      'Emisor' => {
+        'Nombre' => 'ACME S.A.',
+        'Identificacion' => { 'Tipo' => '02', 'Numero' => '3101822733' },
+        'Registrofiscal8707' => nil,
+        'NombreComercial' => nil,
+        'Ubicacion' => nil,
+        'OtrasSenasExtranjero' => nil,
+        'Telefono' => nil,
+        'CorreoElectronico' => 'facturas@acme.cr'
+      },
+      'Receptor' => {
+        'Nombre' => 'Cliente de prueba',
+        'Identificacion' => { 'Tipo' => '01', 'Numero' => '123456789' },
+        'IdentificacionExtranjero' => nil,
+        'NombreComercial' => nil,
+        'Ubicacion' => nil,
+        'OtrasSenasExtranjero' => nil,
+        'Telefono' => nil,
+        'CorreoElectronico' => 'cliente@example.com'
+      },
+      'DetalleServicio' => [valid_rep_line],
+      'ResumenFactura' => {
+        'MedioPago' => [],
+        'CodigoTipoMoneda' => { 'CodigoMoneda' => 'CRC', 'TipoCambio' => BigDecimal(1) },
+        'TotalVenta' => BigDecimal(150), 'TotalVentaNeta' => BigDecimal(150),
+        'TotalDesgloseImpuesto' => [{ 'Codigo' => '01', 'CodigoTarifaIVA' => '08',
+                                      'TotalMontoImpuesto' => BigDecimal(0) }],
+        'TotalImpuesto' => BigDecimal(0),
+        'TotalComprobante' => BigDecimal(150)
+      },
+      'InformacionReferencia' => [valid_reference],
+      'Otros' => [],
+      'OtrosCargos' => []
+    }
+  end
+
+  def valid_rep_line(overrides = {})
+    {
+      'NumeroLinea' => 1, 'Detalle' => 'Pago de factura 001-01',
+      'MontoTotal' => BigDecimal(150), 'SubTotal' => BigDecimal(150),
+      'Impuesto' => { 'Codigo' => '01', 'CodigoImpuestoOTRO' => nil, 'CodigoTarifaIVA' => '08',
+                      'Tarifa' => nil, 'FactorCalculoIVA' => nil, 'Monto' => BigDecimal(0) },
+      'ImpuestoNeto' => BigDecimal(0), 'MontoTotalLinea' => BigDecimal(150)
+    }.merge(overrides)
+  end
+
   def valid_resumen_factura(overrides = {})
     {
       'MedioPago' => [],

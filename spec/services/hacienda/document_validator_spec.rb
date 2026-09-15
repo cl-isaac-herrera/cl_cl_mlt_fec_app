@@ -12,12 +12,8 @@ RSpec.describe Hacienda::DocumentValidator do
       expect(described_class.validates?(DocType::ND)).to be(true)
       expect(described_class.validates?(DocType::NC)).to be(true)
       expect(described_class.validates?(DocType::FEC)).to be(true)
-    end
-
-    # Sus reglas todavía no se revisaron una por una contra `Validations.cs`.
-    it 'no cubre los tipos que todavía no se migran' do
-      expect(described_class.validates?(DocType::FEE)).to be(false)
-      expect(described_class.validates?(DocType::REP)).to be(false)
+      expect(described_class.validates?(DocType::FEE)).to be(true)
+      expect(described_class.validates?(DocType::REP)).to be(true)
     end
   end
 
@@ -291,6 +287,101 @@ RSpec.describe Hacienda::DocumentValidator do
       document['DetalleServicio'] = [valid_line('CodigoCABYS' => nil)]
 
       expect(validate_fec(document).errors.map(&:field)).to include('CodigoCABYS')
+    end
+  end
+
+  # FEE comparte casi toda la forma de la factura de venta: mismos roles,
+  # mismo cuadre de totales. Sus diferencias propias son la partida
+  # arancelaria y que exige al menos una línea.
+  describe 'factura electrónica de exportación' do
+    def validate_fee(document) = validate(document, doc_type: DocType::FEE)
+
+    it 'acepta una factura de exportación consistente' do
+      expect(validate_fee(valid_unified_document)).to be_valid
+    end
+
+    # `Validations.cs` L422-427.
+    it 'exige la partida arancelaria en una línea de mercancía' do
+      document = valid_unified_document
+      document['DetalleServicio'] = [valid_line('PartidaArancelaria' => nil, 'UnidadMedida' => 'Unid')]
+
+      expect(validate_fee(document).errors.map(&:field)).to include('PartidaArancelaria')
+    end
+
+    # `Validations.cs` L289, el mismo mensaje que el legacy da para FEE y FEC.
+    it 'exige al menos una línea de detalle' do
+      document = valid_unified_document
+      document['DetalleServicio'] = []
+
+      expect(validate_fee(document).errors.map(&:message)).to include(
+        'Factura electrónica de exportación debe llevar al menos una línea de detalle.'
+      )
+    end
+
+    # `Validations.cs` L817: la lista de exentos del bloque que revisa por
+    # dentro incluye a FEE (`09`).
+    it 'no revisa por dentro la referencia que trae' do
+      document = valid_unified_document
+      document['InformacionReferencia'] = [{ 'TipoDocIR' => '99', 'Numero' => nil }]
+
+      expect(validate_fee(document)).to be_valid
+    end
+  end
+
+  # REP no tiene la forma de una venta: sin código de actividad, sin otros
+  # cargos, con un `ResumenFactura` reducido a `TotalVenta`/`TotalVentaNeta`.
+  describe 'recibo electrónico de pago' do
+    def validate_rep(document) = validate(document, doc_type: DocType::REP)
+
+    it 'acepta un recibo de pago consistente' do
+      expect(validate_rep(valid_rep_document)).to be_valid
+    end
+
+    it 'exige que diga qué factura paga' do
+      document = valid_rep_document
+      document['InformacionReferencia'] = []
+
+      result = validate_rep(document)
+
+      expect(result).not_to be_valid
+      expect(result.errors.map(&:message)).to include(
+        'Recibo electrónico de pago debe indicar el documento al que se refiere ' \
+        'en la información de referencia.'
+      )
+    end
+
+    it 'no exige el código de actividad del emisor' do
+      document = valid_rep_document
+      document['CodigoActividadEmisor'] = nil
+
+      expect(validate_rep(document)).to be_valid
+    end
+
+    it 'acepta condiciones de venta 09 y 11, exclusivas de REP' do
+      expect(validate_rep(valid_rep_document.merge('CondicionVenta' => '11'))).to be_valid
+    end
+
+    it 'rechaza la condición de venta de REP para otros tipos de documento' do
+      document = valid_unified_document.merge('CondicionVenta' => '09')
+
+      expect(validate(document).errors.map(&:field)).to include('CondicionVenta')
+    end
+
+    it 'no exige el código CABYS ni cuadra el subtotal contra la línea' do
+      document = valid_rep_document
+      # Pago parcial: SubTotal queda por debajo de MontoTotal sin que haya
+      # descuento — MontoTotalLinea sí se sigue cuadrando (regla #41, aplica
+      # siempre).
+      document['DetalleServicio'] = [valid_rep_line('SubTotal' => BigDecimal(100), 'MontoTotalLinea' => BigDecimal(100))]
+
+      expect(validate_rep(document)).to be_valid
+    end
+
+    it 'no revisa otros cargos: el tipo no los declara' do
+      document = valid_rep_document
+      document['OtrosCargos'] = [{ 'TipoDocumentoOC' => '77' }] # sería inválido si se revisara
+
+      expect(validate_rep(document)).to be_valid
     end
   end
 end

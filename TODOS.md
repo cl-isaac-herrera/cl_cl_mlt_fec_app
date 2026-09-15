@@ -1097,7 +1097,7 @@ están (`db/migrate/20260821120000_create_settings.rb`, `app/models/setting.rb`,
 
 ---
 
-## Esquemas XSD de Hacienda — administración migrada, validación sin cablear
+## Esquemas XSD de Hacienda — administración y validación migradas
 
 Los nueve `appSettings` del .NET (`CLVS_FE.API/Web.config`: `FEXSDPath`,
 `NCXSDPath`, … `ACCEPTXSDMailParser`) eran rutas absolutas al disco de aquel
@@ -1108,6 +1108,9 @@ compila en memoria (`app/services/hacienda/schema_store.rb`,
 `app/services/hacienda/schema_upload.rb`,
 `app/controllers/api/hacienda_schemas_controller.rb`,
 `db/migrate/20260912170000_add_hacienda_xsd_settings.rb`). Ver `CLAUDE.md` §40.
+Y ahora también **la validación**: `Documents::Issuer#validate_schema!` corre
+justo lo que describía el punto pendiente de abajo. Sigue abierto lo que era
+independiente de cablear la llamada: qué archivo se sube y con qué contenido.
 
 - [x] **Nueve ajustes en el grupo `HACIENDA_XSD`.** Uno por tipo de comprobante
       (`_01`, `_02`, `_03`, `_04`, `_08`, `_09`, `_10`) más `MENSAJE_RECEPTOR` y
@@ -1127,21 +1130,25 @@ compila en memoria (`app/services/hacienda/schema_store.rb`,
       la decide el servidor, así que aceptarla del cuerpo es lo que §34 prohíbe
       para `cert_path`: el recurso es el esquema y su cuerpo es multipart.
 
-- [ ] **⚠️ Falta cablear la validación XSD en la emisión.** Hoy
-      `Documents::Issuer` valida con `Hacienda::DocumentValidator` y nada más:
-      **ningún comprobante se coteja contra su XSD**, aunque el archivo esté
-      cargado. El legacy corre las dos validaciones y el XSD va PRIMERO
-      (`Validations.cs#ValidateDocument`, L195-224).
-      **Dónde va:** entre `Hacienda::XmlBuilder#call` y `signer.sign`, sobre el
-      XML ya generado — validar antes de firmar es el criterio que ya sigue esa
-      clase.
-      **Decisión tomada sobre el ajuste sin cargar:** el documento **queda en
-      error**, con el detalle de que no se encuentra el archivo XSD configurado.
-      `Hacienda::SchemaStore::NotConfigured` ya levanta con ese mensaje exacto,
-      listo para que el job lo escriba en la cola.
+- [x] **Validación XSD cableada en la emisión.**
+      `Documents::Issuer#validate_schema!` corre entre `Hacienda::XmlBuilder#call`
+      y `signer.sign`, sobre el XML ya generado — el legacy corre su equivalente
+      ANTES de las reglas de negocio (`Validations.cs#ValidateDocument`,
+      L195-224), pero contra un objeto intermedio que serializaba aparte; acá no
+      existe ese objeto, así que el XSD tiene que esperar a que exista el XML
+      real. Reutiliza `Documents::Issuer::ValidationFailed` —los errores de
+      `Nokogiri::XML::Schema#validate` responden a `#message` igual que un
+      `Hacienda::DocumentValidationError`—, así que `SyncIssuedDocumentsJob` no
+      necesita un `rescue` aparte para el rechazo. Lo que sí se agregó al job:
+      `Hacienda::SchemaStore::NotConfigured`/`InvalidSchema` se tratan igual que
+      un certificado o un ajuste de Hacienda sin configurar (`:sin_configuracion`,
+      `warn`, no `error`) — es el mismo estado normal de una instalación a medio
+      configurar, no un incidente. Specs: `spec/services/documents/issuer_spec.rb`
+      ("validación del XSD") y `spec/jobs/sync_issued_documents_job_spec.rb`.
 
-- [ ] **⚠️ Antes de cablearlo: los XSD del legacy NO son los oficiales de
-      Hacienda.** `legacy/apis/clvsfesync4.3/CLVS_FE.DAO/Docs/*_V4.4.xsd` son
+- [ ] **⚠️ Antes de subir los XSD definitivos en una instalación real: los del
+      legacy NO son los oficiales de Hacienda.**
+      `legacy/apis/clvsfesync4.3/CLVS_FE.DAO/Docs/*_V4.4.xsd` son
       copias con la raíz renombrada (`DocumentoFETE`, `DocumentoNCND`) y **sin
       `targetNamespace`**, porque el legacy no valida el XML que manda: serializa
       un objeto intermedio (`GetData.GetDocumentToValidateFETE` +
@@ -1151,18 +1158,31 @@ compila en memoria (`app/services/hacienda/schema_store.rb`,
       todo** con `No matching global declaration available for the validation
       root` — verificado. Lo que hay que cargar es el XSD **oficial** publicado
       por Hacienda, que es más estricto que lo que el legacy comprueba hoy:
-      antes de encender la validación hay que correr una tanda de documentos
-      reales contra él y ver qué aparece.
+      antes de que una instalación real dependa de esto hay que correr una
+      tanda de documentos reales contra él y ver qué aparece.
 
-- [ ] **El XSD oficial trae un `<xs:import>` de `xmldsig` que hay que quitar.**
-      Un esquema construido desde memoria no tiene ruta base, así que libxml2 no
-      resuelve NINGÚN import —ni relativo ni remoto— y el archivo se rechaza al
-      subirlo. El legacy resolvió lo mismo dejando ese import **comentado** en
-      sus copias. Hay que documentarlo para quien instala, o resolverlo en el
-      producto: inlinear `xmldsig-core-schema.xsd` en el archivo que se sube, o
-      dejar que `SchemaUpload` lo incorpore por su cuenta. **Sacar el import no
-      pierde nada hoy**, porque la validación corre ANTES de firmar y el
-      elemento `Signature` todavía no existe en el XML.
+- [ ] **⚠️ El XSD oficial trae un `<xs:import>` de `xmldsig` — y NO alcanza con
+      quitar solo esa línea, hay que quitar TAMBIÉN el `ref="ds:Signature"`.**
+      Confirmado con el archivo real (2026-09-15): un esquema construido desde
+      memoria no tiene ruta base, así que libxml2 no resuelve NINGÚN import —ni
+      relativo ni remoto— y comentar únicamente el
+      `<xs:import namespace="…xmldsig#" schemaLocation="../../xmldsig-core-schema.xsd"/>`
+      deja colgada la referencia
+      `<xs:element ref="ds:Signature" minOccurs="1" maxOccurs="5"/>` que cierra
+      la secuencia de cada documento — eso es un `ERROR` de compilación, no un
+      `WARNING`, y `SchemaUpload` rechaza el archivo igual.
+      El legacy (`legacy/…/Docs/FacturaElectronica_V4.4.xsd:3` y `:959`) comentó
+      **las dos líneas**, no solo el import — es el patrón a replicar. Documentarlo
+      para quien instala: comentar/borrar el `<xs:import>` Y la línea
+      `<xs:element ref="ds:Signature" …/>` de cada uno de los nueve XSD antes de
+      subirlo (o resolverlo en el producto: inlinear `xmldsig-core-schema.xsd`, o
+      que `SchemaUpload` lo incorpore por su cuenta).
+      **Sacar las dos líneas no pierde nada hoy**: `ds:Signature` es un hijo
+      OBLIGATORIO (`minOccurs="1"`) del elemento raíz en el esquema oficial —o
+      sea, dejarlo tal cual haría fallar el 100% de las validaciones, porque
+      `Documents::Issuer#validate_schema!` corre ANTES de firmar y ese elemento
+      todavía no existe en ningún XML que pase por ahí. La firma la revisa
+      Hacienda al recibir el comprobante, no esta validación.
 
 - [ ] **Sin permiso propio para cargar un esquema.** `Api::HaciendaSchemasController`
       exige `Configurations_General_Access`, el mismo de `Api::SettingsController`;
@@ -1190,7 +1210,7 @@ Los cinco pasos de `docs/sync-documents-flow.md` (sección "Flujo"), con lo que 
 | 1. Post Transact inserta en la cola | Lo hace el add-on de SAP, fuera de este repo | — (no aplica) |
 | 2. Consultar la cola en "pending" | `Documents::PendingQueue.pending` | ✅ funciona, probado contra la base real |
 | 3. Consultar detalle en SAP | `Sap::DocumentDetails` + `Documents::UnifiedBuilder` | ✅ funciona, probado contra la base real |
-| 4. Enviar a Hacienda | `Documents::Issuer`: validar → `Hacienda::XmlBuilder` → `Hacienda::XmlSigner` → `Documents::XmlArchive` → `Hacienda::Client` | ✅ implementado (FE y TE); **sin probar contra Hacienda ni Azure reales** |
+| 4. Enviar a Hacienda | `Documents::Issuer`: validar → `Hacienda::XmlBuilder` → `Hacienda::SchemaStore` (XSD) → `Hacienda::XmlSigner` → `Documents::XmlArchive` → `Hacienda::Client` | ✅ implementado (FE y TE); **sin probar contra Hacienda ni Azure reales** |
 | 5. Actualizar estado en Queue y en SAP | `Documents::PendingQueue#mark` + `Sap::DocumentStatus` | ✅ los dos lados, con el mismo catálogo de estados y los SEIS campos (`Status`, `ErrorDetails`, `Clave`, `NumConsecutivo`, `XmlSentUrl`, `XmlResponseUrl`) SIEMPRE en el `PATCH`, en cualquier desenlace |
 | 6. Recoger la resolución (`Sent` → `Accepted`/`Rejected`) | `CheckSentDocumentsJob`: `Documents::PendingQueue.pending_check` + `Hacienda::Client#check_status` + `Sap::DocumentCheckStatus` | ✅ implementado; **sin probar contra Hacienda real** |
 
@@ -1305,12 +1325,33 @@ puede funcionar:
 | **ND** (`02`) | ✅ | ✅ | ✅ (`Hacienda::DocumentValidator`, mismas reglas que FE salvo el receptor, más la referencia obligatoria) | ✅ `NotaDebitoElectronica` | ✅ (agnóstica al tipo) | ✅ `updateDocument02` |
 | **NC** (`03`) | ✅ | ✅ | ✅ (`Hacienda::DocumentValidator`, ídem ND) | ✅ `NotaCreditoElectronica` (mismo esquema que ND) | ✅ (agnóstica al tipo) | ✅ `updateDocument03` (UDFs de `ORIN` replicados desde `OINV`, misma categoría Marketing Documents) |
 | **FEC** (`08`) | ✅ | ✅ (con la identidad del emisor invertida) | ✅ (`Hacienda::DocumentValidator`, cuatro diferencias propias) | ✅ `FacturaElectronicaCompra` | ✅ (agnóstica al tipo) | ✅ `updateDocument08` (UDFs de `OPCH` replicados desde `OINV`, ídem) |
-| **FEE** (`09`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument09` |
-| **REP** (`10`) | ✅ | ❓ sin revisar | ❌ | ❌ `UnsupportedDocType` | ✅ | ✅ `updateDocument10` |
+| **FEE** (`09`) | ✅ | ✅ (agnóstico, ver nota) | ✅ (`Hacienda::DocumentValidator`, partida arancelaria propia) | ✅ `FacturaElectronicaExportacion` (esquema propio, no variante de raíz) | ✅ (agnóstica al tipo) | ✅ `updateDocument09` |
+| **REP** (`10`) | ✅ | ✅ (agnóstico, ver nota) | ✅ (`Hacienda::DocumentValidator`, reemplaza el bloque de totales entero) | ✅ `ReciboElectronicoPago` (árbol de emisión propio en `XmlBuilder`) | ✅ (agnóstica al tipo) | ✅ `updateDocument10` |
 
-**Los dos tipos sin generador de XML se marcan `Error` con el motivo**, no revientan el
-job: `Hacienda::XmlBuilder::UnsupportedDocType` dice "este producto todavía no sabe armar
-el XML de …" y eso llega a `Details` de la cola y a `U_CL_FEC_ErrorDetails`.
+**Los dos ya se validan y se emiten (2026-09-15).** Verificado elemento por elemento contra
+los dos XSD reales del legacy
+(`legacy/apis/clvsfesync4.3/CLVS_FE.DAO/Docs/FacturaElectronicaExportacion_V4.4.xsd` y
+`ReciboElectronicoPago_V4.4.xsd`), no solo contra el resumen de una exploración previa — que
+en dos puntos concretos estaba desactualizado o incompleto:
+
+- **REP NO tiene `Exoneracion` en `Impuesto`**, aunque el mapeo C# del legacy
+  (`GetData.cs#GetDocToSendREP`) arma ese objeto: es campo muerto, nunca llega al XML real
+  que se manda a Hacienda (el mismo patrón que `Receptor.IdentificacionExtranjero` en FEE,
+  ya documentado en `Hacienda::XmlBuilder`).
+- **El `ResumenFactura` de FEE es más chico de lo que parecía**: además de
+  `TotalNoSujeto`/`TotalIVADevuelto`, tampoco tiene `TotalServExonerado`,
+  `TotalServNoSujeto`, `TotalMercExonerada`, `TotalMercNoSujeta` ni `TotalExonerado`. Y no
+  tiene `CodigoActividadReceptor` en absoluto (solo `CodigoActividadEmisor`).
+
+`Documents::UnifiedBuilder` no necesitó ningún cambio: ya arma el mismo objeto para los
+siete tipos y es `Hacienda::XmlBuilder` el que decide qué se emite — confirmado leyendo la
+clase completa. No existe un "reporte de la migración del XSD" como archivo aparte
+—se buscó en `fec-migration-docs/` y no está—; la referencia que hacía este documento era a
+un análisis que nunca se llegó a escribir por separado. Este mismo párrafo, más CLAUDE.md
+§39, es ahora ese análisis para FEE y REP.
+
+Pendiente de confirmación en campo (mismo criterio que el resto de los tipos):
+- [ ] Correr la emisión contra documentos FEE y REP reales de la cola.
 
 **TE ya se valida** (antes se omitía a propósito). El XSD real de Hacienda define un ÚNICO
 esquema para FE y TE (`DocumentoFETE` en `FacturaElectronica_V4.4.xsd` — el nombre mismo es
@@ -1419,14 +1460,20 @@ Pendientes de la factura de compra:
       así que un proveedor extranjero sin señas no rompe nada — pero tampoco las declara.
 - [ ] Correr la emisión contra facturas de compra reales de la cola.
 
-**FEE y REP quedan en ❓** porque nadie llegó a construir un objeto unificado real para
-ninguno de los dos —ni con datos de prueba, mucho menos reales— y el legacy tiene reglas y
-exclusiones propias para ambos (partida arancelaria obligatoria en FEE, líneas de detalle
-simplificadas y media docena de `!= DocTypesString.REP` en REP — ver el bloque de
-"Diferencias clave" del reporte de la migración del XSD). Extenderlos es replicar el mismo
-patrón de `Hacienda::Validations::*` con las reglas específicas de cada uno, no un cambio
-genérico. FEE es el más cercano a lo ya hecho: comparte con FEC la prohibición del tercero
-(`TERCERO_PROHIBIDO` ya lo lista) y la obligación de llevar líneas.
+**FEE y REP se implementaron (2026-09-15)** — ver la nota junto a la tabla de estado, más
+arriba. Contra lo que decía este párrafo hasta ahora: REP no tiene "líneas de detalle
+simplificadas" en el sentido de que le falten — SÍ lleva `DetalleServicio`/`LineaDetalle`,
+solo que con muchos menos campos que un renglón de venta (sin `Cantidad`/`PrecioUnitario`/
+`CodigoCABYS`); y no fueron "media docena" las exclusiones de `!= DocTypesString.REP` en
+`Validations.cs`, sino dieciocho — casi todas ya cubiertas de forma indirecta porque
+`Cantidad`/`PrecioUnitario` vienen `nil` en una línea de REP y las reglas que dependen de
+ellos ya retornaban `nil` temprano; solo tres (CABYS, `SubTotal`, `BaseImponible`) necesitaron
+un guard explícito por tipo, más el reemplazo íntegro de
+`Hacienda::Validations::SummaryTotalsValidator` (su `ResumenFactura` no tiene
+`TotalGravado`/`TotalExento`/etc.). FEE, en cambio, sí resultó "el más cercano a lo ya hecho"
+como anticipaba este párrafo: comparte con FEC la prohibición del tercero
+(`TERCERO_PROHIBIDO`) y la obligación de llevar líneas, y su único agregado de negocio fue la
+partida arancelaria condicional (mercancía vs. servicio).
 
 - [x] **Firma XAdES-EPES — portada (2026-09-05).** `Hacienda::XmlSigner`
       (`app/services/hacienda/xml_signer.rb`) es el port casi literal del prototipo

@@ -148,9 +148,14 @@ class SyncIssuedDocumentsJob < ApplicationJob
          Hacienda::CompanySigner::MissingCertificate,
          Hacienda::Client::MissingConfiguration,
          Documents::XmlArchive::MissingUuid,
-         Azure::BlobStorage::MissingConfiguration => e
-    # No se llegó a hablar con nadie: falta configuración de la instalación. Es
-    # accionable por quien administra, así que va como warn y no como error.
+         Azure::BlobStorage::MissingConfiguration,
+         Hacienda::SchemaStore::NotConfigured,
+         Hacienda::SchemaStore::InvalidSchema => e
+    # No se llegó a hablar con nadie: falta configuración de la instalación —
+    # incluido que nadie haya cargado todavía el XSD de este tipo de
+    # comprobante en Configuraciones → Generales, o que el que se cargó no
+    # compile. Es accionable por quien administra, así que va como warn y no
+    # como error.
     failed(entry, :sin_configuracion, e.message, level: :warn, company: company)
   rescue Hacienda::Client::TransientError, Azure::BlobStorage::TransientError => e
     transient(entry, e.message)

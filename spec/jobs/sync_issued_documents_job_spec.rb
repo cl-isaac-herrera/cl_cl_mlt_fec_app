@@ -60,6 +60,12 @@ RSpec.describe SyncIssuedDocumentsJob do
       instance_double(Hacienda::DocumentValidator,
                       call: Hacienda::DocumentValidator::Result.new(errors: []))
     )
+    # Igual que el validador de negocio: se dobla en "válido" para que los
+    # ejemplos que no están probando el XSD no dependan de un esquema real
+    # cargado en `settings`. `spec/services/documents/issuer_spec.rb` prueba
+    # qué hace `Issuer` con los incumplimientos que el esquema devuelva.
+    allow(Hacienda::SchemaStore).to receive(:for_doc_type)
+      .and_return(instance_double(Nokogiri::XML::Schema, validate: []))
   end
 
   def queue(*entries)
@@ -307,6 +313,24 @@ RSpec.describe SyncIssuedDocumentsJob do
       expect(signer).not_to have_received(:sign)
     end
 
+    # El XSD es la MISMA `ValidationFailed` que las reglas de negocio
+    # (`Documents::Issuer#validate_schema!`): al job no le hace falta un
+    # `rescue` aparte para distinguir cuál de los dos validadores fue.
+    it 'marca Error con los incumplimientos del esquema cuando el XML no es válido para Hacienda' do
+      queue(entry)
+      allow(Hacienda::SchemaStore).to receive(:for_doc_type).and_return(
+        instance_double(Nokogiri::XML::Schema,
+                        validate: [Nokogiri::XML::SyntaxError.new("Element 'Clave': Esto no es válido.")])
+      )
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error).with(anything)
+      expect_error_attempt(/Esto no es válido/)
+      expect(signer).not_to have_received(:sign)
+      expect(hacienda).not_to have_received(:send_document)
+    end
+
     it 'marca Error cuando Hacienda rechaza el envío por el documento' do
       queue(entry)
       allow(hacienda).to receive(:send_document)
@@ -417,6 +441,24 @@ RSpec.describe SyncIssuedDocumentsJob do
       expect(Documents::PendingQueue).to have_received(:mark_error)
         .with(anything)
       expect_error_attempt(/HACIENDA_FE_URI_SEND/)
+      expect(Sentry).not_to have_received(:capture_exception)
+    end
+
+    # Ni bien se activa esta validación, una instalación recién puesta todavía
+    # no tiene los 9 XSD cargados en Configuraciones → Generales — es el mismo
+    # estado normal que un certificado sin subir, no un incidente.
+    it 'marca Error sin alertar cuando no se ha cargado el esquema XSD de ese tipo de comprobante' do
+      queue(entry)
+      allow(Hacienda::SchemaStore).to receive(:for_doc_type).and_raise(
+        Hacienda::SchemaStore::NotConfigured,
+        'No se encuentra el archivo XSD configurado para Factura electrónica.'
+      )
+      allow(Sentry).to receive(:capture_exception)
+
+      described_class.perform_now
+
+      expect(Documents::PendingQueue).to have_received(:mark_error).with(anything)
+      expect_error_attempt(/No se encuentra el archivo XSD configurado/)
       expect(Sentry).not_to have_received(:capture_exception)
     end
 

@@ -99,9 +99,25 @@ RSpec.describe Hacienda::XmlBuilder do
         .to eq('https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/facturaElectronicaCompra')
     end
 
+    it 'la factura de exportación usa su raíz y su namespace' do
+      root = parse(doc_type: DocType::FEE).root
+
+      expect(root.name).to eq('FacturaElectronicaExportacion')
+      expect(root.namespace.href)
+        .to eq('https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/facturaElectronicaExportacion')
+    end
+
+    it 'el recibo de pago usa su raíz y su namespace' do
+      root = parse(valid_rep_document, doc_type: DocType::REP).root
+
+      expect(root.name).to eq('ReciboElectronicoPago')
+      expect(root.namespace.href)
+        .to eq('https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/reciboElectronicoPago')
+    end
+
     it 'no arma el XML de un tipo que todavía no sabe serializar' do
-      expect { build(doc_type: DocType::FEE) }
-        .to raise_error(described_class::UnsupportedDocType, /Factura electrónica de exportación/)
+      expect { build(doc_type: '99') }
+        .to raise_error(described_class::UnsupportedDocType)
     end
   end
 
@@ -377,6 +393,128 @@ RSpec.describe Hacienda::XmlBuilder do
     end
   end
 
+  # FEE comparte la forma de la factura de venta salvo por un `ResumenFactura`
+  # y una `LineaDetalle` más chicos, y sin `CodigoActividadReceptor` en la
+  # raíz — verificado elemento por elemento contra
+  # `FacturaElectronicaExportacion_V4.4.xsd`.
+  describe 'factura electrónica de exportación' do
+    it 'no emite CodigoActividadReceptor, que su XSD no declara' do
+      names = doc_without_ns(doc_type: DocType::FEE).root.elements.map(&:name)
+
+      expect(names).to eq(ROOT_SEQUENCE - ['CodigoActividadReceptor'])
+    end
+
+    it 'omite BaseImponible, ImpuestoNeto, IVACobradoFabrica e ImpuestoAsumidoEmisorFabrica de la línea' do
+      document = valid_unified_document
+      document['DetalleServicio'] = [valid_line('IVACobradoFabrica' => 'S')]
+      doc = doc_without_ns(document, doc_type: DocType::FEE)
+
+      expect(doc.at_xpath('//BaseImponible')).to be_nil
+      expect(doc.at_xpath('//ImpuestoNeto')).to be_nil
+      expect(doc.at_xpath('//IVACobradoFabrica')).to be_nil
+      expect(doc.at_xpath('//ImpuestoAsumidoEmisorFabrica')).to be_nil
+      expect(doc.at_xpath('//LineaDetalle').elements.map(&:name)).to eq(
+        %w[NumeroLinea PartidaArancelaria CodigoCABYS CodigoComercial Cantidad
+           UnidadMedida Detalle PrecioUnitario MontoTotal SubTotal Impuesto MontoTotalLinea]
+      )
+    end
+
+    it 'omite DatosImpuestoEspecifico y Exoneracion del impuesto' do
+      document = valid_unified_document
+      document['DetalleServicio'] = [valid_line(
+        'Impuesto' => valid_impuesto(
+          'DatosImpuestoEspecifico' => { 'ImpuestoUnidad' => BigDecimal(5), 'Porcentaje' => BigDecimal(1),
+                                         'Proporcion' => BigDecimal(0), 'CantidadUnidadMedida' => BigDecimal(0),
+                                         'VolumenUnidadConsumo' => BigDecimal(0) },
+          'Exoneracion' => valid_exoneracion('NumeroDocumento' => 'DOC-1', 'TarifaExonerada' => BigDecimal(13),
+                                             'MontoExoneracion' => BigDecimal(26))
+        )
+      )]
+      doc = doc_without_ns(document, doc_type: DocType::FEE)
+
+      expect(doc.at_xpath('//DatosImpuestoEspecifico')).to be_nil
+      expect(doc.at_xpath('//Exoneracion')).to be_nil
+      expect(doc.at_xpath('//Impuesto').elements.map(&:name))
+        .to eq(%w[Codigo CodigoTarifaIVA Tarifa Monto])
+    end
+
+    it 'no emite Ubicacion en el receptor' do
+      expect(doc_without_ns(doc_type: DocType::FEE).at_xpath('//Receptor/Ubicacion')).to be_nil
+    end
+
+    it 'emite la partida arancelaria, después de NumeroLinea' do
+      doc = doc_without_ns(doc_type: DocType::FEE)
+
+      expect(doc.at_xpath('//LineaDetalle').elements.map(&:name).first(2)).to eq(%w[NumeroLinea PartidaArancelaria])
+    end
+
+    it 'omite del resumen los seis totales que su XSD no declara' do
+      names = doc_without_ns(doc_type: DocType::FEE).at_xpath('//ResumenFactura').elements.map(&:name)
+
+      expect(names).to eq(SUMMARY_SEQUENCE - %w[TotalServExonerado TotalServNoSujeto
+                                                TotalMercExonerada TotalMercNoSujeta
+                                                TotalExonerado TotalNoSujeto TotalIVADevuelto])
+    end
+  end
+
+  # REP no es "FE menos algunos campos": ni siquiera tiene código de
+  # actividad, condición de venta libre, plazo de crédito u otros cargos.
+  # Verificado elemento por elemento contra `ReciboElectronicoPago_V4.4.xsd`.
+  describe 'recibo electrónico de pago' do
+    it 'emite la raíz en el orden de su propio xs:sequence' do
+      names = doc_without_ns(valid_rep_document, doc_type: DocType::REP).root.elements.map(&:name)
+
+      expect(names).to eq(%w[Clave ProveedorSistemas NumeroConsecutivo FechaEmision Emisor
+                             Receptor CondicionVenta DetalleServicio ResumenFactura
+                             InformacionReferencia])
+    end
+
+    it 'el emisor y el receptor solo llevan Nombre, Identificacion y CorreoElectronico' do
+      doc = doc_without_ns(valid_rep_document, doc_type: DocType::REP)
+
+      expect(doc.at_xpath('//Emisor').elements.map(&:name)).to eq(%w[Nombre Identificacion CorreoElectronico])
+      expect(doc.at_xpath('//Receptor').elements.map(&:name)).to eq(%w[Nombre Identificacion CorreoElectronico])
+    end
+
+    it 'la línea solo lleva NumeroLinea, Detalle, MontoTotal, SubTotal, Impuesto, ImpuestoNeto y MontoTotalLinea' do
+      doc = doc_without_ns(valid_rep_document, doc_type: DocType::REP)
+
+      expect(doc.at_xpath('//LineaDetalle').elements.map(&:name)).to eq(
+        %w[NumeroLinea Detalle MontoTotal SubTotal Impuesto ImpuestoNeto MontoTotalLinea]
+      )
+    end
+
+    it 'el impuesto de línea no lleva Exoneracion' do
+      document = valid_rep_document
+      document['DetalleServicio'] = [valid_rep_line('Impuesto' => {
+                                                      'Codigo' => '01', 'CodigoImpuestoOTRO' => nil, 'CodigoTarifaIVA' => '08',
+                                                      'Tarifa' => BigDecimal(13), 'FactorCalculoIVA' => nil, 'Monto' => BigDecimal(20)
+                                                    })]
+      doc = doc_without_ns(document, doc_type: DocType::REP)
+
+      expect(doc.at_xpath('//Impuesto').elements.map(&:name))
+        .to eq(%w[Codigo CodigoTarifaIVA Tarifa Monto])
+      expect(doc.at_xpath('//Exoneracion')).to be_nil
+    end
+
+    it 'el resumen solo lleva CodigoTipoMoneda, TotalVenta, TotalVentaNeta, ' \
+       'TotalDesgloseImpuesto, TotalImpuesto, MedioPago y TotalComprobante' do
+      doc = doc_without_ns(valid_rep_document, doc_type: DocType::REP)
+
+      expect(doc.at_xpath('//ResumenFactura').elements.map(&:name)).to eq(
+        %w[CodigoTipoMoneda TotalVenta TotalVentaNeta TotalDesgloseImpuesto TotalImpuesto TotalComprobante]
+      )
+    end
+
+    it 'no tiene CodigoActividadEmisor, CodigoActividadReceptor, CondicionVentaOtros, ' \
+       'PlazoCredito ni OtrosCargos' do
+      names = doc_without_ns(valid_rep_document, doc_type: DocType::REP).root.elements.map(&:name)
+
+      expect(names).not_to include('CodigoActividadEmisor', 'CodigoActividadReceptor',
+                                   'CondicionVentaOtros', 'PlazoCredito', 'OtrosCargos')
+    end
+  end
+
   # El objeto unificado sirve a todos los tipos y trae campos que el esquema de
   # FE/TE no define. Emitirlos es un rechazo.
   describe 'campos que NO pertenecen al esquema de FE/TE' do
@@ -401,9 +539,9 @@ RSpec.describe Hacienda::XmlBuilder do
         .to eq(%w[MontoDescuento CodigoDescuento NaturalezaDescuento])
     end
 
-    # El esquema de NC/ND SÍ lo declara (opcional), pero `LineItemValidator`
-    # rechaza cualquier valor mayor a cero en los cuatro tipos, así que el
-    # elemento solo podría salir en cero. Se omite en todos.
+    # El esquema de NC/ND y de FEE SÍ lo declaran (opcional), pero
+    # `LineItemValidator` rechaza cualquier valor mayor a cero en todos los
+    # tipos, así que el elemento solo podría salir en cero. Se omite en todos.
     it 'no emite MontoExportacion del impuesto, en ningún tipo' do
       document = valid_unified_document
       document['DetalleServicio'] = [valid_line(
@@ -412,6 +550,8 @@ RSpec.describe Hacienda::XmlBuilder do
 
       expect(doc_without_ns(document).at_xpath('//MontoExportacion')).to be_nil
       expect(doc_without_ns(document, doc_type: DocType::NC).at_xpath('//MontoExportacion'))
+        .to be_nil
+      expect(doc_without_ns(document, doc_type: DocType::FEE).at_xpath('//MontoExportacion'))
         .to be_nil
     end
   end

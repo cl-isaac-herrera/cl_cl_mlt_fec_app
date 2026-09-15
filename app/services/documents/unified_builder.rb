@@ -279,10 +279,9 @@ module Documents
     def linea_detalle(line)
       {
         'NumeroLinea' => line.integer('NumeroLinea'),
-        # Solo la emiten NC y ND: el esquema de FE/TE no la declara. Se mapea
+        # La emiten NC, ND y FEE: el esquema de FE/TE no la declara. Se mapea
         # igual para todos porque este armado es uno solo y el que decide qué
-        # sale al XML es `Hacienda::XmlBuilder` — mismo criterio que
-        # `Receptor.IdentificacionExtranjero`, que es de FEE y viaja siempre.
+        # sale al XML es `Hacienda::XmlBuilder`.
         'PartidaArancelaria' => line.string('PartidaArancelaria'),
         'CodigoCABYS' => line.string('Codigo'),
         'CodigoComercial' => {

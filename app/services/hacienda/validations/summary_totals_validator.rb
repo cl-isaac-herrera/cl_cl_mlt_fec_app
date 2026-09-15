@@ -18,14 +18,20 @@ module Hacienda
       # (venta exenta) NO cuenta como gravada en el total recalculado.
       IVA_COBRADO_FABRICA_EXENTO = '02'
 
-      def initialize(document)
+      # @param doc_type [String] código de Hacienda. Sin default a propósito:
+      #   REP reemplaza el bloque entero por sus propias fórmulas, y un
+      #   default silencioso haría que un tipo nuevo herede la regla
+      #   equivocada.
+      def initialize(document, doc_type:)
         @document = document
+        @doc_type = doc_type
         @lines = document['DetalleServicio'] || []
       end
 
       # @return [Array<Hacienda::DocumentValidationError>]
       def call
         return [] if lines.empty?
+        return rep_total_errors if doc_type == DocType::REP
 
         [
           *recomputed_total_errors,
@@ -35,7 +41,42 @@ module Hacienda
 
       private
 
-      attr_reader :document, :lines
+      attr_reader :document, :doc_type, :lines
+
+      # ── REP reemplaza los bloques F y G enteros ───────────────────────────
+      # `ResumenFactura` de REP no tiene `TotalServ*`/`TotalMerc*`/
+      # `TotalGravado`/`TotalExento`/`TotalExonerado`/`TotalNoSujeto`/
+      # `TotalDescuentos`/`TotalOtrosCargos` — ninguno de esos campos existe
+      # en su XSD. El legacy (`Validations.cs` L705-793) los reemplaza por dos
+      # fórmulas propias: `TotalVenta` es la suma de `MontoTotal` de las
+      # líneas, y `TotalVentaNeta` tiene que ser IGUAL a `TotalVenta` (REP no
+      # tiene descuentos).
+      #
+      # No alcanza con dejar que los campos ausentes lleguen `nil` y confiar
+      # en los guards de `compare_total`/`suma_igual`: `suma_igual('TotalVenta',
+      # %w[TotalGravado TotalExento TotalExonerado TotalNoSujeto])` trataría
+      # cada summand ausente como cero y rechazaría cualquier `TotalVenta`
+      # real que REP declare.
+      def rep_total_errors
+        errors = []
+        declarado_venta = resumen['TotalVenta']
+        recomputado = lines.sum { |l| l['MontoTotal'] || BigDecimal(0) }
+        if declarado_venta.present? && (declarado_venta - recomputado).abs > TOLERANCE
+          errors << error("El total de venta (#{declarado_venta}) no coincide con la suma " \
+                           "de los montos totales de las líneas (#{recomputado}).",
+                           field: 'ResumenFactura.TotalVenta')
+        end
+
+        declarado_neta = resumen['TotalVentaNeta']
+        if declarado_neta.present? && declarado_venta.present? &&
+           (declarado_neta - declarado_venta).abs > TOLERANCE
+          errors << error("El total de venta neta (#{declarado_neta}) debe ser igual al " \
+                           "total de venta (#{declarado_venta}) en el Recibo Electrónico " \
+                           'de Pago.', field: 'ResumenFactura.TotalVentaNeta')
+        end
+
+        errors
+      end
 
       def resumen = document['ResumenFactura']
 

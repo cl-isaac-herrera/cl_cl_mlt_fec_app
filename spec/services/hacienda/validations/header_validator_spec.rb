@@ -113,4 +113,35 @@ RSpec.describe Hacienda::Validations::HeaderValidator do
 
     expect(fields_for(document, doc_type: DocType::TE)).to include('CodigoActividadEmisor')
   end
+
+  describe 'REP (Recibo Electrónico de Pago)' do
+    it 'no exige el código de actividad del emisor' do
+      document = valid_rep_document
+      document['CodigoActividadEmisor'] = nil
+
+      expect(fields_for(document, doc_type: DocType::REP)).not_to include('CodigoActividadEmisor')
+    end
+
+    # `CONDICION_VENTA_REP` es disjunto del catálogo general (`CONDICION_VENTA`
+    # excluye 09/11 a propósito, reservados a REP).
+    it 'acepta 09 y 11, sus únicos valores válidos de CondicionVenta' do
+      %w[09 11].each do |condicion|
+        document = valid_rep_document.merge('CondicionVenta' => condicion)
+
+        expect(fields_for(document, doc_type: DocType::REP)).not_to include('CondicionVenta')
+      end
+    end
+
+    it 'rechaza cualquier otro valor de CondicionVenta' do
+      document = valid_rep_document.merge('CondicionVenta' => '01')
+
+      expect(fields_for(document, doc_type: DocType::REP)).to include('CondicionVenta')
+    end
+
+    it 'rechaza 09/11 para los demás tipos de documento, que usan el catálogo general' do
+      document = valid_unified_document.merge('CondicionVenta' => '09')
+
+      expect(fields_for(document, doc_type: DocType::FE)).to include('CondicionVenta')
+    end
+  end
 end

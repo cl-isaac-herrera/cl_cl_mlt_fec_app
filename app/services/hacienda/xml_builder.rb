@@ -43,14 +43,20 @@ module Hacienda
   # esquemas que esta clase serializa no definen. Se OMITEN a propósito;
   # emitirlos donde el esquema no los declara es un rechazo:
   #
-  #   · `Receptor.IdentificacionExtranjero` — solo existe en FEE.
+  #   · `Receptor.IdentificacionExtranjero` — el legacy lo declara en el modelo
+  #     C# de FEE (`FEEModels.Receptor`), pero nunca lo llena (`GetDocToSendFEE`
+  #     no lo mapea) y el XSD real de FEE
+  #     (`FacturaElectronicaExportacion_V4.4.xsd`) no lo declara. Es campo
+  #     muerto del legacy, no uno pendiente de emitir.
   #   · `Descuento.PorcentajeDescuento`     — no está en ninguno de los dos modelos.
-  #   · `Impuesto.MontoExportacion`         — el esquema de NC/ND SÍ lo declara
-  #     (opcional), pero `Validations::LineItemValidator` rechaza cualquier valor
-  #     mayor a cero, así que el elemento solo podría salir en cero. Se omite en
-  #     los cuatro tipos; el día que se soporte, se emite como la partida.
-  #   · `LineaDetalle.PartidaArancelaria`   — al revés: existe en NC/ND y no en
-  #     FE/TE, así que se emite solo ahí (`PARTIDA_ARANCELARIA_DOC_TYPES`).
+  #   · `Impuesto.MontoExportacion`         — el esquema de NC/ND y de FEE SÍ lo
+  #     declaran (opcional), pero `Validations::LineItemValidator` rechaza
+  #     cualquier valor mayor a cero, así que el elemento solo podría salir en
+  #     cero. Se omite en todos los tipos; el día que se soporte, se emite como
+  #     la partida.
+  #   · `LineaDetalle.PartidaArancelaria`   — al revés: existe en NC/ND y FEE y
+  #     no en el resto, así que se emite solo ahí
+  #     (`PARTIDA_ARANCELARIA_DOC_TYPES`).
   #
   # ── Qué se omite por estar vacío ────────────────────────────────────────────
   # Un elemento sin valor NO se emite en blanco: se omite. Para los opcionales
@@ -74,33 +80,38 @@ module Hacienda
     # `namespacenc`, `namespacend`) y de los `XmlRootAttribute` de
     # `SerializeDoc.getSerializeDocFETE` / `getSerializeDocNCND`.
     #
-    # Son TRES esquemas, no cinco: FE y TE comparten `DocumentoFETE` (el nombre
-    # del tipo es literalmente "Factura Electrónica / Tiquete Electrónico"), ND
-    # y NC comparten `DocumentoNCND`, y FEC tiene el suyo. Dentro de cada par,
-    # lo único que cambia es la raíz y el namespace. Los dos tipos que faltan
-    # (FEE, REP) tienen estructura propia y su armado es otro trabajo; ver
-    # `TODOS.md` → Emisión de documentos.
+    # Son CINCO esquemas, no siete: FE y TE comparten `DocumentoFETE` (el
+    # nombre del tipo es literalmente "Factura Electrónica / Tiquete
+    # Electrónico"), ND y NC comparten `DocumentoNCND`, y FEC, FEE y REP tienen
+    # cada uno el suyo. Dentro de cada par, lo único que cambia es la raíz y el
+    # namespace.
     DOCUMENTS = {
       DocType::FE  => ['FacturaElectronica', 'facturaElectronica'],
       DocType::TE  => ['TiqueteElectronico', 'tiqueteElectronico'],
       DocType::ND  => ['NotaDebitoElectronica', 'notaDebitoElectronica'],
       DocType::NC  => ['NotaCreditoElectronica', 'notaCreditoElectronica'],
-      DocType::FEC => ['FacturaElectronicaCompra', 'facturaElectronicaCompra']
+      DocType::FEC => ['FacturaElectronicaCompra', 'facturaElectronicaCompra'],
+      DocType::FEE => ['FacturaElectronicaExportacion', 'facturaElectronicaExportacion'],
+      DocType::REP => ['ReciboElectronicoPago', 'reciboElectronicoPago']
     }.freeze
 
     # Tipos cuyo esquema define `PartidaArancelaria` en la línea de detalle.
     #
-    # Es la ÚNICA diferencia de forma entre `DocumentoFETE` y `DocumentoNCND`
-    # que este producto puede llenar: el XSD de NC/ND la declara opcional entre
-    # `NumeroLinea` y `CodigoCABYS` (`NotaCreditoElectronica_V4.4.xsd` L198) y
-    # el de FE/TE no la tiene. Emitirla en una factura es un rechazo.
+    # El XSD de NC/ND la declara opcional entre `NumeroLinea` y `CodigoCABYS`
+    # (`NotaCreditoElectronica_V4.4.xsd` L198) y el de FE/TE no la tiene.
+    # FEE también la declara, en la misma posición
+    # (`FacturaElectronicaExportacion_V4.4.xsd` L169) — y encima la exige
+    # cuando la línea es una venta de mercancía
+    # (`Validations::LineItemValidator#partida_arancelaria_requerida`).
+    # Emitirla en un tipo que no la declara es un rechazo.
     #
-    # La otra diferencia del esquema, `Impuesto.MontoExportacion`, NO se emite
-    # en ningún tipo: `Validations::LineItemValidator` la rechaza si viene con
-    # un valor mayor a cero —el legacy también, y sin excluir a ningún tipo—,
-    # así que el elemento solo podría salir en cero. Ver la nota de "Campos del
-    # objeto unificado que NO van en el XML" más arriba.
-    PARTIDA_ARANCELARIA_DOC_TYPES = [DocType::ND, DocType::NC].freeze
+    # La otra diferencia del esquema, `Impuesto.MontoExportacion` (que FEE
+    # también declara, además de NC/ND), NO se emite en ningún tipo:
+    # `Validations::LineItemValidator` la rechaza si viene con un valor mayor
+    # a cero —el legacy también, y sin excluir a ningún tipo—, así que el
+    # elemento solo podría salir en cero. Ver la nota de "Campos del objeto
+    # unificado que NO van en el XML" más arriba.
+    PARTIDA_ARANCELARIA_DOC_TYPES = [DocType::ND, DocType::NC, DocType::FEE].freeze
 
     # ── `DocumentoFEC` es `DocumentoFETE` MENOS cinco elementos ───────────────
     # La factura de compra comparte el orden de la raíz, del resumen, de la
@@ -178,10 +189,15 @@ module Hacienda
     attr_reader :doc_type, :document
 
     def emit_document(xml)
+      return emit_document_rep(xml) if doc_type == DocType::REP
+
       text xml, 'Clave', document['Clave']
       text xml, 'ProveedorSistemas', document['ProveedorSistemas']
       text xml, 'CodigoActividadEmisor', document['CodigoActividadEmisor']
-      text xml, 'CodigoActividadReceptor', document['CodigoActividadReceptor']
+      # FEE no declara este elemento en absoluto (ni siquiera opcional) —
+      # confirmado en `FacturaElectronicaExportacion_V4.4.xsd`: solo tiene
+      # `CodigoActividadEmisor`.
+      text xml, 'CodigoActividadReceptor', document['CodigoActividadReceptor'] unless factura_de_exportacion?
       text xml, 'NumeroConsecutivo', document['NumeroConsecutivo']
       date xml, 'FechaEmision', document['FechaEmision']
       emit_emisor(xml)
@@ -194,6 +210,105 @@ module Hacienda
       emit_summary(xml)
       emit_references(xml)
       emit_others(xml)
+    end
+
+    # ── REP: árbol de emisión propio ──────────────────────────────────────────
+    # REP no es "FE menos algunos campos": no tiene `CodigoActividadEmisor`/
+    # `CodigoActividadReceptor`, no tiene `CondicionVentaOtros`/`PlazoCredito`,
+    # no tiene `OtrosCargos`, y su `Emisor`/`Receptor`/`LineaDetalle`/
+    # `ResumenFactura` son estructuras propias, mucho más chicas que las de
+    # cualquier otro tipo. Forzarlo dentro de `emit_document`/`emit_emisor`/
+    # etc. exigiría negar casi todos los campos existentes — en vez de eso,
+    # este árbol paralelo reutiliza los emisores de hoja ya genéricos
+    # (`emit_identificacion`, `emit_moneda`, `emit_tax_breakdown`,
+    # `emit_payment_methods`, `emit_references`) y solo define lo que REP
+    # tiene de propio. Orden y campos verificados uno a uno contra
+    # `ReciboElectronicoPago_V4.4.xsd`.
+    def emit_document_rep(xml)
+      text xml, 'Clave', document['Clave']
+      text xml, 'ProveedorSistemas', document['ProveedorSistemas']
+      text xml, 'NumeroConsecutivo', document['NumeroConsecutivo']
+      date xml, 'FechaEmision', document['FechaEmision']
+      emit_emisor_rep(xml)
+      emit_receptor_rep(xml)
+      text xml, 'CondicionVenta', document['CondicionVenta']
+      emit_lines_rep(xml)
+      emit_summary_rep(xml)
+      emit_references(xml)
+    end
+
+    def emit_emisor_rep(xml)
+      emisor = document['Emisor'] || {}
+
+      xml.Emisor do
+        text xml, 'Nombre', emisor['Nombre']
+        emit_identificacion(xml, emisor['Identificacion'])
+        text xml, 'CorreoElectronico', emisor['CorreoElectronico']
+      end
+    end
+
+    def emit_receptor_rep(xml)
+      receptor = document['Receptor'] || {}
+
+      xml.Receptor do
+        text xml, 'Nombre', receptor['Nombre']
+        emit_identificacion(xml, receptor['Identificacion'])
+        text xml, 'CorreoElectronico', receptor['CorreoElectronico']
+      end
+    end
+
+    def emit_lines_rep(xml)
+      lines = document['DetalleServicio'] || []
+      return if lines.empty?
+
+      xml.DetalleServicio do
+        lines.each { |line| emit_line_rep(xml, line) }
+      end
+    end
+
+    def emit_line_rep(xml, line)
+      xml.LineaDetalle do
+        integer xml, 'NumeroLinea', line['NumeroLinea']
+        text xml, 'Detalle', line['Detalle']
+        decimal xml, 'MontoTotal', line['MontoTotal'], MONEY
+        decimal xml, 'SubTotal', line['SubTotal'], MONEY
+        emit_impuesto_rep(xml, line['Impuesto'])
+        decimal xml, 'ImpuestoNeto', line['ImpuestoNeto'], MONEY
+        decimal xml, 'MontoTotalLinea', line['MontoTotalLinea'], MONEY
+      end
+    end
+
+    # Sin `Exoneracion` ni `DatosImpuestoEspecifico`: el `ImpuestoType` de REP
+    # termina en `Monto` (verificado en el XSD). El mapeo del legacy en
+    # `GetDocToSendREP` arma un objeto `Exoneracion` que NUNCA se serializa al
+    # XML real — el mismo tipo de campo muerto que
+    # `Receptor.IdentificacionExtranjero` en FEE. No replicar esa parte del
+    # mapeo acá.
+    def emit_impuesto_rep(xml, impuesto)
+      return if blank_block?(impuesto)
+
+      xml.Impuesto do
+        text xml, 'Codigo', impuesto['Codigo']
+        text xml, 'CodigoImpuestoOTRO', impuesto['CodigoImpuestoOTRO']
+        text xml, 'CodigoTarifaIVA', impuesto['CodigoTarifaIVA']
+        decimal xml, 'Tarifa', impuesto['Tarifa'], RATE
+        decimal xml, 'FactorCalculoIVA', impuesto['FactorCalculoIVA'], IVA_FACTOR
+        decimal xml, 'Monto', impuesto['Monto'], MONEY
+      end
+    end
+
+    def emit_summary_rep(xml)
+      resumen = document['ResumenFactura'] || {}
+
+      xml.ResumenFactura do
+        emit_moneda(xml, resumen['CodigoTipoMoneda'])
+        decimal xml, 'TotalVenta', resumen['TotalVenta'], MONEY
+        decimal xml, 'TotalVentaNeta', resumen['TotalVentaNeta'], MONEY
+        emit_tax_breakdown(xml, resumen['TotalDesgloseImpuesto'])
+        decimal xml, 'TotalImpuesto', resumen['TotalImpuesto'], MONEY
+        emit_payment_methods(xml, resumen['MedioPago'])
+        decimal xml, 'TotalComprobante', resumen['TotalComprobante'], MONEY
+      end
     end
 
     # ── Emisor y receptor ─────────────────────────────────────────────────────
@@ -224,7 +339,10 @@ module Hacienda
         text xml, 'Nombre', receptor['Nombre']
         emit_identificacion(xml, receptor['Identificacion'])
         text xml, 'NombreComercial', receptor['NombreComercial']
-        emit_ubicacion(xml, receptor['Ubicacion'])
+        # FEE no declara `Ubicacion` en su `ReceptorType` — confirmado en el
+        # XSD: Nombre, Identificacion, NombreComercial, OtrasSenasExtranjero,
+        # Telefono, CorreoElectronico, sin ubicación.
+        emit_ubicacion(xml, receptor['Ubicacion']) unless factura_de_exportacion?
         # Al revés que en el emisor: el receptor de una factura de compra es la
         # compañía, así que ahí el esquema no lo declara.
         text xml, 'OtrasSenasExtranjero', receptor['OtrasSenasExtranjero'] unless factura_de_compra?
@@ -295,13 +413,15 @@ module Hacienda
         decimal xml, 'MontoTotal', line['MontoTotal'], MONEY
         emit_descuento(xml, line['Descuento'])
         decimal xml, 'SubTotal', line['SubTotal'], MONEY
-        text xml, 'IVACobradoFabrica', line['IVACobradoFabrica'] unless factura_de_compra?
-        decimal xml, 'BaseImponible', line['BaseImponible'], MONEY
+        text xml, 'IVACobradoFabrica', line['IVACobradoFabrica'] unless factura_de_compra? || factura_de_exportacion?
+        # FEE tampoco declara `BaseImponible` — confirmado en el XSD: después
+        # de `Impuesto` pasa directo a `MontoTotalLinea`, sin `ImpuestoNeto`.
+        decimal xml, 'BaseImponible', line['BaseImponible'], MONEY unless factura_de_exportacion?
         emit_impuesto(xml, line['Impuesto'])
-        unless factura_de_compra?
+        unless factura_de_compra? || factura_de_exportacion?
           decimal xml, 'ImpuestoAsumidoEmisorFabrica', line['ImpuestoAsumidoEmisorFabrica'], MONEY
         end
-        decimal xml, 'ImpuestoNeto', line['ImpuestoNeto'], MONEY
+        decimal xml, 'ImpuestoNeto', line['ImpuestoNeto'], MONEY unless factura_de_exportacion?
         decimal xml, 'MontoTotalLinea', line['MontoTotalLinea'], MONEY
       end
     end
@@ -314,6 +434,10 @@ module Hacienda
     # predicado se llama por el nombre largo justamente para que nadie lea
     # `fec?` como "¿es de esta aplicación?".
     def factura_de_compra? = doc_type == DocType::FEC
+
+    # ⚠️ "FEE" acá también es el TIPO de comprobante (`09`, Factura
+    # Electrónica de Exportación), no el identificador del producto.
+    def factura_de_exportacion? = doc_type == DocType::FEE
 
     def emit_codigo_comercial(xml, codigo)
       return if blank_block?(codigo)
@@ -341,7 +465,8 @@ module Hacienda
       end
     end
 
-    # `MontoExportacion` del objeto unificado no se emite: es de FEE.
+    # `MontoExportacion` del objeto unificado no se emite: ver la nota de
+    # "Campos del objeto unificado que NO van en el XML" en la cabecera.
     def emit_impuesto(xml, impuesto)
       return if blank_block?(impuesto)
 
@@ -351,9 +476,14 @@ module Hacienda
         text xml, 'CodigoTarifaIVA', impuesto['CodigoTarifaIVA']
         decimal xml, 'Tarifa', impuesto['Tarifa'], RATE
         decimal xml, 'FactorCalculoIVA', impuesto['FactorCalculoIVA'], IVA_FACTOR
-        emit_datos_impuesto_especifico(xml, impuesto['DatosImpuestoEspecifico']) unless factura_de_compra?
+        unless factura_de_compra? || factura_de_exportacion?
+          emit_datos_impuesto_especifico(xml, impuesto['DatosImpuestoEspecifico'])
+        end
         decimal xml, 'Monto', impuesto['Monto'], MONEY
-        emit_exoneracion(xml, impuesto['Exoneracion'])
+        # FEE tampoco declara `Exoneracion` en su `ImpuestoType` — confirmado
+        # en el XSD: Codigo, CodigoImpuestoOTRO, CodigoTarifaIVA, Tarifa,
+        # FactorCalculoIVA, Monto, MontoExportacion, y nada más.
+        emit_exoneracion(xml, impuesto['Exoneracion']) unless factura_de_exportacion?
       end
     end
 
@@ -426,12 +556,7 @@ module Hacienda
 
       xml.ResumenFactura do
         emit_moneda(xml, resumen['CodigoTipoMoneda'])
-        %w[TotalServGravados TotalServExentos TotalServExonerado TotalServNoSujeto
-           TotalMercanciasGravadas TotalMercanciasExentas TotalMercExonerada TotalMercNoSujeta
-           TotalGravado TotalExento TotalExonerado TotalNoSujeto
-           TotalVenta TotalDescuentos TotalVentaNeta].each do |field|
-          decimal xml, field, resumen[field], MONEY
-        end
+        summary_basic_totals.each { |field| decimal xml, field, resumen[field], MONEY }
         emit_tax_breakdown(xml, resumen['TotalDesgloseImpuesto'])
         summary_tax_totals.each { |field| decimal xml, field, resumen[field], MONEY }
         emit_payment_methods(xml, resumen['MedioPago'])
@@ -439,11 +564,32 @@ module Hacienda
       end
     end
 
+    # FEE no declara estos seis — confirmado en el XSD: a diferencia de FE, su
+    # `ResumenFactura` no distingue exonerado/no-sujeto en absoluto, ni en el
+    # desglose por servicio/mercancía ni en el total.
+    SUMMARY_BASIC_TOTALS_OMITIDOS_EN_FEE = %w[
+      TotalServExonerado TotalServNoSujeto TotalMercExonerada TotalMercNoSujeta
+      TotalExonerado TotalNoSujeto
+    ].freeze
+
+    # Los totales "básicos" del resumen, antes del desglose de impuesto.
+    # `Array#-` preserva el orden de `fields`, que es el del XSD de FE/TE/ND/
+    # NC/FEC; para FEE, el resultado después de filtrar coincide exactamente
+    # con el orden de `FacturaElectronicaExportacion_V4.4.xsd`.
+    def summary_basic_totals
+      fields = %w[TotalServGravados TotalServExentos TotalServExonerado TotalServNoSujeto
+                  TotalMercanciasGravadas TotalMercanciasExentas TotalMercExonerada TotalMercNoSujeta
+                  TotalGravado TotalExento TotalExonerado TotalNoSujeto
+                  TotalVenta TotalDescuentos TotalVentaNeta]
+      factura_de_exportacion? ? fields - SUMMARY_BASIC_TOTALS_OMITIDOS_EN_FEE : fields
+    end
+
     # Los totales de impuesto del resumen, entre el desglose y el medio de
-    # pago. `TotalIVADevuelto` no existe en el esquema de la factura de compra.
+    # pago. `TotalIVADevuelto` no existe en el esquema de la factura de compra
+    # ni en el de FEE.
     def summary_tax_totals
       fields = %w[TotalImpuesto TotalImpAsumEmisorFabrica TotalIVADevuelto TotalOtrosCargos]
-      factura_de_compra? ? fields - ['TotalIVADevuelto'] : fields
+      factura_de_compra? || factura_de_exportacion? ? fields - ['TotalIVADevuelto'] : fields
     end
 
     def emit_moneda(xml, moneda)

@@ -24,6 +24,11 @@ RSpec.describe Documents::Issuer do
     allow(Documents::XmlArchive).to receive(:store_sent)
       .and_return('https://azure.test/clvsfe/x/506123.xml')
     allow(hacienda).to receive(:send_document).and_return(receipt)
+    # La validación XSD tiene su propio `describe` más abajo; acá se dobla en
+    # "válido" para que el resto de los ejemplos —que prueban firmar, archivar
+    # y enviar— no dependan de un esquema real cargado en `settings`.
+    allow(Hacienda::SchemaStore).to receive(:for_doc_type)
+      .and_return(instance_double(Nokogiri::XML::Schema, validate: []))
   end
 
   it 'firma el XML generado del documento' do
@@ -122,6 +127,56 @@ RSpec.describe Documents::Issuer do
 
       expect { issuer(doc_type: DocType::TE).call }.to raise_error(described_class::ValidationFailed)
       expect(signer).not_to have_received(:sign)
+    end
+  end
+
+  # El esquema se dobla con `instance_double(Nokogiri::XML::Schema)`: lo que
+  # `Hacienda::SchemaStore` hace con `settings`/Azure para llegar a ese objeto
+  # ya lo prueba `spec/services/hacienda/schema_store_spec.rb`. Acá solo
+  # importa qué hace `Issuer` con lo que el esquema devuelve.
+  describe 'validación del XSD' do
+    let(:schema_errors) { [Nokogiri::XML::SyntaxError.new("Element 'Clave': Esto no es válido.")] }
+
+    it 'pide el esquema del tipo de comprobante que se está emitiendo' do
+      issuer(doc_type: DocType::TE).call
+
+      expect(Hacienda::SchemaStore).to have_received(:for_doc_type).with(DocType::TE)
+    end
+
+    it 'no llega a firmar si el XML no cumple el esquema de Hacienda' do
+      allow(Hacienda::SchemaStore).to receive(:for_doc_type)
+        .and_return(instance_double(Nokogiri::XML::Schema, validate: schema_errors))
+
+      expect { issuer.call }.to raise_error(described_class::ValidationFailed)
+      expect(signer).not_to have_received(:sign)
+      expect(Documents::XmlArchive).not_to have_received(:store_sent)
+    end
+
+    it 'expone los incumplimientos del esquema tal como los devuelve Nokogiri' do
+      allow(Hacienda::SchemaStore).to receive(:for_doc_type)
+        .and_return(instance_double(Nokogiri::XML::Schema, validate: schema_errors))
+
+      expect { issuer.call }.to raise_error(described_class::ValidationFailed) do |error|
+        expect(error.errors).to eq(schema_errors)
+      end
+    end
+
+    # Las reglas de negocio corren PRIMERO (paso 1): un documento que ya
+    # incumple `DocumentValidator` no tiene por qué gastar ni siquiera el
+    # `SELECT` de `Setting.value_for` que arma la ruta del esquema.
+    it 'no consulta el esquema si las reglas de negocio ya rechazaron el documento' do
+      document = valid_unified_document
+      document['CondicionVenta'] = nil
+      payload['Document'] = document
+
+      expect { issuer.call }.to raise_error(described_class::ValidationFailed)
+      expect(Hacienda::SchemaStore).not_to have_received(:for_doc_type)
+    end
+
+    it 'no encuentra incumplimientos y firma con normalidad cuando SÍ es válido' do
+      issuer.call
+
+      expect(signer).to have_received(:sign)
     end
   end
 end

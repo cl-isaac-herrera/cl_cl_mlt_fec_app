@@ -36,10 +36,11 @@ module Hacienda
       # `CodigoActividadEmisor` es `minOccurs="0"` y `CodigoActividadReceptor`
       # es `minOccurs="1"`; en el de factura es exactamente al revés.
       #
-      # REP también está exento del código del emisor en el legacy; no se
-      # lista porque este producto todavía no lo emite y la lista describe lo
-      # que este validador cubre.
-      ACTIVIDAD_EMISOR_OPCIONAL    = [DocType::FEC].freeze
+      # REP también está exento del código del emisor en el legacy
+      # (`Validations.cs` L299) — y de hecho ni siquiera existe el elemento
+      # `CodigoActividadEmisor` en su XSD, confirmado leyendo
+      # `ReciboElectronicoPago_V4.4.xsd`.
+      ACTIVIDAD_EMISOR_OPCIONAL    = [DocType::FEC, DocType::REP].freeze
       ACTIVIDAD_RECEPTOR_REQUERIDA = [DocType::FEC].freeze
 
       # @param document [Hash] `payload['Document']`, tal como lo arma
@@ -86,10 +87,13 @@ module Hacienda
         error('El código de actividad del receptor es requerido.', field: 'CodigoActividadReceptor')
       end
 
-      # Regla #4.
+      # Regla #4. REP usa un catálogo aparte: sus dos únicos valores válidos
+      # (09, 11) están excluidos a propósito del catálogo general — ver
+      # `CONDICION_VENTA_REP`.
       def condicion_venta_valida
         condicion = document['CondicionVenta']
-        return nil if CONDICION_VENTA.include?(condicion)
+        catalogo = doc_type == DocType::REP ? CONDICION_VENTA_REP : CONDICION_VENTA
+        return nil if catalogo.include?(condicion)
 
         error("La condición de venta #{condicion.inspect} no es permitida.", field: 'CondicionVenta')
       end

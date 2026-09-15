@@ -27,6 +27,13 @@ module Hacienda
       CONDICION_VENTA_OTROS    = '99'
       CONDICIONES_DE_CREDITO   = %w[02 08 10].freeze
 
+      # `CondicionVenta` exclusivo de Recibo Electrónico de Pago (regla #4 para
+      # ese tipo). El catálogo general de arriba EXCLUYE 09 y 11 a propósito
+      # (reservados a REP), y el XSD de REP declara EXACTAMENTE esos dos y
+      # ningún otro — son catálogos disjuntos del mismo campo, según el tipo
+      # de comprobante. Confirmado leyendo `ReciboElectronicoPago_V4.4.xsd`.
+      CONDICION_VENTA_REP = %w[09 11].freeze
+
       # `Identificacion.Tipo`, emisor y receptor (reglas #5-10, XSD `EmisorType`
       # / `ReceptorType`). 05 y 06 son los que usa un receptor no costarricense.
       TIPO_IDENTIFICACION = %w[01 02 03 04 05 06].freeze

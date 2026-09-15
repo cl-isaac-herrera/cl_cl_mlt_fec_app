@@ -2741,7 +2741,7 @@ if (Documento.CondicionVenta == SalesConditions.Cash && DocType != DocTypesStrin
 `REP` es el tipo que más exclusiones acumula (no lleva líneas de detalle ni cuadre de totales
 como los demás): al migrarlo, revisar todos los `!= DocTypesString.REP` de `Validations.cs`.
 
-### Cómo está cableado hoy — FE, TE, ND, NC y FEC
+### Cómo está cableado hoy — FE, TE, ND, NC, FEC, FEE y REP
 
 `Documents::Issuer#validate!` pregunta `Hacienda::DocumentValidator.validates?(doc_type)`, y
 esa lista (`VALIDATED_DOC_TYPES`) coincide con lo que `Hacienda::XmlBuilder` sabe generar. Es
@@ -2752,14 +2752,21 @@ Las diferencias por tipo que existen hoy, cada una donde corresponde:
 | Regla | Tipos | Dónde vive | Origen |
 |---|---|---|---|
 | Exigir identificación del receptor — **exenta** | TE, ND, NC | `Validations::HeaderValidator::RECEPTOR_OPCIONAL` | `Validations.cs` L324, L329 |
-| Exigir `CodigoActividadEmisor` — **exenta** | FEC | `HeaderValidator::ACTIVIDAD_EMISOR_OPCIONAL` | `Validations.cs` L299 |
+| Exigir `CodigoActividadEmisor` — **exenta** | FEC, REP | `HeaderValidator::ACTIVIDAD_EMISOR_OPCIONAL` | `Validations.cs` L299 |
 | Exigir `CodigoActividadReceptor` — **extra** | FEC | `HeaderValidator::ACTIVIDAD_RECEPTOR_REQUERIDA` | `Validations.cs` L303 |
+| `CondicionVenta` — catálogo propio, disjunto del general | REP (solo `09`/`11`) | `HeaderValidator#condicion_venta_valida` + `Catalogs::CONDICION_VENTA_REP` | XSD de REP (enumeración cerrada a esos dos valores) |
 | Tercero en otros cargos — **prohibido** (no exento) | FEC, FEE | `Validations::OtherChargeValidator::TERCERO_PROHIBIDO` | `Validations.cs` L639 |
-| Validar `InformacionReferencia` por dentro — **exenta** | TE, FEC | `DocumentValidator::REFERENCIAS_NO_VALIDADAS` | `Validations.cs` L817 |
-| Exigir al menos una `InformacionReferencia` — **extra** | ND, NC, FEC | `DocumentValidator::REFERENCIAS_REQUERIDAS` | XSD (`NotaCreditoElectronica_V4.4.xsd` L874, `FacturaElectronicaCompra_V4.4.xsd` L514) |
-| Exigir al menos una línea de detalle — **extra** | FEC (y FEE) | `DocumentValidator::LINEAS_REQUERIDAS` | `Validations.cs` L289 |
+| Bloque de otros cargos — **no aplica en absoluto** | REP | `DocumentValidator#validate_other_charges` | `Validations.cs` L630 (REP tampoco declara `OtrosCargos` en su XSD) |
+| Validar `InformacionReferencia` por dentro — **exenta** | TE, FEC, FEE | `DocumentValidator::REFERENCIAS_NO_VALIDADAS` | `Validations.cs` L817 |
+| Exigir al menos una `InformacionReferencia` — **extra** | ND, NC, FEC, REP | `DocumentValidator::REFERENCIAS_REQUERIDAS` | XSD (`NotaCreditoElectronica_V4.4.xsd` L874, `FacturaElectronicaCompra_V4.4.xsd` L514, `ReciboElectronicoPago_V4.4.xsd` sin `minOccurs`) |
+| Exigir al menos una línea de detalle — **extra** | FEC, FEE | `DocumentValidator::LINEAS_REQUERIDAS` | `Validations.cs` L289 |
+| CABYS / cuadre `SubTotal` / `BaseImponible` — **exentos** | REP (y FEE solo para `BaseImponible`) | `Validations::LineItemValidator` (`doc_type:` en el constructor) | `Validations.cs` L413, L453, L462 |
+| Partida arancelaria — **extra**, condicional a venta de mercancía | FEE | `LineItemValidator#partida_arancelaria_requerida` | `Validations.cs` L422-427 |
+| Recalculo/cuadre de `ResumenFactura` — **reemplazado entero** | REP | `Validations::SummaryTotalsValidator#rep_total_errors` | `Validations.cs` L705-793 (su `ResumenFactura` no tiene `TotalGravado`/`TotalExento`/etc.) |
 
-Todo lo demás corre igual para los cinco, la regla del medio de pago incluida.
+Todo lo demás corre igual para los siete, la regla del medio de pago incluida (REP no
+declara `CondicionVenta` de crédito/contado/otros, así que `SalesConditionValidator` ya
+devuelve `[]` para sus dos únicos valores sin necesitar ningún guard).
 
 > **Un tipo puede estar en dos listas opuestas sin contradicción.** FEC exige que la
 > referencia ESTÉ (lo pide el XSD) y a la vez no revisa qué dice (`OwnValidations` excluye al
@@ -2779,22 +2786,73 @@ Todo lo demás corre igual para los cinco, la regla del medio de pago incluida.
 > migrar un tipo hay que diferenciar su XSD contra el del tipo ya migrado más parecido, no
 > solo leer `Validations.cs`.
 
-### Tres esquemas, cinco tipos — qué cambia entre `DocumentoFETE`, `DocumentoNCND` y `DocumentoFEC`
+### Cinco esquemas, siete tipos — qué cambia entre `DocumentoFETE`, `DocumentoNCND`, `DocumentoFEC`, `DocumentoFEE` y `DocumentoREP`
 
-FE y TE comparten el esquema `DocumentoFETE`; ND y NC comparten `DocumentoNCND`; FEC tiene el
-suyo. Dentro de cada par, lo único que cambia es la raíz y el namespace
-(`XmlBuilder::DOCUMENTS`). Entre esquemas, verificado elemento por elemento sobre los XSD 4.4
-(168 elementos en FE, 170 en NC/ND, 128 en FEC):
+FE y TE comparten el esquema `DocumentoFETE`; ND y NC comparten `DocumentoNCND`; FEC, FEE y
+REP tienen cada uno el suyo. Dentro de cada par, lo único que cambia es la raíz y el
+namespace (`XmlBuilder::DOCUMENTS`). Entre esquemas, verificado elemento por elemento sobre
+los XSD 4.4 (168 elementos en FE, 170 en NC/ND, 128 en FEC, y FEE/REP también leídos
+directamente del XSD, no solo resumidos):
 
 | Campo | Dónde existe | Qué hace este producto |
 |---|---|---|
-| `LineaDetalle.PartidaArancelaria` | solo NC/ND, entre `NumeroLinea` y `CodigoCABYS` | Se mapea para todos en `UnifiedBuilder` y se emite solo en NC/ND (`XmlBuilder::PARTIDA_ARANCELARIA_DOC_TYPES`) |
-| `Impuesto.MontoExportacion` | solo NC/ND, entre `Monto` y `Exoneracion` | **No se emite en ninguno**: `LineItemValidator` rechaza cualquier valor mayor a cero, igual que el legacy y sin excluir a ningún tipo |
-| `LineaDetalle.IVACobradoFabrica` | **falta** en FEC | Se omite con `XmlBuilder#factura_de_compra?` |
-| `LineaDetalle.ImpuestoAsumidoEmisorFabrica` | **falta** en FEC | ídem |
-| `Impuesto.DatosImpuestoEspecifico` | **falta** en FEC (el bloque entero) | ídem |
-| `ResumenFactura.TotalIVADevuelto` | **falta** en FEC | ídem (`#summary_tax_totals`) |
-| `OtrasSenasExtranjero` | en el **receptor** de FE/TE/ND/NC; en el **emisor** de FEC | Se emite en el bloque que corresponde según el tipo |
+| `LineaDetalle.PartidaArancelaria` | NC/ND y **FEE**, entre `NumeroLinea` y `CodigoCABYS` | Se mapea para todos en `UnifiedBuilder` y se emite en NC/ND/FEE (`XmlBuilder::PARTIDA_ARANCELARIA_DOC_TYPES`); en FEE además es obligatoria condicionalmente (`LineItemValidator#partida_arancelaria_requerida`) |
+| `Impuesto.MontoExportacion` | NC/ND y **FEE**, entre `Monto` y `Exoneracion`/`Exoneracion` no aplica | **No se emite en ninguno**: `LineItemValidator` rechaza cualquier valor mayor a cero, igual que el legacy y sin excluir a ningún tipo |
+| `LineaDetalle.IVACobradoFabrica` | **falta** en FEC y en FEE | Se omite con `XmlBuilder#factura_de_compra? || #factura_de_exportacion?` |
+| `LineaDetalle.ImpuestoAsumidoEmisorFabrica` | **falta** en FEC y en FEE | ídem |
+| `LineaDetalle.BaseImponible` | **falta** en FEE (además de no exigirse en REP, que tampoco la declara) | Se omite con `#factura_de_exportacion?`; `LineItemValidator#base_imponible_requerida` la exime en FEE y REP |
+| `LineaDetalle.ImpuestoNeto` | **falta** en FEE | Se omite con `#factura_de_exportacion?` |
+| `Impuesto.DatosImpuestoEspecifico` | **falta** en FEC y en FEE (el bloque entero) | ídem |
+| `Impuesto.Exoneracion` | **falta** en FEE — y también en **REP**, aunque el legacy arme el objeto igual | Se omite con `#factura_de_exportacion?` en FEE; en REP el árbol de emisión propio (`#emit_impuesto_rep`) directamente no lo declara — ver la nota de abajo sobre el campo muerto |
+| `ResumenFactura.TotalIVADevuelto` | **falta** en FEC y en FEE | ídem (`#summary_tax_totals`) |
+| `ResumenFactura.TotalServExonerado/TotalServNoSujeto/TotalMercExonerada/TotalMercNoSujeta/TotalExonerado/TotalNoSujeto` | **faltan los seis** en FEE | `#summary_basic_totals` filtra la lista con `#factura_de_exportacion?` |
+| `CodigoActividadReceptor` | **falta** en FEE (ni siquiera opcional); **faltan los dos** (emisor y receptor) en REP | Se omite en `emit_document` con `#factura_de_exportacion?`; REP no lo emite porque su árbol (`#emit_document_rep`) directamente no lo declara |
+| `OtrasSenasExtranjero` | en el **receptor** de FE/TE/ND/NC/FEE; en el **emisor** de FEC; **no existe** en REP | Se emite en el bloque que corresponde según el tipo |
+| `Receptor.Ubicacion` | **falta** en FEE | Se omite con `#factura_de_exportacion?` |
+
+> ⚠️ **Un campo muerto del legacy no es un campo pendiente de emitir.** Dos casos
+> confirmados leyendo el XSD real, no solo el modelo C#: `FEEModels.Receptor` declara
+> `IdentificacionExtranjero` pero `GetDocToSendFEE` nunca lo llena y el XSD de FEE no lo
+> declara; `GetDocToSendREP` arma un objeto `Exoneracion` completo para cada línea, pero el
+> `ImpuestoType` de REP termina en `Monto` — no hay `Exoneracion` que emitir. Los dos son
+> restos de un modelo C# más permisivo que el esquema real que Hacienda acepta. Antes de
+> replicar un mapeo del legacy, confirmar contra el XSD (no solo contra el modelo) que el
+> campo de verdad se serializa.
+
+### REP no es "FE menos algunos campos" — es una forma de documento distinta
+
+Los cuatro esquemas de arriba (FETE, NCND, FEC, FEE) son variaciones del mismo documento de
+venta: mismo `Emisor`/`Receptor` con ubicación y teléfono, misma `LineaDetalle` de
+producto/servicio, mismo `ResumenFactura` con el desglose gravado/exento/exonerado. **REP
+no** — es la confirmación de un PAGO, no una venta:
+
+- `Emisor`/`Receptor` solo llevan `Nombre`, `Identificacion` y `CorreoElectronico`: sin
+  `Ubicacion`, `Telefono`, `NombreComercial`, `Registrofiscal8707` ni `OtrasSenasExtranjero`.
+- `LineaDetalle` no tiene `Cantidad`, `PrecioUnitario`, `UnidadMedida`, `CodigoCABYS`,
+  `CodigoComercial`, `Descuento`, `PartidaArancelaria` ni `DetalleSurtido` — solo
+  `NumeroLinea`, `Detalle`, `MontoTotal`, `SubTotal`, `Impuesto`, `ImpuestoNeto` y
+  `MontoTotalLinea`. `SubTotal` incluso cambia de significado: para REP es "el monto del
+  pago a registrar" y no `MontoTotal − descuento` (por eso `LineItemValidator#sub_total_cuadra`
+  lo exime).
+- `ResumenFactura` no tiene absolutamente ninguno de los totales de composición de venta
+  (`TotalGravado`, `TotalExento`, `TotalServ*`, `TotalMerc*`, `TotalDescuentos`,
+  `TotalOtrosCargos`) — solo `CodigoTipoMoneda`, `TotalVenta`, `TotalVentaNeta`,
+  `TotalDesgloseImpuesto`, `TotalImpuesto`, `MedioPago` y `TotalComprobante`. `TotalVenta` es
+  la suma de `MontoTotal` de las líneas y `TotalVentaNeta` tiene que ser IGUAL a `TotalVenta`
+  (sin descuentos que restar) — la fórmula propia que reemplaza el bloque F/G entero en
+  `Validations::SummaryTotalsValidator#rep_total_errors`.
+- No tiene `CodigoActividadEmisor`/`Receptor`, `CondicionVentaOtros`, `PlazoCredito` ni
+  `OtrosCargos` en absoluto — ni siquiera opcionales.
+- `CondicionVenta` usa un catálogo cerrado de dos valores (`09`/`11`) que el catálogo
+  GENERAL excluye a propósito (`Catalogs::CONDICION_VENTA` vs. `CONDICION_VENTA_REP`).
+
+Por eso `Hacienda::XmlBuilder#emit_document` bifurca a un árbol de emisión PARALELO
+(`#emit_document_rep` y sus métodos `_rep`) en vez de forzar guards dentro de
+`emit_document`/`emit_emisor`/`emit_receptor`/`emit_line`/`emit_summary`: la forma de REP no
+comparte lo suficiente con la de venta como para que "cuál campo omito" sea una pregunta
+legible campo por campo — la respuesta sería "casi todos". El árbol paralelo sí reutiliza
+los emisores de hoja que ya eran agnósticos a la forma del resto (`emit_identificacion`,
+`emit_moneda`, `emit_tax_breakdown`, `emit_payment_methods`, `emit_references`).
 
 ### La factura de compra INVIERTE los roles — y eso no es un detalle de formato
 
@@ -2836,10 +2894,14 @@ vacía, y ese comprobante —que Hacienda aceptaría— dice que la compañía s
 > equivocado, que es un problema tributario. Ver `TODOS.md` → Emisión de documentos.
 
 Al sumar un tipo: revisar sus exclusiones en `Validations.cs`, diferenciar su XSD contra el
-del tipo migrado más parecido, preguntarse si los ROLES se mantienen, agregar cada regla al
-validador que corresponda, y recién entonces meterlo en `VALIDATED_DOC_TYPES`.
-`RECEPTOR_OPCIONAL` ya listaba ND y NC antes de que se pudieran emitir, y `TERCERO_PROHIBIDO`
-lista a FEE hoy — las listas describen la regla, no lo que hoy se puede mandar.
+del tipo migrado más parecido — **leyendo el XSD real, no solo el resumen de otra
+exploración** (FEE y REP se migraron corrigiendo dos hallazgos que un resumen previo tenía
+mal, ver la nota de "campo muerto" más arriba) —, preguntarse si los ROLES se mantienen,
+agregar cada regla al validador que corresponda, y recién entonces meterlo en
+`VALIDATED_DOC_TYPES`. `RECEPTOR_OPCIONAL` ya listaba ND y NC antes de que se pudieran
+emitir, y `TERCERO_PROHIBIDO` listaba a FEE antes de que se pudiera emitir — las listas
+describen la regla, no necesariamente lo que hoy se puede mandar; los siete tipos de esta
+sección ya se emiten.
 
 ---
 
@@ -2914,3 +2976,58 @@ no derivados de la constante: documenta lo que se aplicó el día que corrió.
 Son **nueve y no diez** porque los tres mensajes de receptor (`05`/`06`/`07`) comparten
 esquema, y la variante se elige por el ORIGEN del mensaje —extraído de un correo o no—, no por
 su código: es el parámetro `fromMailParser` del legacy (`Validations.cs` L248-256).
+
+---
+
+## 41. Artifact de avance de migración — mantenerlo al día
+
+Existe un Artifact publicado que audita el avance real de esta migración (.NET + Angular →
+Rails): **`https://claude.ai/artifact/DrbCDEwBk18mC6Pdwhwv8R`**. Muestra un porcentaje de
+avance ponderado por horas, el detalle línea por línea de cada prioridad de negocio (con
+evidencia de código, no de intención), y la lista de qué falta para llegar al 100%.
+
+**Regla:** cuando se complete o avance de forma significativa un ítem de ese inventario
+—un controller/servicio/job que pasa de "no iniciado" a "hecho" o "parcial", un tipo de
+documento nuevo que empieza a emitirse, una prueba real contra Hacienda o Azure que se
+confirma, un módulo de soporte que se cierra— **actualizar el Artifact en el mismo cambio**,
+no dejarlo para después. Un artifact de avance que no se actualiza es peor que no tenerlo:
+alguien va a tomar una decisión con un número que ya no es cierto.
+
+### Cómo actualizar
+
+1. Leer el Artifact actual antes de tocarlo: `Artifact({ action: "read", url: "https://claude.ai/artifact/DrbCDEwBk18mC6Pdwhwv8R" })`.
+   Publicar sin leer primero crea un Artifact **separado** en vez de actualizar este.
+2. Editar el HTML local (descargado o reescrito) y volver a publicar con el mismo `url`
+   para que la actualización llegue a quienes ya lo tienen abierto.
+3. Recalcular el porcentaje ponderado: cada ítem del inventario tiene un peso en horas
+   (heredado del plan original de agosto); el % de cada prioridad es horas-hechas ÷
+   horas-estimadas, y el total general es la suma de horas hechas de todas las prioridades
+   ÷ la suma de horas estimadas — **sin incluir la importación de datos** (ver regla
+   siguiente).
+
+### Qué SÍ cuenta como avance y qué NO
+
+- **Un ítem solo pasa a "Hecho" con evidencia verificable en el código** (el servicio/job
+  existe, tiene lógica real, y si aplica, se confirmó contra un ambiente real — p. ej. el
+  envío a Hacienda se marcó "Hecho" solo después de confirmarse contra el ambiente de
+  pruebas de Hacienda, no apenas hubo specs). Un commit que solo menciona el tema no cuenta.
+- **La importación de datos del cliente (compañías, usuarios, roles, permisos, conexiones,
+  bandejas) NO se pondera dentro del % de migración.** Es preparación operativa para
+  operar con un cliente real, no migración de funcionalidad — se rastrea aparte, en su
+  propia fila/sección, marcada explícitamente "fuera del %".
+- **Nada de lo que siga apuntando al proxy .NET se cuenta como "bloqueado" por
+  autenticación/OIDC.** Los APIs .NET no se van a seguir usando: lo que falta ahí es
+  simplemente migrarlo a Rails, sin más framing. No inventar un ítem de pendiente aparte
+  para "arreglar el acceso al .NET".
+- **No confundir aceptación parcial de documentos emitidos con la de documentos
+  recibidos.** Un documento que la compañía emite ante Hacienda solo tiene dos resultados
+  (aceptado/rechazado); "aceptar parcialmente" es una decisión que el usuario toma sobre un
+  documento **recibido** de un proveedor (mensaje receptor, Prioridad 3). No marcar como
+  "parcial" o "pendiente" el manejo de emisión por no tener un estado que no le aplica.
+
+### Cuándo actualizarlo
+
+No hace falta un Artifact nuevo por cada commit. Actualizar cuando el cambio mueve la aguja
+de alguna prioridad o módulo del inventario (cierra un ítem, cambia su evidencia, o revela
+que algo marcado como hecho en realidad no lo estaba). Si el cambio es puramente interno sin
+relación al inventario (un refactor, un fix de estilo), no amerita tocar el Artifact.

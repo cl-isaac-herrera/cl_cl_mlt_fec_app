@@ -3,8 +3,8 @@
 require 'rails_helper'
 
 RSpec.describe Hacienda::Validations::LineItemValidator do
-  def errors_for(line, number = 1) = described_class.new(line, number).call
-  def fields_for(line, number = 1) = errors_for(line, number).map(&:field)
+  def errors_for(line, number = 1, doc_type: DocType::FE) = described_class.new(line, number, doc_type: doc_type).call
+  def fields_for(line, number = 1, doc_type: DocType::FE) = errors_for(line, number, doc_type: doc_type).map(&:field)
 
   it 'no reporta nada para una línea consistente' do
     expect(errors_for(valid_line)).to eq([])
@@ -190,6 +190,64 @@ RSpec.describe Hacienda::Validations::LineItemValidator do
       line = valid_line('MontoTotalLinea' => BigDecimal(999))
 
       expect(fields_for(line)).to include('MontoTotalLinea')
+    end
+  end
+
+  describe 'REP (Recibo Electrónico de Pago)' do
+    def rep_line(overrides = {})
+      valid_line(
+        {
+          'CodigoCABYS' => nil, 'PartidaArancelaria' => nil, 'CodigoComercial' => { 'Tipo' => nil, 'Codigo' => nil },
+          'Cantidad' => nil, 'PrecioUnitario' => nil, 'UnidadMedida' => nil,
+          'MontoTotal' => BigDecimal(200), 'SubTotal' => BigDecimal(150), # pago parcial: no cuadra con MontoTotal
+          'BaseImponible' => nil,
+          'Descuento' => { 'MontoDescuento' => nil, 'NaturalezaDescuento' => nil,
+                           'CodigoDescuento' => nil, 'CodigoDescuentoOTRO' => nil, 'PorcentajeDescuento' => nil },
+          'Impuesto' => valid_impuesto('Monto' => BigDecimal(0), 'Tarifa' => nil, 'FactorCalculoIVA' => nil),
+          'ImpuestoNeto' => BigDecimal(0), 'MontoTotalLinea' => BigDecimal(150)
+        }.merge(overrides)
+      )
+    end
+
+    it 'no exige el código CABYS' do
+      expect(fields_for(rep_line, doc_type: DocType::REP)).not_to include('CodigoCABYS')
+    end
+
+    it 'no exige que el subtotal cuadre contra monto total menos descuento' do
+      expect(fields_for(rep_line, doc_type: DocType::REP)).not_to include('SubTotal')
+    end
+
+    it 'no exige la base imponible aunque el impuesto sea de cálculo especial (07)' do
+      line = rep_line('Impuesto' => valid_impuesto('Codigo' => '07', 'Monto' => BigDecimal(0),
+                                                   'Tarifa' => nil, 'FactorCalculoIVA' => nil))
+
+      expect(fields_for(line, doc_type: DocType::REP)).not_to include('BaseImponible')
+    end
+  end
+
+  describe 'FEE (Factura Electrónica de Exportación)' do
+    it 'no exige la base imponible aunque el impuesto sea de cálculo especial (07)' do
+      line = valid_line('Impuesto' => valid_impuesto('Codigo' => '07'))
+
+      expect(fields_for(line, doc_type: DocType::FEE)).not_to include('BaseImponible')
+    end
+
+    it 'exige la partida arancelaria cuando la línea es una venta de mercancía' do
+      line = valid_line('PartidaArancelaria' => nil, 'UnidadMedida' => 'Unid')
+
+      expect(fields_for(line, doc_type: DocType::FEE)).to include('PartidaArancelaria')
+    end
+
+    it 'no exige la partida arancelaria cuando la línea es un servicio' do
+      line = valid_line('PartidaArancelaria' => nil, 'UnidadMedida' => 'Sp')
+
+      expect(fields_for(line, doc_type: DocType::FEE)).not_to include('PartidaArancelaria')
+    end
+
+    it 'no exige la partida arancelaria para otros tipos de documento' do
+      line = valid_line('PartidaArancelaria' => nil, 'UnidadMedida' => 'Unid')
+
+      expect(fields_for(line, doc_type: DocType::FE)).not_to include('PartidaArancelaria')
     end
   end
 end
