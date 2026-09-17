@@ -145,3 +145,29 @@
 @media (prefers-reduced-motion: reduce) {
   .cl-beat { animation: none; }
 }
+
+/* ---------------------------------------------------------------------------
+ * SweetAlert2 — botones alineados con la paleta del resto de la app (§7/§16:
+ * "SweetAlert2 directo, sin wrapper propio"). Por defecto SweetAlert2 pinta
+ * Confirmar en morado (#7066e0), Cancelar en gris sólido y Denegar en rojo;
+ * acá se sobreescriben sus variables CSS para que respeten la convención de
+ * botones de la app: azul primario para Confirmar (§20), blanco con borde
+ * gris para Cancelar (mismo patrón que el botón "Cancelar" del toolbar, §12)
+ * y rojo para Denegar (reservado para una acción destructiva de tres vías).
+ *
+ * Selector `html .swal2-popup` a propósito: más específico que el `:root`
+ * donde SweetAlert2 define sus propios valores por defecto, para ganar la
+ * cascada sin depender del orden — su <style> se inyecta en runtime, después
+ * de este archivo, así que con la misma especificidad el suyo ganaría.
+ * ------------------------------------------------------------------------- */
+html .swal2-popup {
+  --swal2-confirm-button-background-color: #2563eb; /* blue-600, igual que los botones primarios */
+  --swal2-confirm-button-color: #fff;
+
+  --swal2-cancel-button-background-color: #fff;
+  --swal2-cancel-button-color: #374151;                       /* gray-700 */
+  --swal2-cancel-button-box-shadow: inset 0 0 0 1px #d1d5db;  /* borde gray-300 — swal2 no tiene variable de borde */
+
+  --swal2-deny-button-background-color: #dc2626;              /* red-600, acciones destructivas */
+  --swal2-deny-button-color: #fff;
+}
