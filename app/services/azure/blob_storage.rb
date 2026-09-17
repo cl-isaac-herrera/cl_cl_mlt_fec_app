@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 module Azure
-  # Sube un archivo a un contenedor de Azure Blob Storage, autenticado con
-  # Shared Key (cuenta + clave), tal como lo hacía el legacy
-  # (`CLVS_FE.Common/Utils.cs#BuildAzureBlobClient`, `StorageSharedKeyCredential`).
+  # Sube/descarga/borra archivos en Azure Blob Storage, resolviendo la cuenta y
+  # la clave desde `settings` (`Setting.group('AZURE_STORAGE')`, ver
+  # `CLAUDE.md` §36) y traduciendo al español los errores.
   #
   #   Azure::BlobStorage.new.upload(
   #     container: 'clvsfe', path: '3101822733/5061...xml',
@@ -11,17 +11,19 @@ module Azure
   #   )
   #   # => "https://miempresa.blob.core.windows.net/clvsfe/3101822733/5061...xml"
   #
-  # No usa el SDK oficial de Azure (`azure-storage-blob`): es una gema sin
-  # mantenimiento activo. Es una sola operación REST (`Put Blob`) bien
-  # documentada, con el mismo criterio que `Hacienda::Client` — `Net::HTTP`
-  # puro, sin gemas nuevas para un solo endpoint.
+  # El algoritmo Shared Key y el `Net::HTTP` puro ya NO viven acá: los provee
+  # `Clavisco::Common::Storage::AzureBlobStorage` (submódulo `common`), porque
+  # es la misma necesidad de cualquier producto Clavisco que guarde archivos en
+  # Azure — no algo propio de FEC. Esta clase es el adaptador de ese cliente
+  # genérico a las convenciones de este producto:
   #
-  # ── El algoritmo de firma NO es negociable ──────────────────────────────────
-  # "Shared Key for Blob, Queue, and File Services" (no "Shared Key Lite",  que
-  # es el formato viejo con otro `StringToSign`). Está verificado contra la
-  # documentación oficial de Microsoft (Authorize with Shared Key), línea por
-  # línea, no reconstruido de memoria: un canonicalizado distinto en un solo
-  # carácter invalida la firma y Azure responde 403 sin decir qué falló.
+  #   - de dónde salen `account`/`key` (la tabla `settings`, no ENV ni
+  #     parámetros — ver `.container`/`.workspace`/`#setting` más abajo);
+  #   - los mensajes de error en español (`CLAUDE.md` §10): el cliente común es
+  #     agnóstico de producto y sus mensajes son en inglés, así que acá se
+  #     reconstruyen a partir del `response` HTTP que el error expone
+  #     (`Clavisco::Common::Storage::AzureBlobStorage::TransientError#response`
+  #     / `RejectedError#response`), no parseando el texto en inglés.
   class BlobStorage
     class Error < StandardError; end
 
@@ -45,24 +47,18 @@ module Azure
     # que `CompanyFiles::Store::VALID_ID_NUMBER` para las rutas del disco (§34).
     VALID_SEGMENT = /\A[A-Za-z0-9._-]+\z/
 
-    # La subida falló por algo que no es del archivo: red, timeout, un 5xx de
-    # Azure, o una firma rechazada (403) — que casi siempre es reloj
-    # desincronizado (Azure exige que la fecha esté a menos de 15 min) y no un
-    # error del llamador.
+    # La subida/descarga/borrado falló por algo que no es del archivo: red,
+    # timeout, un 5xx de Azure, o una firma rechazada (403) — que casi siempre
+    # es reloj desincronizado (Azure exige que la fecha esté a menos de 15 min)
+    # y no un error del llamador.
     class TransientError < Error; end
 
-    # Azure rechazó la subida por algo que un reintento igual a sí mismo NUNCA
-    # arregla — el contenedor no existe, el nombre de la cuenta está mal, la
-    # ruta es inválida. Reintentar esto para siempre (`TransientError`) deja el
-    # documento en `Processing` sin que nadie se entere de por qué nunca avanza
-    # (ver `SyncIssuedDocumentsJob#transient` vs. `#failed`).
+    # Azure rechazó la operación por algo que un reintento igual a sí mismo
+    # NUNCA arregla — el contenedor no existe, el nombre de la cuenta está mal,
+    # la ruta es inválida. Reintentar esto para siempre (`TransientError`) deja
+    # el documento en `Processing` sin que nadie se entere de por qué nunca
+    # avanza (ver `SyncIssuedDocumentsJob#transient` vs. `#failed`).
     class RejectedError < Error; end
-
-    API_VERSION = '2021-08-06'
-    BLOB_TYPE = 'BlockBlob'
-
-    OPEN_TIMEOUT = 10
-    READ_TIMEOUT = 30
 
     # Los dos ajustes que forman la ruta de CUALQUIER blob de este producto, no
     # solo de uno de los dos almacenes. Viven acá y no duplicados en
@@ -121,25 +117,11 @@ module Azure
     #   quien no tenga la clave de la cuenta).
     # @raise [TransientError, RejectedError]
     def upload(container:, path:, content:, content_type:)
-      uri = blob_uri(container, path)
-      date = Time.now.utc.httpdate
-
-      ms_headers = { 'x-ms-blob-type' => BLOB_TYPE, 'x-ms-date' => date, 'x-ms-version' => API_VERSION }
-
-      request = Net::HTTP::Put.new(uri.request_uri)
-      ms_headers.each { |name, value| request[name] = value }
-      request['Content-Type'] = content_type
-      request['Authorization'] = authorization('PUT', uri, ms_headers, content.bytesize, content_type)
-      request.body = content
-
-      response = perform(uri, request)
-
-      return uri.to_s if response.is_a?(Net::HTTPSuccess)
-
-      message = "Azure Storage rechazó la subida (#{describe(response)})."
-      raise TransientError, message if transient?(response)
-
-      raise RejectedError, message
+      client.upload(container: container, path: path, content: content, content_type: content_type)
+    rescue Clavisco::Common::Storage::AzureBlobStorage::TransientError => e
+      raise TransientError, translate(e, verb: 'la subida')
+    rescue Clavisco::Common::Storage::AzureBlobStorage::RejectedError => e
+      raise RejectedError, translate(e, verb: 'la subida')
     end
 
     # @param container [String] nombre del contenedor.
@@ -147,142 +129,56 @@ module Azure
     # @return [String] los bytes del blob.
     # @raise [TransientError, RejectedError]
     def download(container:, path:)
-      uri = blob_uri(container, path)
-      date = Time.now.utc.httpdate
-
-      # Sin `x-ms-blob-type`: ese header es propio de `Put Blob`, no de `Get
-      # Blob`. Incluirlo igual en el `StringToSign` (como si `#upload`
-      # reutilizara `canonicalized_headers` a ciegas) firmaría un header que
-      # esta petición nunca manda, y Azure respondería 403 sin decir por qué.
-      ms_headers = { 'x-ms-date' => date, 'x-ms-version' => API_VERSION }
-
-      request = Net::HTTP::Get.new(uri.request_uri)
-      ms_headers.each { |name, value| request[name] = value }
-      # Un GET no lleva body: `Content-Length`/`Content-Type` van vacíos —
-      # misma rama del `StringToSign` que ya cubre `#upload` cuando
-      # `content_length` es cero.
-      request['Authorization'] = authorization('GET', uri, ms_headers, 0, '')
-
-      response = perform(uri, request)
-
-      return response.body if response.is_a?(Net::HTTPSuccess)
-
-      message = "Azure Storage rechazó la descarga (#{describe(response)})."
-      raise TransientError, message if transient?(response)
-
-      raise RejectedError, message
+      client.download(container: container, path: path)
+    rescue Clavisco::Common::Storage::AzureBlobStorage::TransientError => e
+      raise TransientError, translate(e, verb: 'la descarga')
+    rescue Clavisco::Common::Storage::AzureBlobStorage::RejectedError => e
+      raise RejectedError, translate(e, verb: 'la descarga')
     end
 
     # Borra un blob. La usa `Hacienda::SchemaUpload` para sacar del contenedor
     # el XSD que acaba de quedar reemplazado — el que ningún ajuste apunta ya.
     #
-    # **Un blob que no existe NO es un error**: `Delete Blob` responde 404 y acá
-    # eso se trata como éxito. Quien llama a este método lo hace para limpiar
-    # algo que sobra, así que "ya no está" es exactamente el resultado buscado,
-    # y levantar obligaría a cada llamador a distinguir un caso que le da igual.
+    # **Un blob que no existe NO es un error**: el cliente común ya trata un 404
+    # de `Delete Blob` como éxito (ver `Clavisco::Common::Storage
+    # ::AzureBlobStorage#delete`) — quien llama a este método lo hace para
+    # limpiar algo que sobra, así que "ya no está" es exactamente el resultado
+    # buscado.
     #
     # @param container [String]
     # @param path [String] ruta dentro del contenedor, sin barra inicial.
     # @return [void]
     # @raise [TransientError, RejectedError]
     def delete(container:, path:)
-      uri = blob_uri(container, path)
-      date = Time.now.utc.httpdate
-
-      # Sin `x-ms-blob-type`, por lo mismo que `#download`: ese header es propio
-      # de `Put Blob`. Firmar uno que la petición no manda es un 403 sin motivo
-      # visible.
-      ms_headers = { 'x-ms-date' => date, 'x-ms-version' => API_VERSION }
-
-      request = Net::HTTP::Delete.new(uri.request_uri)
-      ms_headers.each { |name, value| request[name] = value }
-      request['Authorization'] = authorization('DELETE', uri, ms_headers, 0, '')
-
-      response = perform(uri, request)
-
-      return if response.is_a?(Net::HTTPSuccess) || response.is_a?(Net::HTTPNotFound)
-
-      message = "Azure Storage rechazó el borrado (#{describe(response)})."
-      raise TransientError, message if transient?(response)
-
-      raise RejectedError, message
+      client.delete(container: container, path: path)
+    rescue Clavisco::Common::Storage::AzureBlobStorage::TransientError => e
+      raise TransientError, translate(e, verb: 'el borrado')
+    rescue Clavisco::Common::Storage::AzureBlobStorage::RejectedError => e
+      raise RejectedError, translate(e, verb: 'el borrado')
     end
 
     private
 
     attr_reader :account, :key
 
-    # 5xx es Azure fallando; 403 es casi siempre reloj desincronizado (ver
-    # `TransientError`) y no un problema del contenedor o la ruta. El resto
-    # (404 "el contenedor no existe", 400, …) es una subida que este mismo
-    # request nunca va a lograr, sin importar cuántas veces se reintente.
-    def transient?(response)
-      response.is_a?(Net::HTTPServerError) || response.is_a?(Net::HTTPForbidden)
+    def client
+      @client ||= Clavisco::Common::Storage::AzureBlobStorage.new(account: account, key: key)
     end
 
-    def blob_uri(container, path)
-      encoded_path = path.split('/').map { |segment| ERB::Util.url_encode(segment) }.join('/')
-      URI("https://#{account}.blob.core.windows.net/#{container}/#{encoded_path}")
-    end
+    # Reconstruye el mensaje en español a partir del `response` HTTP que trae
+    # el error del cliente común, no de su `#message` (en inglés) — así el
+    # texto no depende de que la librería compartida no cambie su redacción.
+    #
+    # `response` es `nil` cuando la falla fue de conectividad (timeout, DNS…):
+    # ahí no hay HTTP que describir, así que se usa `#cause` — la excepción de
+    # bajo nivel (`Timeout::Error`, `SocketError`…) que Ruby encadena
+    # automáticamente cuando el cliente común hace `raise TransientError, "…"`
+    # dentro de su propio `rescue` — en vez de repetir la frase en inglés que
+    # ese cliente arma para SU `#message`.
+    def translate(error, verb:)
+      return "No se pudo contactar Azure Storage: #{error.cause&.message || error.message}" unless error.response
 
-    def perform(uri, request)
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
-      http.open_timeout = OPEN_TIMEOUT
-      http.read_timeout = READ_TIMEOUT
-
-      http.request(request)
-    rescue Timeout::Error, IOError, SystemCallError, OpenSSL::SSL::SSLError, SocketError => e
-      raise TransientError, "No se pudo contactar Azure Storage (#{uri.host}): #{e.message}"
-    end
-
-    def describe(response)
-      "HTTP #{response.code} #{response.message}".strip
-    end
-
-    # ── Firma Shared Key ─────────────────────────────────────────────────────
-    # Ver "Authorize with Shared Key" de Microsoft. El `StringToSign` de Blob
-    # Storage 2009-09-19+ es una secuencia FIJA de doce líneas de headers
-    # estándar (vacías si no aplican) más los headers `x-ms-*` canonicalizados
-    # y el recurso canonicalizado — en ESE orden exacto.
-    def authorization(verb, uri, ms_headers, content_length, content_type)
-      standard_headers = [
-        verb,
-        '', # Content-Encoding
-        '', # Content-Language
-        content_length.zero? ? '' : content_length.to_s, # Content-Length: vacío si 0
-        '', # Content-MD5
-        content_type, # Content-Type
-        '', # Date: vacío porque la fecha va en x-ms-date
-        '', # If-Modified-Since
-        '', # If-Match
-        '', # If-None-Match
-        '', # If-Unmodified-Since
-        '' # Range
-      ].join("\n")
-      string_to_sign = "#{standard_headers}\n#{canonicalized_headers(ms_headers)}#{canonicalized_resource(uri)}"
-
-      signature = Base64.strict_encode64(
-        OpenSSL::HMAC.digest('SHA256', Base64.strict_decode64(key), string_to_sign)
-      )
-
-      "SharedKey #{account}:#{signature}"
-    end
-
-    # Los headers `x-ms-*` de ESTA petición, en minúscula, ordenados
-    # lexicográficamente por nombre (`x-ms-blob-type` < `x-ms-date` <
-    # `x-ms-version`) — SOLO los que la petición manda de verdad: firmar un
-    # header que no se envía (o al revés) invalida la firma y Azure responde
-    # 403 sin decir qué falló.
-    def canonicalized_headers(ms_headers)
-      ms_headers.sort.map { |name, value| "#{name}:#{value}\n" }.join
-    end
-
-    # Formato 2009-09-19+: `/{cuenta}/{path sin query}`. Esta subida nunca lleva
-    # query string (sin SAS, sin snapshot), así que no hace falta la parte de
-    # parámetros ordenados que exige el resto del algoritmo.
-    def canonicalized_resource(uri)
-      "/#{account}#{uri.path}"
+      "Azure Storage rechazó #{verb} (HTTP #{error.response.code} #{error.response.message})."
     end
 
     def setting(key)

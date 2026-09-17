@@ -3,7 +3,10 @@
 	url = https://github.com/Crisql/cl-core-structures-ruby.git
 [submodule "vendor/clavisco/common"]
 	path = vendor/clavisco/common
-	url = https://github.com/Crisql/cl-core-common-ruby.git
+	# TEMPORAL: apunta al fork mientras se prueba el PR de AzureBlobStorage.
+	# Revertir a https://github.com/Crisql/cl-core-common-ruby.git una vez
+	# que ese PR se mergee upstream.
+	url = https://github.com/cl-isaac-herrera/cl-core-common-ruby.git
 [submodule "vendor/clavisco/data_access"]
 	path = vendor/clavisco/data_access
 	url = https://github.com/Crisql/cl-data-access-ruby.git
