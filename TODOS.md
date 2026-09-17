@@ -552,18 +552,18 @@ Lo que quedó pendiente:
       así que el endpoint tampoco la expone. Ya estaba anotada más arriba (sección SAP);
       se repite acá porque es esta pantalla la que tendría que capturarla.
 
-- [ ] **`CompanyScoped` afloja la obligatoriedad de `company` en `UserRole`.** El concern
-      declara `belongs_to :company, optional: true` dentro de su bloque `included do`, y
-      `UserRole` no vuelve a declarar la asociación: el resultado es que
-      `UserRole.new(user:, role:).valid?` devuelve **true** sin compañía y el guardado
-      revienta abajo con `ActiveRecord::NotNullViolation` (la columna es `null: false`).
-      Verificado en consola. **Ya hay un endpoint que crea `UserRole`**
-      (`PUT /api/users/:id/role`): ahí no revienta porque un `before_action` exige compañía
-      activa antes de tocar la base, pero esa es una guarda del controller, no del modelo —
-      el próximo que escriba `user_roles` se lleva el 500.
-      **Pendiente:** agregar `validates :company, presence: true` en `UserRole` (o
-      redeclarar `belongs_to :company` después del `include`). Lo correcto de fondo es que
-      el submódulo no imponga `optional: true` — anotarlo para `cl-data-access-ruby`.
+- [x] **`CompanyScoped` afloja la obligatoriedad de `company` en `UserRole`** — resuelto:
+      el concern declara `belongs_to :company, optional: true` dentro de su bloque
+      `included do`, y `UserRole` no volvía a declarar la asociación, así que
+      `UserRole.new(user:, role:).valid?` devolvía **true** sin compañía y el guardado
+      reventaba abajo con `ActiveRecord::NotNullViolation` (la columna es `null: false`).
+      `app/models/user_role.rb` ahora redeclara `belongs_to :company` (sin `optional:
+      true`) después del `include`, así que la validación corta antes de llegar a la base.
+      Cubierto en `spec/models/user_role_spec.rb`.
+      **Sigue pendiente, pero es deuda del submódulo:** lo correcto de fondo es que
+      `cl-data-access-ruby` no imponga `optional: true` por defecto — anotarlo ahí
+      (`CLAUDE.md` §27: no se toca el submódulo desde acá, cada modelo que lo incluya y
+      tenga `company_id null: false` debe redeclarar la asociación como acá).
 
 ---
 
