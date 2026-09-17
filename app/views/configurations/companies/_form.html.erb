@@ -203,6 +203,28 @@
       </select>
     </div>
 
+    <%# Bandeja de recepción. Es de DÓNDE se leen los documentos electrónicos    %>
+    <%# de los proveedores (`companies.reception_mailbox_id`, `MailReceptionJob`). %>
+    <%# El catálogo se administra en /configurations/mail-parser; acá solo se     %>
+    <%# asigna, con el mismo patrón que "Bandeja de Correo".                      %>
+    <%# Opcional y oculto en el ALTA por el mismo motivo que esa: la creación     %>
+    <%# todavía va al `POST /api/Companies` del .NET, que no conoce la columna.   %>
+    <div data-company-form-target="receptionMailboxField" class="hidden flex-col gap-1">
+      <label class="text-xs font-medium text-gray-600 flex items-center gap-1">
+        Bandeja de Recepción
+        <span data-help
+              data-company-form-target="receptionMailboxHint"
+              data-tooltip="Bandeja desde la que se leen los documentos de los proveedores."
+              class="material-icons text-gray-400 cursor-help flex-shrink-0"
+              style="font-size:14px; line-height:1">help_outline</span>
+      </label>
+      <select data-company-form-target="receptionMailboxId"
+              data-testid="field-reception-mailbox"
+              data-action="change->company-form#onFormChange"
+              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+      </select>
+    </div>
+
     <%# Checkboxes. "Utiliza Service Layer" se eliminó: este producto llega a SAP %>
     <%# únicamente por Service Layer (CLAUDE.md §29), así que el check no elegía  %>
     <%# nada.                                                                     %>

@@ -84,6 +84,9 @@ es:
       email_config:
         one: Bandeja de correo
         other: Bandejas de correo
+      reception_mailbox:
+        one: Bandeja de recepción
+        other: Bandejas de recepción
 
     attributes:
       connection:
@@ -108,6 +111,7 @@ es:
         sap_db: "El código de base de SAP"
         connection_id: "La conexión de SAP"
         email_config_id: "La bandeja de correo"
+        reception_mailbox_id: "La bandeja de recepción"
         # Bloque del emisor ante Hacienda. Sin estas claves el mensaje usa el
         # nombre de la columna humanizado y sale en inglés (§30).
         issuer_legal_name: "La razón social del emisor"
@@ -159,3 +163,14 @@ es:
         sender_address: "El nombre del remitente"
         password: "La contraseña"
         ssl: "El SSL"
+      reception_mailbox:
+        mail_server: "El servidor"
+        email: "El correo"
+        port: "El puerto"
+        password: "La contraseña"
+        tenant_id: "El Tenant Id"
+        url: "La URL"
+        grant_type: "El Grant Type"
+        scope: "El Scope"
+        client_id: "El Client Id"
+        client_secret: "El Client Secret"

@@ -179,6 +179,26 @@ Rails.application.routes.draw do
     # todavía no hay id: lo que se prueba son los valores del formulario.
     resources :email_credential_validations, only: [:create]
 
+    # Bandejas de correo de RECEPCIÓN (pantalla /configurations/mail-parser,
+    # "Bandejas de recepción"), de las que `MailReceptionJob` lee los
+    # documentos de los proveedores. Reemplaza `MailParserConfig` del conector
+    # .NET legacy — renombrado a REST (§28), igual que `email_configs`.
+    #
+    # Sin `destroy`: `companies.reception_mailbox_id` la referencia con llave
+    # foránea — se da de baja con `Active: false` en el PATCH.
+    #
+    # `assignable` alimenta el selector "Bandeja de Recepción" del formulario
+    # de compañías, con el mismo patrón que `email_configs/assignable`.
+    resources :reception_mailboxes, only: %i[index create update] do
+      get :assignable, on: :collection
+    end
+
+    # Prueba de una bandeja de recepción: abre una sesión IMAP (usuario/
+    # contraseña o XOAUTH2). No cuelga de `/api/reception_mailboxes/:id` por el
+    # mismo motivo que `email_credential_validations`: el botón también existe
+    # al crear.
+    resources :reception_mailbox_validations, only: [:create]
+
     # Sucursales del emisor (pantalla /configurations/branches). Reemplazan
     # `GET /api/Sucursal/GetSucursalByCompany?companyId=N`, `POST /api/Sucursal` y
     # `PATCH /api/Sucursal` del .NET: el `companyId` se cae (sale de la sesión,

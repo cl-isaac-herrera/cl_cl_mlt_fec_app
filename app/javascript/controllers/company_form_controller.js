@@ -54,6 +54,7 @@ export default class extends Controller {
     'sapConnectionId',
     'btnAddConnection',
     'emailConfigId', 'emailConfigHint', 'emailConfigField',
+    'receptionMailboxId', 'receptionMailboxHint', 'receptionMailboxField',
     'dbSap',
     'active',
     'sendRejectedDocuments', 'sendRejectedDocumentsField',
@@ -209,6 +210,10 @@ export default class extends Controller {
       // los demás campos de la grilla.
       this.emailConfigFieldTarget.classList.remove('hidden');
       this.emailConfigFieldTarget.classList.add('flex');
+
+      // "Bandeja de Recepción", por lo mismo: el alta todavía va al .NET.
+      this.receptionMailboxFieldTarget.classList.remove('hidden');
+      this.receptionMailboxFieldTarget.classList.add('flex');
 
       // "Enviar los documentos rechazados por Hacienda", por lo mismo: el alta
       // del .NET no conoce `send_rejected_documents`, así que en creación el
@@ -408,6 +413,21 @@ export default class extends Controller {
         timerProgressBar: true
       }));
 
+    // Selector "Bandeja de Recepción" — mismo tratamiento que "Bandeja de Correo",
+    // pero contra el catálogo de bandejas de RECEPCIÓN
+    // (`/configurations/mail-parser`).
+    const receptionMailboxes = this.#railsFetch('/api/reception_mailboxes/assignable')
+      .then(resp => { if (resp.Data) this.#fillReceptionMailboxesSelect(resp.Data); })
+      .catch(err => Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `No se pudieron cargar las bandejas de recepción: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      }));
+
     const general = this.#railsFetch(`/api/companies/${companyId}`)
       .then((resp) => {
         if (!resp.Data) throw new Error(resp.Message || 'Error desconocido');
@@ -448,7 +468,7 @@ export default class extends Controller {
       // El orden importa: las conexiones tienen que estar en el <select> antes de
       // aplicarle el valor de la compañía, o el `select.value = …` no encuentra
       // la opción y queda en blanco.
-      await Promise.all([connections, inboxes, general, activityCodes]);
+      await Promise.all([connections, inboxes, receptionMailboxes, general, activityCodes]);
       if (this.#companyData) {
         this.#fillGeneralSection(this.#companyData);
         this.#fillAtvSection(this.#companyData);
@@ -511,6 +531,11 @@ export default class extends Controller {
     this.emailConfigIdTarget.value = data.EmailConfigId ? String(data.EmailConfigId) : '';
     this.#refreshEmailConfigHint();
 
+    // Sin bandeja de recepción asignada queda en la opción vacía, mismo
+    // criterio que la de correo: es un estado legítimo.
+    this.receptionMailboxIdTarget.value = data.ReceptionMailboxId ? String(data.ReceptionMailboxId) : '';
+    this.#refreshReceptionMailboxHint();
+
     // `EmsrNombreComercial` llega en la respuesta pero no se pinta: es el mismo
     // valor que `Name`, que ya está en el campo "Nombre".
     this.legalNameTarget.value          = data.EmsrNombre             || '';
@@ -543,6 +568,7 @@ export default class extends Controller {
       freightCharges:     this.freightChargesTarget.value,
       sapConnectionId:    this.sapConnectionIdTarget.value,
       emailConfigId:      this.emailConfigIdTarget.value,
+      receptionMailboxId: this.receptionMailboxIdTarget.value,
       dbSap:              this.dbSapTarget.value.trim(),
       active:             String(this.activeTarget.checked),
       sendRejected:       String(this.sendRejectedDocumentsTarget.checked),
@@ -928,6 +954,42 @@ export default class extends Controller {
     icon.textContent = assigned ? 'help_outline' : 'warning';
     icon.classList.toggle('text-amber-600', !assigned);
     icon.classList.toggle('text-gray-400',   assigned);
+  }
+
+  /**
+   * Igual que `#fillEmailConfigsSelect` pero para el catálogo de bandejas de
+   * RECEPCIÓN (`/api/reception_mailboxes/assignable`). También lleva la
+   * opción vacía: sin bandeja asignada es un estado válido.
+   */
+  #fillReceptionMailboxesSelect(mailboxes) {
+    const select  = this.receptionMailboxIdTarget;
+    const current = select.value;
+    select.innerHTML = '<option value="">-- sin bandeja asignada --</option>';
+    mailboxes.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = String(m.Id);
+      opt.textContent = m.Email;
+      select.appendChild(opt);
+    });
+    if (current) select.value = current;
+    this.#refreshReceptionMailboxHint();
+  }
+
+  /**
+   * El ícono de ayuda del select de bandejas de recepción — mismo patrón que
+   * `#refreshEmailConfigHint`, pero sin bandeja el mensaje NO se muestra en
+   * ámbar: a diferencia del envío, no tener bandeja de recepción asignada
+   * todavía no bloquea ninguna funcionalidad visible para quien llena el
+   * formulario (`MailReceptionJob` simplemente no le lee nada a esa
+   * compañía), así que es una aclaración neutra y no una advertencia.
+   */
+  #refreshReceptionMailboxHint() {
+    if (!this.hasReceptionMailboxHintTarget) return;
+
+    const assigned = !!this.receptionMailboxIdTarget.value;
+    this.receptionMailboxHintTarget.dataset.tooltip = assigned
+      ? 'Bandeja desde la que se leen los documentos de los proveedores.'
+      : 'Sin bandeja de recepción asignada, esta compañía no recibe documentos todavía.';
   }
 
   #fillTaxSelect() {
@@ -2042,6 +2104,9 @@ export default class extends Controller {
       // servidor guarda NULL. La cadena vacía se convertiría en 0 y la
       // validación la rechazaría como bandeja inexistente.
       EmailConfigId:          this.emailConfigIdTarget.value || null,
+      // Mismo criterio: `null` desasigna, `''` se convertiría en 0 y la
+      // validación la rechazaría como bandeja inexistente.
+      ReceptionMailboxId:     this.receptionMailboxIdTarget.value || null,
       SapDb:                  this.dbSapTarget.value.trim(),
       EmailSenderType:        this.nameToEmailTarget.value,
       FreightType:            this.freightChargesTarget.value,

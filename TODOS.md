@@ -149,15 +149,27 @@ del .NET (`spGetSucursalByCompany`, `spCreateSucursal`, `spUpdateSucursal`).
 > consulta extra a SAP por cada guardado; el motivo es que dos sucursales con el mismo número
 > emitirían consecutivos que chocan entre sí ante Hacienda.
 
-## Bandejas de recepción — filtro de búsqueda (`/configurations/mail-parser`)
+## Bandejas de recepción (`/configurations/mail-parser`) — deuda pendiente
 
-- [ ] Parámetro `mailServer` (filtro "Nombre del servidor") — eliminado el filtro de la vista
-      en `app/views/configurations/mail_parser/index.html.erb` (input `filterServer`).
-      Aún se envía en el query string del fetch de `mail_parser_controller.js` (`#fetchPage`)
-      con valor por defecto `''`, porque la consulta `GET /api/mail-parser` alimenta la tabla
-      y `mailServer` es solo uno de sus parámetros.
-      **Pendiente API:** quitar `mailServer` del query string una vez el endpoint
-      `GET /api/mail-parser` deje de requerirlo.
+- [x] Parámetro `mailServer` (filtro "Nombre del servidor") — ya no aplica: la pantalla se
+      migró de golpe a `GET /api/reception_mailboxes`, que nunca pidió ese parámetro. La
+      entrada anterior quedaba pendiente de que "el endpoint dejara de requerirlo"; el
+      endpoint nuevo nace sin requerirlo.
+- [ ] Sección "Compañías Emisoras" (`InboxProcessingTenant` del conector .NET legacy,
+      `legacy/reception/clvsfemailsconector`) — el botón "Ver Compañías" de cada fila y su
+      panel lateral siguen en `mail_parser_controller.js`/`index.html.erb`, pero llaman a
+      `GET /api/mail-parser/processing-tenants/:id` y
+      `PATCH /api/mail-parser/processing-tenants/:id/status`, que no existen del lado de
+      Rails — caen al catch-all del proxy y fallan. Se decidió a propósito no tocar esta
+      sección al migrar el resto de la pantalla (el resto del catálogo de bandejas ya es
+      nativo, ver `Api::ReceptionMailboxesController`), porque el modelo de "una bandeja
+      compartida entre varias compañías, habilitadas una por una" quedó reemplazado por
+      `companies.reception_mailbox_id` (una compañía → una bandeja, asignada desde el
+      formulario de compañías) y `MailReceptionJob` resuelve la compañía de CADA documento
+      por la identificación del receptor en el XML, no por esta tabla puente.
+      **Pendiente:** decidir si esta sección se recupera (con una tabla puente nueva, para
+      el caso de una bandeja de verdad compartida entre compañías) o se elimina del todo
+      junto con el botón "Ver Compañías" y el panel lateral.
 
 ## Cutover de login a OIDC — deuda restante
 

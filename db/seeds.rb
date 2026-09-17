@@ -1240,6 +1240,27 @@ AZURE_STORAGE_SETTINGS = [
   ['AZURE_STORAGE_WORKSPACE',    'Carpeta del producto dentro del contenedor', true, nil, 'fec']
 ].freeze
 
+# Límites de `MailReceptionJob` (lectura de bandejas de recepción cada 5
+# minutos, `config/recurring.yml`). Reemplazan las constantes fijas
+# `MaxEmailsToReadPerInbox`/`MaxEmailsToReadPerExecution` del conector .NET
+# legacy (`legacy/reception/clvsfemailsconector`), pensadas para un scheduler
+# externo cada 15 minutos (20 y 350 respectivamente) — acá se recalculan para
+# el intervalo de 5 minutos de este job (un tercio) y quedan editables desde
+# Configuraciones → Generales, en vez de fijas en el código.
+#
+# `default_value` y no `fixed_value`: son un punto de partida razonable, no un
+# dato del producto — una instalación con buzones muy activos puede necesitar
+# subirlos, y ese cambio no se puede perder en el próximo `db:seed`.
+MAIL_RECEPTION_SETTINGS = [
+  # code                                          description                                                                            is_visible  fixed  default
+  ['MAIL_RECEPTION_MAX_MESSAGES_PER_MAILBOX',
+   'Límite blando: tope de correos sin leer que se procesan de UNA bandeja en cada corrida', true, nil,
+   MailReceptionJob::DEFAULT_MAX_MESSAGES_PER_MAILBOX.to_s],
+  ['MAIL_RECEPTION_MAX_MESSAGES_PER_EXECUTION',
+   'Límite duro: tope total de correos que se procesan en TODA la corrida, sumando todas las bandejas', true, nil,
+   MailReceptionJob::DEFAULT_MAX_MESSAGES_PER_EXECUTION.to_s]
+].freeze
+
 # Los esquemas XSD con los que se valida cada comprobante antes de mandarlo a
 # Hacienda. Reemplazan los nueve `appSettings` del .NET
 # (`CLVS_FE.API/Web.config`: `FEXSDPath`, `NCXSDPath`, … `ACCEPTXSDMailParser`),
@@ -1276,7 +1297,8 @@ SETTING_GROUPS = {
   'HACIENDA_FE' => HACIENDA_FE_SETTINGS,
   'HACIENDA_XADES' => HACIENDA_XADES_SETTINGS,
   'HACIENDA_XSD' => HACIENDA_XSD_SETTINGS,
-  'AZURE_STORAGE' => AZURE_STORAGE_SETTINGS
+  'AZURE_STORAGE' => AZURE_STORAGE_SETTINGS,
+  'MAIL_RECEPTION' => MAIL_RECEPTION_SETTINGS
 }.freeze
 
 ActiveRecord::Base.transaction do

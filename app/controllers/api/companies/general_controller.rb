@@ -6,7 +6,7 @@ module Api
     #
     # Es un endpoint por sección, a propósito: en la pantalla cada sección tiene
     # su propio botón "Actualizar" y su propio loader, así que a nivel de proceso
-    # también son independientes. Este PATCH escribe **solo** los trece campos
+    # también son independientes. Este PATCH escribe **solo** los catorce campos
     # que nombra `general_params` y no puede tocar el certificado, el token de
     # Hacienda ni los adjuntos ni siquiera si vinieran en el cuerpo.
     #
@@ -74,6 +74,7 @@ module Api
         attrs[:tax_registry_8707]       = text(:EmsrRegistroFiscal8707) if params.key?(:EmsrRegistroFiscal8707)
         attrs[:connection_id]           = number(:ConnectionId)         if params.key?(:ConnectionId)
         attrs[:email_config_id]         = number(:EmailConfigId)        if params.key?(:EmailConfigId)
+        attrs[:reception_mailbox_id]    = number(:ReceptionMailboxId)   if params.key?(:ReceptionMailboxId)
         attrs[:email_sender_type]       = number(:EmailSenderType)      if params.key?(:EmailSenderType)
         attrs[:freight_type]            = number(:FreightType)          if params.key?(:FreightType)
         attrs[:is_active]               = boolean(:Active)              if params.key?(:Active)
@@ -90,7 +91,7 @@ module Api
       # necesita el estado real para volver a marcar la sección como "sin
       # cambios".
       #
-      # ⚠️ Estas trece claves tienen que ser las mismas que devuelve
+      # ⚠️ Estas catorce claves tienen que ser las mismas que devuelve
       # `Api::CompaniesController#serialize_detail` para esta sección. Si una se
       # agrega en un lado y no en el otro, el formulario muestra un campo que este
       # PATCH ignora: el usuario lo edita, guarda, y no pasa nada — sin error.
@@ -102,6 +103,7 @@ module Api
           SendRejectedDocuments:  company.send_rejected_documents,
           ConnectionId:           company.connection_id,
           EmailConfigId:          company.email_config_id,
+          ReceptionMailboxId:     company.reception_mailbox_id,
           SapDb:                  company.sap_db,
           EmailSenderType:        company.email_sender_type,
           FreightType:            company.freight_type,

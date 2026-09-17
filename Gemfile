@@ -68,6 +68,18 @@ gem 'faraday', '~> 2.0'
 # acá porque la app la usa directo — mismo criterio que `connection_pool`.
 gem 'mail', '~> 2.8'
 
+# Lectura de bandejas IMAP para la recepción de documentos electrónicos de
+# proveedores (`MailReceptionJob`). Dejó de empaquetarse por defecto con Ruby a
+# partir de la 3.5; se declara explícita para no depender de qué gemas trae el
+# intérprete instalado. `require: false`: `Mail::ImapSession` la requiere ella
+# misma (`require 'net/imap'`).
+gem 'net-imap', require: false
+
+# Algunos proveedores adjuntan el XML del comprobante dentro de un .zip
+# (`Mail::IncomingDocument`) — mismo comportamiento que aceptaba el conector
+# .NET legacy (`ExtractAttachmentsFromZip`).
+gem 'rubyzip', require: false
+
 # Submodules de plataforma (auth OIDC, structures, common, data_access)
 gem 'bcrypt', '~> 3.1.7'
 gem 'httparty'

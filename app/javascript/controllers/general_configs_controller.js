@@ -78,6 +78,7 @@ export default class extends Controller {
     DOCS_DB_ODBC:   'la conexión a la base de documentos',
     HACIENDA_XADES: 'la política de firma XAdES',
     AZURE_STORAGE:  'las credenciales de Azure Storage',
+    MAIL_RECEPTION: 'los límites de recepción de correo',
   }
 
   // ----------------------------------------------------------------

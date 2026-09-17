@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_15_100000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_17_120000) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
@@ -34,6 +34,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_15_100000) do
     t.string "name", limit: 80, null: false
     t.string "print_format_path"
     t.integer "purchase_invoice_series"
+    t.integer "reception_mailbox_id"
     t.string "sap_db"
     t.boolean "send_rejected_documents", default: false, null: false
     t.string "tax_registry_8707", limit: 12
@@ -45,6 +46,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_15_100000) do
     t.boolean "use_ap_invoice", default: false, null: false
     t.string "uuid"
     t.index ["email_config_id"], name: "index_companies_on_email_config_id"
+    t.index ["reception_mailbox_id"], name: "index_companies_on_reception_mailbox_id"
     t.index ["uuid"], name: "index_companies_on_uuid", unique: true
   end
 
@@ -84,6 +86,25 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_15_100000) do
     t.string "type", default: "normal", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
+  end
+
+  create_table "reception_mailboxes", force: :cascade do |t|
+    t.string "client_id", limit: 100
+    t.text "client_secret"
+    t.datetime "created_at", null: false
+    t.string "created_by"
+    t.string "email", limit: 160
+    t.string "grant_type", limit: 50, default: "client_credentials"
+    t.boolean "is_active", default: true, null: false
+    t.datetime "last_processed_at"
+    t.string "mail_server", limit: 255
+    t.text "password"
+    t.integer "port"
+    t.string "scope", limit: 255, default: "https://outlook.office365.com/.default"
+    t.datetime "updated_at", null: false
+    t.string "updated_by"
+    t.string "url", limit: 255
+    t.boolean "use_token", default: false, null: false
   end
 
   create_table "role_permissions", force: :cascade do |t|
@@ -195,6 +216,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_15_100000) do
 
   add_foreign_key "companies", "connections"
   add_foreign_key "companies", "email_configs"
+  add_foreign_key "companies", "reception_mailboxes"
   add_foreign_key "role_permissions", "permissions"
   add_foreign_key "role_permissions", "roles"
   add_foreign_key "user_permissions", "permissions"

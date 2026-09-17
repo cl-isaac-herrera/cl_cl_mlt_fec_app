@@ -152,6 +152,7 @@ module Api
         # ── Sección "Datos Generales" ────────────────────────────────────────
         ConnectionId:           company.connection_id,
         EmailConfigId:          company.email_config_id,
+        ReceptionMailboxId:     company.reception_mailbox_id,
         SapDb:                  company.sap_db,
         EmailSenderType:        company.email_sender_type,
         FreightType:            company.freight_type,

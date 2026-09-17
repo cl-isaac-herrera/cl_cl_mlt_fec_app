@@ -25,6 +25,10 @@ default: &default
     class: SendElectronicReceiptJob
     schedule: every minute
 
+  mail_reception:
+    class: MailReceptionJob
+    schedule: every 5 minutes
+
 development:
   <<: *default
 

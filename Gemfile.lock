@@ -349,6 +349,7 @@ GEM
       rubocop-rails (>= 2.30)
     ruby-odbc (0.999993)
     ruby-progressbar (1.13.0)
+    rubyzip (3.6.0)
     securerandom (0.4.1)
     sentry-rails (6.6.2)
       railties (>= 5.2.0)
@@ -451,6 +452,7 @@ DEPENDENCIES
   jwt
   kamal
   mail (~> 2.8)
+  net-imap
   openid_connect (~> 2.5)
   propshaft
   puma (>= 5.0)
@@ -458,6 +460,7 @@ DEPENDENCIES
   rspec-rails
   rubocop-rails-omakase
   ruby-odbc (~> 0.99999)
+  rubyzip
   sentry-rails
   sentry-ruby
   solid_cable

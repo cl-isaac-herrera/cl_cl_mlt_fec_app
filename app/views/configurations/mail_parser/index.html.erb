@@ -7,7 +7,7 @@
 
   <%# ── Filtros ─────────────────────────────────────────────────────────── %>
   <div class="mb-4 flex-shrink-0 bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
 
       <div class="flex flex-col gap-1">
         <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Correo</label>
@@ -15,15 +15,6 @@
                data-mail-parser-target="filterEmail"
                data-testid="filter-email"
                placeholder="Correo"
-               class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-      </div>
-
-      <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium text-gray-500 uppercase tracking-wide">Compañía</label>
-        <input type="text"
-               data-mail-parser-target="filterCompany"
-               data-testid="filter-company"
-               placeholder="Compañía"
                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
       </div>
 
@@ -87,7 +78,8 @@
       </div>
     </div>
 
-    <%# Panel de Compañías Emisoras (lado derecho, colapsable) %>
+    <%# Panel de Compañías Emisoras (lado derecho, colapsable) — sin tocar,   %>
+    <%# sigue pendiente de backend (ver comentario en mail_parser_controller.js). %>
     <div data-mail-parser-target="tenantsPanel"
          data-testid="tenants-panel"
          class="hidden w-80 flex-shrink-0 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
@@ -153,6 +145,7 @@
   <%# ── Panel lateral crear/editar ─────────────────────────────────────── %>
   <div data-mail-parser-target="panel"
        data-testid="mail-parser-panel"
+       data-action="input->mail-parser#onFormChange change->mail-parser#onFormChange"
        class="fixed top-0 right-0 h-full w-full max-w-lg bg-white shadow-2xl z-50
               translate-x-full transition-transform duration-300 ease-in-out flex flex-col">
 
@@ -171,19 +164,16 @@
     <%# Cuerpo scrolleable %>
     <div class="flex-1 overflow-y-auto px-6 py-5 space-y-4">
 
-      <%# Dirección del servidor %>
+      <%# Servidor %>
       <div>
         <label class="block text-xs font-medium text-gray-700 mb-1">
-          Dirección del servidor <span class="text-red-500">*</span>
+          Servidor <span class="text-red-500">*</span>
         </label>
         <input type="text"
                data-mail-parser-target="inputServer"
-               data-action="input->mail-parser#onCredentialChange"
                data-testid="input-server"
-               placeholder="Dirección del servidor"
+               placeholder="imap.ejemplo.com"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p data-mail-parser-target="errorServer"
-           class="hidden mt-1 text-xs text-red-500">La dirección del servidor es requerida.</p>
       </div>
 
       <%# Correo %>
@@ -193,51 +183,9 @@
         </label>
         <input type="email"
                data-mail-parser-target="inputEmail"
-               data-action="input->mail-parser#onCredentialChange"
                data-testid="input-email-panel"
                placeholder="correo@ejemplo.com"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p data-mail-parser-target="errorEmail"
-           class="hidden mt-1 text-xs text-red-500">El correo es requerido.</p>
-        <p data-mail-parser-target="errorEmailPattern"
-           class="hidden mt-1 text-xs text-red-500">Formato de correo inválido.</p>
-      </div>
-
-      <%# Compañía (autocomplete) %>
-      <div class="relative">
-        <label class="block text-xs font-medium text-gray-700 mb-1">Compañía</label>
-        <input type="text"
-               data-mail-parser-target="inputCompany"
-               data-action="input->mail-parser#filterCompanies focus->mail-parser#showCompanyDropdown blur->mail-parser#closeCompanyDropdown"
-               data-testid="input-company-panel"
-               placeholder="Buscar compañía..."
-               autocomplete="off"
-               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <ul data-mail-parser-target="companyDropdown"
-            class="hidden absolute z-20 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto text-sm">
-        </ul>
-      </div>
-
-      <%# Contraseña (oculta si UseToken=true) %>
-      <div data-mail-parser-target="passwordField">
-        <label class="block text-xs font-medium text-gray-700 mb-1">
-          Contraseña <span class="text-red-500" data-mail-parser-target="passwordRequired">*</span>
-        </label>
-        <div class="relative">
-          <input type="password"
-                 data-mail-parser-target="inputPassword"
-                 data-action="input->mail-parser#onCredentialChange"
-                 data-testid="input-password"
-                 placeholder="Contraseña"
-                 class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <button type="button"
-                  data-action="click->mail-parser#togglePassword"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-gray-700">
-            <span data-mail-parser-target="passwordEyeIcon" class="material-icons text-base">visibility_off</span>
-          </button>
-        </div>
-        <p data-mail-parser-target="errorPassword"
-           class="hidden mt-1 text-xs text-red-500">La contraseña es requerida.</p>
       </div>
 
       <%# Puerto %>
@@ -247,12 +195,41 @@
         </label>
         <input type="number"
                data-mail-parser-target="inputPort"
-               data-action="input->mail-parser#onCredentialChange"
                data-testid="input-port"
-               placeholder="Puerto"
+               placeholder="993"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <p data-mail-parser-target="errorPort"
-           class="hidden mt-1 text-xs text-red-500">El puerto es requerido.</p>
+      </div>
+
+      <%# Autenticación por token — arriba de los campos que muestra/oculta %>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox"
+               data-mail-parser-target="inputUseToken"
+               data-action="change->mail-parser#onUseTokenChange"
+               data-testid="input-use-token"
+               class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+        <span class="text-sm text-gray-700">Autenticación por token (OAuth2)</span>
+      </label>
+
+      <%# Contraseña (oculta si UseToken=true) %>
+      <div data-mail-parser-target="passwordField">
+        <label class="block text-xs font-medium text-gray-700 mb-1">
+          Contraseña <span data-mail-parser-target="passwordAsterisk" class="text-red-500">*</span>
+        </label>
+        <div class="relative">
+          <input type="password"
+                 data-mail-parser-target="inputPassword"
+                 data-testid="input-password"
+                 placeholder="Contraseña"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <button type="button"
+                  data-action="click->mail-parser#togglePassword"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-gray-700">
+            <span data-mail-parser-target="passwordEyeIcon" class="material-icons text-base">visibility_off</span>
+          </button>
+        </div>
+        <p data-mail-parser-target="passwordHint" class="hidden mt-1 text-xs text-gray-500">
+          Ya hay una contraseña guardada — déjelo en blanco para conservarla.
+        </p>
       </div>
 
       <%# Campos de Token (condicionales — visibles solo si UseToken=true) %>
@@ -260,44 +237,29 @@
 
         <div>
           <label class="block text-xs font-medium text-gray-700 mb-1">
-            Tenant Id <span class="text-red-500">*</span>
-          </label>
-          <input type="text"
-                 data-mail-parser-target="inputTenantId"
-                 data-action="input->mail-parser#onCredentialChange"
-                 data-testid="input-tenant-id"
-                 placeholder="Tenant Id"
-                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <p data-mail-parser-target="errorTenantId"
-             class="hidden mt-1 text-xs text-red-500">El Tenant Id es requerido.</p>
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-gray-700 mb-1">
-            URL <span class="text-red-500">*</span>
+            URL del token <span class="text-red-500">*</span>
           </label>
           <input type="text"
                  data-mail-parser-target="inputUrl"
-                 data-action="input->mail-parser#onCredentialChange"
                  data-testid="input-url"
-                 placeholder="URL"
+                 placeholder="https://mi-proveedor.com/oauth2/token"
                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <p data-mail-parser-target="errorUrl"
-             class="hidden mt-1 text-xs text-red-500">La URL es requerida.</p>
+          <p class="mt-1 text-xs text-gray-500">
+            Endpoint de token del proveedor de identidad (Microsoft Entra ID, Google Workspace, u otro
+            compatible con OAuth2). Cópielo tal como lo entrega el proveedor — ya debe incluir cualquier
+            identificador de organización que necesite (ej. el tenant, en el caso de Microsoft).
+          </p>
         </div>
 
         <div>
           <label class="block text-xs font-medium text-gray-700 mb-1">
-            GrantType <span class="text-red-500">*</span>
+            Grant Type <span class="text-red-500">*</span>
           </label>
           <input type="text"
                  data-mail-parser-target="inputGrantType"
-                 data-action="input->mail-parser#onCredentialChange"
                  data-testid="input-grant-type"
-                 placeholder="GrantType"
+                 placeholder="client_credentials"
                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <p data-mail-parser-target="errorGrantType"
-             class="hidden mt-1 text-xs text-red-500">El GrantType es requerido.</p>
         </div>
 
         <div>
@@ -306,24 +268,31 @@
           </label>
           <input type="text"
                  data-mail-parser-target="inputScope"
-                 data-action="input->mail-parser#onCredentialChange"
                  data-testid="input-scope"
-                 placeholder="Scope"
+                 placeholder="https://outlook.office365.com/.default"
                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <p data-mail-parser-target="errorScope"
-             class="hidden mt-1 text-xs text-red-500">El Scope es requerido.</p>
         </div>
 
         <div>
           <label class="block text-xs font-medium text-gray-700 mb-1">
-            ClientSecret <span class="text-red-500">*</span>
+            Client Id <span class="text-red-500">*</span>
+          </label>
+          <input type="text"
+                 data-mail-parser-target="inputClientId"
+                 data-testid="input-client-id"
+                 placeholder="Client Id"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">
+            Client Secret <span data-mail-parser-target="clientSecretAsterisk" class="text-red-500">*</span>
           </label>
           <div class="relative">
             <input type="password"
                    data-mail-parser-target="inputClientSecret"
-                   data-action="input->mail-parser#onCredentialChange"
                    data-testid="input-client-secret"
-                   placeholder="ClientSecret"
+                   placeholder="Client Secret"
                    class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
             <button type="button"
                     data-action="click->mail-parser#toggleClientSecret"
@@ -331,51 +300,25 @@
               <span data-mail-parser-target="clientSecretEyeIcon" class="material-icons text-base">visibility_off</span>
             </button>
           </div>
-          <p data-mail-parser-target="errorClientSecret"
-             class="hidden mt-1 text-xs text-red-500">El ClientSecret es requerido.</p>
-        </div>
-
-        <div>
-          <label class="block text-xs font-medium text-gray-700 mb-1">
-            ClientId <span class="text-red-500">*</span>
-          </label>
-          <input type="text"
-                 data-mail-parser-target="inputClientId"
-                 data-action="input->mail-parser#onCredentialChange"
-                 data-testid="input-client-id"
-                 placeholder="ClientId"
-                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <p data-mail-parser-target="errorClientId"
-             class="hidden mt-1 text-xs text-red-500">El ClientId es requerido.</p>
+          <p data-mail-parser-target="clientSecretHint" class="hidden mt-1 text-xs text-gray-500">
+            Ya hay un Client Secret guardado — déjelo en blanco para conservarlo.
+          </p>
         </div>
 
       </div>
 
-      <%# Checkboxes %>
-      <div class="space-y-3">
+      <%# "Bandeja activa" — solo aparece al editar (mismo criterio que        %>
+      <%# email_senders_controller.js): dar de alta una bandeja inactiva no    %>
+      <%# tiene sentido, y `is_active` nace en `true`.                         %>
+      <div data-active-field class="hidden space-y-1">
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox"
-                 data-mail-parser-target="inputStatus"
-                 data-testid="input-status"
-                 checked
+                 data-mail-parser-target="inputActive"
+                 data-testid="input-active"
                  class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
-          <span class="text-sm text-gray-700">Activo</span>
+          <span class="text-sm text-gray-700">Bandeja activa</span>
         </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox"
-                 data-mail-parser-target="inputIsAutomatic"
-                 data-testid="input-is-automatic"
-                 class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
-          <span class="text-sm text-gray-700">Automático</span>
-        </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox"
-                 data-mail-parser-target="inputUseToken"
-                 data-action="change->mail-parser#onUseTokenChange"
-                 data-testid="input-use-token"
-                 class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
-          <span class="text-sm text-gray-700">Autenticación por token</span>
-        </label>
+        <p data-mail-parser-target="activeHint" class="hidden text-xs text-amber-600"></p>
       </div>
 
     </div><%# /cuerpo %>
@@ -397,15 +340,17 @@
         <span data-mail-parser-target="validateIcon" class="material-icons text-base">wifi_tethering</span>
         <span data-mail-parser-target="validateLabel">Probar credenciales</span>
       </button>
-      <button type="button"
-              data-action="click->mail-parser#save"
-              data-mail-parser-target="saveBtn"
-              data-testid="btn-save"
-              disabled
-              class="inline-flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-        <span class="material-icons text-base">save</span>
-        Guardar
-      </button>
+      <span data-mail-parser-target="saveBtnWrap" data-tooltip="Debe probar la bandeja antes de guardarla">
+        <button type="button"
+                data-action="click->mail-parser#save"
+                data-mail-parser-target="saveBtn"
+                data-testid="btn-save"
+                disabled
+                class="inline-flex items-center gap-1 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          <span class="material-icons text-base">save</span>
+          <span data-mail-parser-target="saveLabel">Crear</span>
+        </button>
+      </span>
     </div>
 
   </div><%# /panel %>

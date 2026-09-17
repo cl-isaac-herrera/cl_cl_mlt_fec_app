@@ -560,6 +560,67 @@
   </div>
 
   <%# ---------------------------------------------------------------- %>
+  <%# SECCIÓN: Recepción de correo (grupo MAIL_RECEPTION)                %>
+  <%#                                                                    %>
+  <%# Los dos límites de `MailReceptionJob` (lee las bandejas de         %>
+  <%# recepción cada 5 minutos, `config/recurring.yml`): cuántos correos %>
+  <%# toma de UNA bandeja (blando) y cuántos toma en TODA la corrida,    %>
+  <%# sumando todas las bandejas (duro). Reemplazan las constantes fijas %>
+  <%# `MaxEmailsToReadPerInbox`/`MaxEmailsToReadPerExecution` del        %>
+  <%# conector .NET legacy — acá quedan editables sin esperar un deploy. %>
+  <%# ---------------------------------------------------------------- %>
+  <div class="relative bg-white rounded-xl shadow-sm border border-gray-100 p-6"
+       style="grid-column: 1 / -1;">
+
+    <%= render 'configurations/general/section_loader', target: 'groupLoader', group: 'MAIL_RECEPTION' %>
+
+    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+      Recepción de correo
+    </h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <%= render 'configurations/general/setting_field',
+            code:        'MAIL_RECEPTION_MAX_MESSAGES_PER_EXECUTION',
+            label:       'Límite duro — correos por corrida',
+            type:        'number',
+            placeholder: '117',
+            hint:        'Tope total de correos que se procesan en TODA la corrida, sumando todas las ' \
+                         'bandejas. Al llegar al tope, la corrida entera se detiene hasta la próxima.' %>
+
+      <%= render 'configurations/general/setting_field',
+            code:        'MAIL_RECEPTION_MAX_MESSAGES_PER_MAILBOX',
+            label:       'Límite blando — correos por bandeja',
+            type:        'number',
+            placeholder: '7',
+            hint:        'Tope de correos sin leer que se procesan de UNA bandeja en cada corrida. ' \
+                         'Al llegar al tope, esa bandeja se detiene y las demás siguen procesándose.' %>
+
+    </div>
+
+    <div class="mt-4 flex items-center justify-between gap-4">
+      <div data-general-configs-target="groupAudit" data-setting-group="MAIL_RECEPTION"
+           class="hidden flex items-center gap-1.5 text-xs text-gray-400">
+        <span class="material-icons text-sm leading-none">history</span>
+        <span data-audit-text></span>
+      </div>
+
+      <button type="button"
+              data-action="click->general-configs#saveGroup"
+              data-general-configs-target="groupButton"
+              data-setting-group="MAIL_RECEPTION"
+              data-testid="btn-update-mail-reception"
+              disabled
+              class="ml-auto flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 text-white text-sm
+                     font-medium hover:bg-blue-700 transition-colors
+                     disabled:opacity-40 disabled:cursor-not-allowed">
+        <span class="material-icons text-base">loop</span>
+        <span>Actualizar</span>
+      </button>
+    </div>
+  </div>
+
+  <%# ---------------------------------------------------------------- %>
   <%# SECCIÓN: Esquemas XSD de Hacienda (grupo HACIENDA_XSD)            %>
   <%#                                                                   %>
   <%# Reemplaza los nueve `appSettings` del .NET (`FEXSDPath`, …), que   %>

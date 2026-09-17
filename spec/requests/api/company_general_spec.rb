@@ -14,12 +14,12 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
                     purchase_invoice_series: 7, default_warehouse: 'PRIN')
   end
 
-  # Las trece claves de la sección. Son el contrato entre la lectura
+  # Las catorce claves de la sección. Son el contrato entre la lectura
   # (`GET /api/companies/:id`) y este PATCH: si una se agrega en un lado y no en
   # el otro, el formulario muestra un campo que el guardado ignora y el usuario no
   # se entera. Los dos ejemplos de "contrato" de más abajo lo verifican.
   GENERAL_KEYS = %w[
-    Name Active SendRejectedDocuments ConnectionId EmailConfigId SapDb
+    Name Active SendRejectedDocuments ConnectionId EmailConfigId ReceptionMailboxId SapDb
     EmailSenderType FreightType
     EmsrNombre EmsrIdeTipo EmsrIdeNumero CodigoActividad EmsrRegistroFiscal8707
   ].freeze
@@ -262,25 +262,73 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
     end
   end
 
+  # La bandeja de RECEPCIÓN es de dónde `MailReceptionJob` lee los documentos
+  # de los proveedores (`companies.reception_mailbox_id`). Mismo criterio de
+  # validación que la de correo (§38): opcional, `unscoped` no aplica.
+  describe 'bandeja de recepción' do
+    let(:inbox) do
+      ReceptionMailbox.create!(mail_server: 'imap.acme.test', email: 'facturas@acme.com',
+                               port: 993, password: 's3cr3t')
+    end
+
+    before { sign_in_with('Configurations_Companies_Update') }
+
+    it 'asigna la bandeja' do
+      patch_section(ReceptionMailboxId: inbox.id)
+
+      expect(response).to have_http_status(:ok)
+      expect(acme.reload.reception_mailbox_id).to eq(inbox.id)
+      expect(body_data['ReceptionMailboxId']).to eq(inbox.id)
+    end
+
+    it 'desasigna la bandeja con null' do
+      acme.update!(reception_mailbox: inbox)
+
+      patch_section(ReceptionMailboxId: nil)
+
+      expect(response).to have_http_status(:ok)
+      expect(acme.reload.reception_mailbox_id).to be_nil
+    end
+
+    it 'rechaza una bandeja inexistente con un mensaje, no con un 500' do
+      patch_section(ReceptionMailboxId: 999_999)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('La bandeja de recepción no corresponde a una bandeja de recepción activa')
+    end
+
+    it 'rechaza una bandeja dada de baja' do
+      inbox.update!(is_active: false)
+
+      patch_section(ReceptionMailboxId: inbox.id)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(acme.reload.reception_mailbox_id).to be_nil
+    end
+  end
+
   # Los dos endpoints tienen que hablar de los mismos trece campos. No es
   # automático —la lista de arriba se mantiene a mano— pero deja el contrato en un
   # solo lugar y falla si alguno de los dos lados deja de exponer un campo.
   describe 'contrato con la lectura' do
     before { sign_in_with('Configurations_Companies_Update') }
 
-    it 'GET /api/companies/:id devuelve las trece claves de la sección' do
+    it 'GET /api/companies/:id devuelve las catorce claves de la sección' do
       get "/api/companies/#{acme.id}"
 
       expect(body_data.keys).to include(*GENERAL_KEYS)
     end
 
-    it 'el PATCH acepta y devuelve esas mismas trece claves' do
+    it 'el PATCH acepta y devuelve esas mismas catorce claves' do
       inbox = EmailConfig.create!(email: 'ventas@acme.com', host: 'smtp.test',
                                   port: 587, password: 's3cr3t')
+      reception_inbox = ReceptionMailbox.create!(mail_server: 'imap.acme.test', email: 'facturas@acme.com',
+                                                 port: 993, password: 's3cr3t')
       payload = {
         'Name' => 'ACME Global', 'Active' => true, 'SendRejectedDocuments' => true,
         'ConnectionId' => sap.id,
         'EmailConfigId' => inbox.id,
+        'ReceptionMailboxId' => reception_inbox.id,
         'SapDb' => 'SBO_NUEVA', 'EmailSenderType' => 2, 'FreightType' => 2,
         'EmsrNombre' => 'ACME Global S.A.', 'EmsrIdeTipo' => '01',
         'EmsrIdeNumero' => '123456789', 'CodigoActividad' => '620100',

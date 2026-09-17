@@ -14,6 +14,13 @@ class Company < ApplicationRecord
   # Opcional: sin asignar, la compañía simplemente no puede enviar todavía.
   belongs_to :email_config, optional: true
 
+  # Bandeja de correo de RECEPCIÓN, de la que `MailReceptionJob` lee los
+  # documentos de los proveedores para archivarlos en la carpeta de esta
+  # compañía (`Documents::EmailArchive`). Opcional, mismo criterio que
+  # `email_config`: sin asignar, la compañía simplemente no tiene todavía una
+  # bandeja de la que leerle nada.
+  belongs_to :reception_mailbox, optional: true
+
   # Cifrado reversible, no digest: el PIN se necesita en claro para abrir el .p12 y
   # la contraseña del ATV para pedirle el token a Hacienda. Ver `CLAUDE.md` §29 —
   # `encrypts` solo actúa al escribir el atributo, así que una fila insertada por
@@ -66,6 +73,13 @@ class Company < ApplicationRecord
   # (`EmailConfig#not_in_use_when_deactivating`), así que no hay forma de que una
   # compañía guardada apunte a una inactiva.
   validate :email_config_must_be_available
+
+  # Mismo motivo y mismo criterio que la validación de arriba: sin
+  # `unscoped`, asignarle a una compañía una bandeja de recepción dada de baja
+  # la dejaría sin recibir documentos en silencio, y la que ya tenía asignada
+  # tampoco se puede dar de baja mientras la use
+  # (`ReceptionMailbox#not_in_use_when_deactivating`).
+  validate :reception_mailbox_must_be_available
 
   # Los largos replican el `Size` que estos campos tenían como UDFs de `OADM`,
   # que es el límite con el que se venían guardando. La validación mira el texto
@@ -172,6 +186,13 @@ class Company < ApplicationRecord
     return if EmailConfig.exists?(id: email_config_id)
 
     errors.add(:email_config_id, 'no corresponde a una bandeja de correo activa')
+  end
+
+  def reception_mailbox_must_be_available
+    return if reception_mailbox_id.blank?
+    return if ReceptionMailbox.exists?(id: reception_mailbox_id)
+
+    errors.add(:reception_mailbox_id, 'no corresponde a una bandeja de recepción activa')
   end
 
   # El texto del toast. Se arma en el servidor —y no en el JS— porque es el mismo
