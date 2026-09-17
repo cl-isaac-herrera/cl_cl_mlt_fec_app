@@ -5,7 +5,7 @@
  * Import specific modules as needed:
  *
  * @example
- * import { Alerts, showToast } from 'vendor/clavisco/alerts'
+ * import Swal from 'sweetalert2' // notificaciones y confirmaciones (CLAVISCO-PLATFORM-STANDARDS §5.1)
  * import { Storage, getApiHeaders } from 'vendor/clavisco/core'
  * import { publish, subscribe } from 'vendor/clavisco/linker'
  */
@@ -17,7 +17,8 @@ export * as Core from './core/index.js'
 export * as Linker from './linker/index.js'
 
 // UI Components
-export * as Alerts from './alerts/index.js'
+// Alerts (toast/confirm) ya NO viven acá — CLAVISCO-PLATFORM-STANDARDS §5.1 manda usar
+// SweetAlert2 directo (import Swal from 'sweetalert2'), sin wrapper propio. Ver CLAUDE.md §7/§16.
 export * as Table from './table/index.js'
 export * as SearchModal from './search-modal/index.js'
 export * as PaymentModal from './payment-modal/index.js'
@@ -55,9 +56,6 @@ export {
 
 // Convenience re-exports from Linker
 export { publish, subscribe, flow } from './linker/index.js'
-
-// Convenience re-exports from Alerts
-export { showToast, showAlert, success, error, warning, info, confirm } from './alerts/index.js'
 
 // Convenience re-exports from Overlay
 export { open, close, closeAll, showLoading, hideLoading } from './overlay/index.js'

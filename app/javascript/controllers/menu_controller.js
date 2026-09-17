@@ -1,6 +1,6 @@
 import { Controller } from '@hotwired/stimulus'
 import { Storage, SStore, getApiHeaders } from 'vendor/clavisco/core'
-import { confirm } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 import { notifySessionClosed, thereAreMultipleContexts, clearSession } from 'vendor/clavisco/session-sync'
 import MENU_NODES from 'data/menu'
 
@@ -400,8 +400,15 @@ export default class extends Controller {
       : '¿Está seguro de que desea cerrar sesión?'
     const title = multiple ? 'Múltiples pestañas abiertas' : 'Cerrar sesión'
 
-    const confirmed = await confirm(message, title)
-    if (!confirmed) return
+    const { isConfirmed } = await Swal.fire({
+      title: title ?? 'Confirmar',
+      text: message,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    })
+    if (!isConfirmed) return
 
     // Notificar a las demás pestañas antes de limpiar (flujo B del análisis)
     if (multiple) notifySessionClosed()

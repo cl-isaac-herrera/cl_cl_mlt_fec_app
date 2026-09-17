@@ -1,6 +1,6 @@
 import { Controller } from '@hotwired/stimulus'
 import { Storage, SStore, getApiHeaders } from 'vendor/clavisco/core'
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 import { showLoading, hideLoading } from 'vendor/clavisco/overlay'
 
 /**
@@ -137,10 +137,26 @@ export default class extends Controller {
           config.UpdateDate, config.UpdatedBy
         )
       } else {
-        showToast(data.Message || 'No se encontraron configuraciones', 'warning')
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: data.Message || 'No se encontraron configuraciones',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
       }
     } catch (err) {
-      showToast(err.message || 'Error al cargar configuraciones generales', 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar configuraciones generales',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     } finally {
       this.#hideSectionLoader(this.formatLoaderTarget)
     }
@@ -162,7 +178,15 @@ export default class extends Controller {
       this.#applyEngineHints()
       this.#refreshGroupButtons()
     } catch (err) {
-      showToast(err.message || 'Error al cargar los ajustes', 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar los ajustes',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     } finally {
       this.groupLoaderTargets.forEach(el => this.#hideSectionLoader(el))
     }
@@ -247,11 +271,15 @@ export default class extends Controller {
     if (changed.length === 0) return
 
     const label     = this.constructor.GROUP_LABELS[group] || 'estos ajustes'
-    const confirmed = await confirm(
-      `¿Está seguro de que desea actualizar ${label}?`,
-      'Actualizar ajustes'
-    )
-    if (!confirmed) return
+    const { isConfirmed } = await Swal.fire({
+      title: 'Actualizar ajustes',
+      text: `¿Está seguro de que desea actualizar ${label}?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    })
+    if (!isConfirmed) return
 
     showLoading('Guardando los ajustes, espere por favor...')
 
@@ -263,12 +291,21 @@ export default class extends Controller {
         })
       }
 
-      showToast('Ajustes actualizados con éxito.', 'success')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Ajustes actualizados con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     } catch (err) {
-      showAlert({
-        type:    ALERT_TYPES.ERROR,
+      Swal.fire({
+        icon:    'error',
         title:   'Error al actualizar los ajustes',
-        message: err.message || 'Error desconocido',
+        text:    err.message || 'Error desconocido',
+        confirmButtonText: 'Aceptar'
       })
     } finally {
       hideLoading()
@@ -440,10 +477,15 @@ export default class extends Controller {
 
     const validExtension = /\.rpt$/i.test(file.name)
     if (!validExtension) {
-      showToast(
-        'Por favor selecione un formato de impresión válido para continuar, gracias!!!',
-        'error'
-      )
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'Por favor selecione un formato de impresión válido para continuar, gracias!!!',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       this.printFormatErrorTarget.classList.remove('hidden')
       // Limpiar el file input para permitir re-selección
       this.fileInputTarget.value = ''
@@ -461,11 +503,15 @@ export default class extends Controller {
   async updatePrintFormat() {
     if (!this.#selectedFile || !this.#generalConfigId) return
 
-    const confirmed = await confirm(
-      '¿Está seguro de que desea actualizar el formato de impresión por defecto?',
-      'Actualizar formato de impresión'
-    )
-    if (!confirmed) return
+    const { isConfirmed } = await Swal.fire({
+      title: 'Actualizar formato de impresión',
+      text: '¿Está seguro de que desea actualizar el formato de impresión por defecto?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    })
+    if (!isConfirmed) return
 
     showLoading('Editando la configuración general, espere por favor...')
 
@@ -482,7 +528,15 @@ export default class extends Controller {
         }
       )
 
-      showToast('Configuración general editada con éxito!!!', 'success')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Configuración general editada con éxito!!!',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       this.#selectedFile = null
       this.fileInputTarget.value = ''
       this.btnUpdateFormatTarget.disabled = true
@@ -490,7 +544,12 @@ export default class extends Controller {
       // Recargar para mostrar el nombre actualizado
       await this.#loadGeneralConfigs()
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al actualizar formato de impresión', message: err.message || 'Error desconocido' })
+      Swal.fire({
+        icon:    'error',
+        title:   'Error al actualizar formato de impresión',
+        text:    err.message || 'Error desconocido',
+        confirmButtonText: 'Aceptar'
+      })
     } finally {
       hideLoading()
     }
@@ -528,7 +587,15 @@ export default class extends Controller {
       link.click()
       window.URL.revokeObjectURL(url)
     } catch (err) {
-      showToast(err.message || 'Error al descargar el formato de impresión', 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al descargar el formato de impresión',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     } finally {
       hideLoading()
     }
@@ -585,17 +652,29 @@ export default class extends Controller {
     if (!file || !code) return
 
     if (!/\.xsd$/i.test(file.name)) {
-      showToast('Seleccione un archivo con extensión .xsd.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Seleccione un archivo con extensión .xsd.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
     const label = this.#schemaLabel(code)
 
-    const confirmed = await confirm(
-      `¿Está seguro de que desea usar «${file.name}» como esquema XSD de ${label.toLowerCase()}?`,
-      'Cargar esquema XSD'
-    )
-    if (!confirmed) return
+    const { isConfirmed } = await Swal.fire({
+      title: 'Cargar esquema XSD',
+      text: `¿Está seguro de que desea usar «${file.name}» como esquema XSD de ${label.toLowerCase()}?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    })
+    if (!isConfirmed) return
 
     // El servidor compila el esquema antes de guardarlo, así que la espera
     // incluye la validación: por eso el texto la nombra.
@@ -606,14 +685,23 @@ export default class extends Controller {
 
     try {
       await this.#settingsFetch(`/api/hacienda_schemas/${code}`, { method: 'PUT', body })
-      showToast('Esquema XSD actualizado con éxito.', 'success')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Esquema XSD actualizado con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     } catch (err) {
       // Escritura fallida → modal, no toast (CLAUDE.md §9). El mensaje suele
       // ser el de libxml2 diciendo qué tiene mal el archivo.
-      showAlert({
-        type:    ALERT_TYPES.ERROR,
+      Swal.fire({
+        icon:    'error',
         title:   'Error al cargar el esquema XSD',
-        message: err.message || 'Error desconocido',
+        text:    err.message || 'Error desconocido',
+        confirmButtonText: 'Aceptar'
       })
     } finally {
       hideLoading()
@@ -648,7 +736,15 @@ export default class extends Controller {
       window.URL.revokeObjectURL(url)
     } catch (err) {
       // Lectura fallida → toast (CLAUDE.md §9).
-      showToast(err.message || 'Error al descargar el esquema XSD', 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al descargar el esquema XSD',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     } finally {
       hideLoading()
     }

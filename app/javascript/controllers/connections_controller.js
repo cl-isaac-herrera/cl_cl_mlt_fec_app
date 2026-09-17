@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { SStore, getApiHeaders } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
@@ -165,7 +165,15 @@ export default class extends TabulatorController {
       const { json } = await this.#apiFetch(`${url}?${qp}`);
 
       if (!json.Data) {
-        showToast(json.Message || 'Error al obtener las conexiones', 'error');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: json.Message || 'Error al obtener las conexiones',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
         return { data: [], last_page: 1 };
       }
 
@@ -174,7 +182,15 @@ export default class extends TabulatorController {
       const lastPage = Math.max(1, Math.ceil(total / size));
       return { data: json.Data.Items ?? [], last_page: lastPage };
     } catch (err) {
-      showToast(err.message || 'Error al obtener las conexiones', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al obtener las conexiones',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return { data: [], last_page: 1 };
     }
   }
@@ -190,7 +206,15 @@ export default class extends TabulatorController {
   /** Abre el panel en modo creación. */
   openCreatePanel() {
     if (!this.#hasPerm('Configurations_Connections_Create')) {
-      showToast('No cuenta con permisos para realizar esta acción.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para realizar esta acción.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -208,7 +232,15 @@ export default class extends TabulatorController {
   /** Abre el panel en modo edición y carga los datos de la conexión. */
   async #onEditClick(conn) {
     if (!this.#hasPerm('Configurations_Connections_Update')) {
-      showToast('No cuenta con permisos para realizar esta acción.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para realizar esta acción.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -227,13 +259,29 @@ export default class extends TabulatorController {
     try {
       const { json } = await this.#apiFetch(`/api/connections/${this.#connectionId}`);
       if (!json.Data) {
-        showToast(json.Message || 'No se encontró la conexión', 'error');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: json.Message || 'No se encontró la conexión',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
         this.closePanel();
         return;
       }
       this.#fillPanel(json.Data);
     } catch (err) {
-      showToast(err.message || 'Error al cargar la conexión', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar la conexión',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.closePanel();
     }
   }
@@ -291,15 +339,33 @@ export default class extends TabulatorController {
 
       if (!json.Data) {
         const action = isCreate ? 'crear' : 'actualizar';
-        showAlert({ type: ALERT_TYPES.ERROR, title: `Error al ${action} conexión`, message: json.Message || 'Error desconocido' });
+        Swal.fire({
+          icon: 'error',
+          title: `Error al ${action} conexión`,
+          text: json.Message || 'Error desconocido',
+          confirmButtonText: 'Aceptar'
+        });
         return;
       }
 
-      showToast(isCreate ? 'Conexión creada con éxito' : 'Conexión actualizada con éxito', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: isCreate ? 'Conexión creada con éxito' : 'Conexión actualizada con éxito',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.closePanel();
       this.table.setData();   // refresca la lista sin recargar la página
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error', message: err.message });
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.submitBtnTarget.disabled = false;
     }
@@ -370,7 +436,15 @@ export default class extends TabulatorController {
     this.fSlUrlErrorTarget.classList.toggle('hidden', !urlInvalid);
 
     if (nameEmpty || urlInvalid) {
-      showToast('Por favor complete todos los campos requeridos', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Por favor complete todos los campos requeridos',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return false;
     }
     return true;
@@ -418,7 +492,15 @@ export default class extends TabulatorController {
 
     const problem = this.#licenseTestBlocker();
     if (problem) {
-      showToast(problem, 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: problem,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -445,14 +527,20 @@ export default class extends TabulatorController {
       if (json?.Data === true) {
         this.#verifiedFingerprint = fingerprint;
       } else {
-        showAlert({
-          type:    ALERT_TYPES.ERROR,
-          title:   'Credenciales de licencia inválidas',
-          message: json?.Message || 'No se pudo conectar al Service Layer de SAP.',
+        Swal.fire({
+          icon:  'error',
+          title: 'Credenciales de licencia inválidas',
+          text:  json?.Message || 'No se pudo conectar al Service Layer de SAP.',
+          confirmButtonText: 'Aceptar'
         });
       }
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al comprobar las credenciales', message: err.message });
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al comprobar las credenciales',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.#isTesting = false;
       this.#syncTestLicenseBtn();

@@ -1,0 +1,15 @@
+# Omakase Ruby styling for Rails
+inherit_gem: { rubocop-rails-omakase: rubocop.yml }
+
+# Overwrite or add rules to create your own house style
+#
+# omakase fuerza comillas dobles (Style/StringLiterals: double_quotes), pero el
+# código de este proyecto usa comillas simples de forma consistente y muy
+# mayoritaria (~74% en app/, verificado 2026-09-16). Aplicar el default de
+# omakase reportaría miles de "offenses" contra el estilo real del proyecto en
+# vez de contra bugs de verdad — se ajusta al estilo que ya existe.
+Style/StringLiterals:
+  EnforcedStyle: single_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: single_quotes

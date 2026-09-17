@@ -1,0 +1,47 @@
+name: CI
+
+# Un solo job que corre `bin/ci` (config/ci.rb): es la MISMA definición que un
+# developer corre local, así que la regla de estilo/seguridad/tests nunca
+# diverge entre "lo que pasó en mi máquina" y "lo que corrió en GitHub".
+# Separarlo en jobs paralelos (rubocop / brakeman / tests / …) duplicaría esa
+# lógica en dos lugares que pueden desincronizarse — ver el comentario de
+# config/ci.rb sobre por qué NO es el `bin/rails test` / `db:seed` genérico.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      # submodules: recursive + token: actions/checkout no trae git submodules
+      # por default, y el GITHUB_TOKEN automático no alcanza a otros repos del
+      # org donde viven (aunque sean del mismo ClavisCo) — necesita el PAT de
+      # organización SUBMODULES_TOKEN (mismo patrón que .github/workflows/deploy.yml).
+      # Sin esto, cualquier paso que arranque Rails revienta con LoadError: los
+      # 6 submódulos obligatorios de vendor/clavisco/ se cargan incondicionalmente
+      # en config/initializers/clavisco_submodules.rb.
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+
+      # libvips: requerido por propshaft/vips para procesar imágenes.
+      # unixodbc-dev: headers para compilar `ruby-odbc` (ExternalDb::Pool,
+      # CLAUDE.md §37) — sin esto, `bundler-cache: true` de abajo falla al
+      # instalar gems con "odbc_config: not found".
+      - name: Install packages
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libvips unixodbc-dev
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Run bin/ci (style, gem/importmap audit, brakeman, RSpec)
+        env:
+          RAILS_ENV: test
+        run: bin/ci

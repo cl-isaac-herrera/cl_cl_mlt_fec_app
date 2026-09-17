@@ -1,0 +1,250 @@
+name: Deploy
+
+# dev se despliega automatico en cada push a main (build UNA sola vez +
+# deploy). Test y prod NO tienen "required reviewers" nativo de GitHub - esa
+# funcion es EXCLUSIVA de GitHub Enterprise para repos PRIVADOS (confirmado
+# en la documentacion oficial 2026-08-20; en Free/Pro/Team solo viene
+# incluida para repos publicos, sin importar el plan). El gate real para
+# test/prod es que alguien con permiso de escritura dispare esto a mano
+# (workflow_dispatch).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      destination:
+        description: >-
+          Promover el commit actual a este destination/Environment. Nunca
+          reconstruye: usa la imagen que el job "build" (disparado por el
+          ultimo push a main) ya construyo y publico. El dropdown lista
+          TODOS los Environments configurados en el repo (Settings >
+          Environments) - "test"/"prod" en un producto de un solo cliente,
+          o "<cliente>-<ambiente>" en uno multicliente. "dev" tambien
+          aparece aqui porque asi funciona el input type "environment" de
+          GitHub (lista todos, no se puede excluir uno puntual) -
+          dispararlo a mano no rompe nada, solo esta fuera de su uso normal
+          (se despliega solo, por push).
+        type: environment
+        required: true
+      version:
+        description: >-
+          SHA especifico a promover (opcional, para casos como un
+          rollback). Vacio = usa el commit desde el que se dispara esto (el
+          HEAD actual de main, si no cambiaste la rama en "Use workflow
+          from").
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build + deploy a dev: SOLO en push automatico a main. Aqui se construye
+  # la UNICA imagen que test/prod van a promover despues via el job
+  # "promote" - nunca la reconstruyen (--skip-push en promote, ver mas
+  # abajo).
+  build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    # environment: dev SOLO para que Kamal pueda renderizar proxy.host via
+    # ERB sin que quede vacio (build push no contacta ningun servidor ni usa
+    # este valor realmente - es puramente para que la config cargue sin
+    # errores).
+    environment: dev
+    steps:
+      # submodules: recursive + token: actions/checkout no trae git
+      # submodules por default, y el GITHUB_TOKEN automatico no alcanza a
+      # otros repos del org donde viven (aunque sean del mismo ClavisCo) -
+      # necesita un PAT con acceso de lectura (secret de organizacion
+      # SUBMODULES_TOKEN, ya existe a nivel de org - no hay que crearlo).
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+
+      # Kamal NO construye desde el checkout de este job: internamente hace
+      # su propio `git clone --recurse-submodules` a un directorio temporal
+      # (para garantizar que el build corresponda exactamente a un commit,
+      # ignorando cambios sin commitear). Ese clone nuevo no hereda el token
+      # que actions/checkout uso (ese token solo quedo configurado para
+      # ESTE repo/checkout, no globalmente) - por eso el clone interno de
+      # Kamal falla con "could not read Username for 'https://github.com'"
+      # al bajar los submodulos si no se hace esto. Con este git config
+      # global, CUALQUIER clone que el runner haga contra github.com
+      # (incluido el de Kamal) usa el mismo token.
+      - name: Configure git for private submodule access (used by Kamal's internal clone)
+        run: git config --global url."https://x-access-token:${{ secrets.SUBMODULES_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute version (SHA del commit - mismo tag para dev/test/prod)
+        id: version
+        run: echo "version=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image (una sola vez)
+        env:
+          RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+          KAMAL_REGISTRY_PASSWORD: ${{ secrets.KAMAL_REGISTRY_PASSWORD }}
+          KAMAL_REGISTRY_USERNAME: ${{ vars.KAMAL_REGISTRY_USERNAME }}
+          DEPLOY_TAILSCALE_IP: ${{ vars.DEPLOY_TAILSCALE_IP }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          OIDC_DOMAIN: ${{ vars.OIDC_DOMAIN }}
+          OIDC_PROVIDER: ${{ vars.OIDC_PROVIDER }}
+          OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+          OIDC_CLIENT_SECRET: ${{ secrets.OIDC_CLIENT_SECRET }}
+          OIDC_REALM: ${{ vars.OIDC_REALM }}
+          OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE }}
+          SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+          SENTRY_TUNNEL_PROJECT_IDS: ${{ vars.SENTRY_TUNNEL_PROJECT_IDS }}
+          LICENSE_PUBLIC_KEY: ${{ secrets.LICENSE_PUBLIC_KEY }}
+          LICENSE_PATH: ${{ vars.LICENSE_PATH }}
+        run: bin/kamal build push
+
+  deploy-dev:
+    if: github.event_name == 'push'
+    needs: build
+    environment: dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        # Sin submodules: este job no construye (--skip-push abajo), solo
+        # hace que el servidor haga docker pull de la imagen ya construida.
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      # Si el servidor de deploy solo es alcanzable por la red privada de
+      # Tailscale (patron comun - ver config/deploy.yml), este paso hace que
+      # el runner efimero se una a la tailnet de la org antes del SSH.
+      # Requiere una auth key generada en
+      # https://login.tailscale.com/admin/settings/keys, guardada como
+      # secret de ORGANIZACION TS_AUTHKEY (una sola tailnet para toda la
+      # org - no depende del servidor/producto - ya existe, no hay que
+      # crearlo). Si el servidor de este producto SI es alcanzable directo
+      # (sin Tailscale), este paso se puede quitar.
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: Configure SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          # Llave dedicada solo para que este workflow llegue al servidor
+          # de deploy - NUNCA la llave personal de nadie. Se genera aparte
+          # y su publica se agrega al servidor. Es un secret DE REPO (hoy
+          # se entrega una llave por servidor, y aunque dos productos
+          # compartan servidor, es mas simple mantenerla por repo que armar
+          # un secret de organizacion con visibilidad restringida a repos
+          # seleccionados).
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+      # Sin -H: ssh-keyscan -H hashea el hostname en known_hosts (mas
+      # seguro si el archivo se filtra), pero Net::SSH (la libreria Ruby
+      # que usa Kamal, distinta al cliente ssh de OpenSSH) no siempre
+      # matchea bien esas entradas hasheadas y tira HostKeyMismatch aunque
+      # la llave sea la correcta.
+      - name: Trust the deploy server's host key
+        run: ssh-keyscan ${{ vars.DEPLOY_TAILSCALE_IP }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to dev (imagen ya construida por el job "build" - sin rebuild)
+        env:
+          RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+          KAMAL_REGISTRY_PASSWORD: ${{ secrets.KAMAL_REGISTRY_PASSWORD }}
+          KAMAL_REGISTRY_USERNAME: ${{ vars.KAMAL_REGISTRY_USERNAME }}
+          DEPLOY_TAILSCALE_IP: ${{ vars.DEPLOY_TAILSCALE_IP }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          OIDC_DOMAIN: ${{ vars.OIDC_DOMAIN }}
+          OIDC_PROVIDER: ${{ vars.OIDC_PROVIDER }}
+          OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+          OIDC_CLIENT_SECRET: ${{ secrets.OIDC_CLIENT_SECRET }}
+          OIDC_REALM: ${{ vars.OIDC_REALM }}
+          OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE }}
+          SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+          SENTRY_TUNNEL_PROJECT_IDS: ${{ vars.SENTRY_TUNNEL_PROJECT_IDS }}
+          LICENSE_PUBLIC_KEY: ${{ secrets.LICENSE_PUBLIC_KEY }}
+          LICENSE_PATH: ${{ vars.LICENSE_PATH }}
+        # `bin/kamal deploy`, no `setup`: `setup` solo aporta 2 cosas que
+        # `deploy` no hace - instalar Docker si falta, y arrancar accessories
+        # (`accessories:` en config/deploy.yml, ninguno definido hoy). Ambas
+        # asumen que el servidor todavia no existe - y el servidor de este
+        # producto lo entrega Sistemas ya con Docker instalado, antes de que
+        # exista cualquier deploy (confirmado 2026-08-20). `setup` queda como
+        # comando MANUAL de excepcion (nunca en CI) para el dia que un
+        # servidor nuevo no tenga Docker, o el producto agregue accessories -
+        # se corre una sola vez a mano, no se vuelve parte del pipeline.
+        run: bin/kamal deploy --skip-push --version=${{ needs.build.outputs.version }} -d dev
+
+  # Promocion manual a test o prod: dispara SOLO con workflow_dispatch
+  # (nunca con push a main), y NUNCA reconstruye - usa el commit actual (o
+  # el SHA que se indique en "version") que el job "build" ya construyo y
+  # publico antes. Este es el gate real: alguien con permiso de escritura
+  # decide el momento y lo dispara a mano (ver el comentario del "on:"
+  # arriba).
+  promote:
+    if: github.event_name == 'workflow_dispatch'
+    # El Environment es directamente el valor elegido en el input
+    # "destination" (type: environment, dropdown dinamico segun Settings >
+    # Environments del repo) - ver el comentario de ese input arriba.
+    environment: ${{ github.event.inputs.destination }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+
+      - name: Configure SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+      - name: Trust the deploy server's host key
+        run: ssh-keyscan ${{ vars.DEPLOY_TAILSCALE_IP }} >> ~/.ssh/known_hosts
+
+      - name: Promote to target environment (misma imagen del job "build" - sin rebuild)
+        env:
+          RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+          KAMAL_REGISTRY_PASSWORD: ${{ secrets.KAMAL_REGISTRY_PASSWORD }}
+          KAMAL_REGISTRY_USERNAME: ${{ vars.KAMAL_REGISTRY_USERNAME }}
+          DEPLOY_TAILSCALE_IP: ${{ vars.DEPLOY_TAILSCALE_IP }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          OIDC_DOMAIN: ${{ vars.OIDC_DOMAIN }}
+          OIDC_PROVIDER: ${{ vars.OIDC_PROVIDER }}
+          OIDC_CLIENT_ID: ${{ vars.OIDC_CLIENT_ID }}
+          OIDC_CLIENT_SECRET: ${{ secrets.OIDC_CLIENT_SECRET }}
+          OIDC_REALM: ${{ vars.OIDC_REALM }}
+          OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE }}
+          SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+          SENTRY_TUNNEL_PROJECT_IDS: ${{ vars.SENTRY_TUNNEL_PROJECT_IDS }}
+          LICENSE_PUBLIC_KEY: ${{ secrets.LICENSE_PUBLIC_KEY }}
+          LICENSE_PATH: ${{ vars.LICENSE_PATH }}
+        # deploy, no setup - ver el comentario en el job "deploy-dev" de
+        # arriba (misma decision, aplica igual a test y prod). El "-d" usa
+        # el mismo input que "environment:" arriba (repetido porque
+        # "environment:" no puede leer un output de step).
+        run: bin/kamal deploy --skip-push --version=${{ github.event.inputs.version || github.sha }} -d ${{ github.event.inputs.destination }}

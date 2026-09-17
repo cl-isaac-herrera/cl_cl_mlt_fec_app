@@ -406,17 +406,38 @@ Este guard ya está incluido en el patrón `#apiFetch` canónico de arriba — c
 
 ---
 
-## 7. Notificaciones toast — `showToast`
+## 7. Notificaciones toast — SweetAlert2 directo, SIN wrapper propio
+
+**Cambio de estándar (2026-09):** este producto arrancó antes de que
+CLAVISCO-PLATFORM-STANDARDS definiera esta sección. La decisión de la plataforma es **no
+mantener** un `alertService`/`showToast` propio — se llama a SweetAlert2 directo, aceptando
+que un futuro cambio de librería implique tocar cada punto de llamado. La consistencia entre
+productos depende 100% de que todos usen exactamente esta receta:
 
 ```js
-import { showToast } from 'vendor/clavisco/alerts'
-showToast(message, type = 'success', duration = 4000)
-// type: 'success' | 'error' | 'warning' | 'info'
+import Swal from 'sweetalert2'
+
+Swal.fire({
+  toast: true,
+  position: 'top-end',
+  icon: tipo,              // 'success' | 'error' | 'warning' | 'info'
+  title: mensaje,
+  showConfirmButton: false,
+  timer: 3000,
+  timerProgressBar: true
+})
 ```
 
-- **NO** declarar `toast`, `toastIcon`, `toastMessage` en `static targets` — son legacy.
-- **NO** agregar divs `data-xxx-target="toast"` en las views — el layout ya tiene `#toast-container`.
-- Implementación en `app/javascript/vendor/clavisco/alerts/index.js`.
+- `vendor/clavisco/alerts` (el wrapper viejo con `showToast`/`showAlert`/`ALERT_TYPES`) **ya
+  no existe** — se migró por completo el 2026-09-16. Si aparece código que todavía lo importa
+  (un branch viejo, un merge, un copy-paste de otra parte), **reemplazarlo** por la receta de
+  arriba en el mismo cambio — no reintroducir el wrapper ni dejarlo conviviendo con SweetAlert2.
+- `sweetalert2` está pineado en `config/importmap.rb` (`pin "sweetalert2"`) — no requiere
+  ningún setup adicional, solo `import Swal from 'sweetalert2'`.
+- **NO** declarar `toast`, `toastIcon`, `toastMessage` en `static targets` — son legacy de una
+  implementación aún anterior.
+- **NO** agregar divs `data-xxx-target="toast"` ni un `#toast-container` propio en las views —
+  SweetAlert2 crea y gestiona su propio DOM.
 
 ---
 
@@ -731,34 +752,55 @@ El rojo se reserva para acciones **destructivas e irreversibles** (eliminar, anu
 **Regla:** Está **prohibido** usar `window.confirm()`, `window.alert()` o `window.prompt()` en cualquier parte de la app.
 Estas APIs bloquean el hilo principal, no respetan el diseño del sistema y su aspecto varía por OS/browser.
 
-### Patrón obligatorio — `confirm()` del alerts service
+### Patrón obligatorio — SweetAlert2 directo (ver §7)
+
+Igual que el toast, **sin wrapper propio** — se llama `Swal.fire()` directo con esta receta
+exacta:
 
 ```js
-import { confirm } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 
 async #miAccionDestructiva() {
-  const confirmed = await confirm('¿Está seguro de que desea eliminar este registro?', 'Eliminar registro')
-  if (!confirmed) return
+  const { isConfirmed } = await Swal.fire({
+    title: 'Eliminar registro',
+    text: '¿Está seguro de que desea eliminar este registro?',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Confirmar',
+    cancelButtonText: 'Cancelar'
+  })
+  if (!isConfirmed) return
 
   // ... continuar con la acción
 }
 ```
 
-`confirm(message, title?)` retorna `Promise<boolean>` — usa `await` siempre.
-Internamente llama a `showAlert({ type: 'warning', showCancel: true, ... })`.
+`Swal.fire({...})` retorna `Promise<SweetAlertResult>` — usa `await` siempre y destructura
+`isConfirmed` (no `dismiss`/`value`, que son de versiones viejas de SweetAlert).
 
 ### Para alertas simples (sin cancelar)
 
 ```js
-import { showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 
-await showAlert({ type: ALERT_TYPES.ERROR, title: 'Error', message: 'Descripción del error.' })
+await Swal.fire({ icon: 'error', title: 'Error', text: 'Descripción del error.' })
 ```
+
+### Confirmaciones nativas de Turbo (`data-turbo-confirm`)
+
+Un link/botón con `data-turbo-confirm="..."` dispara por default el `confirm()` feo del
+navegador. `application.js` configura `Turbo.config.forms.confirm` una sola vez para que use
+el mismo `Swal.fire` de confirmación de arriba — el usuario ve el mismo modal sin importar si
+la acción vino de Turbo nativo o de un controller Stimulus. No reconfigurar esto por
+controller.
 
 ### ⚠️ Errores comunes
 
-- Usar `window.confirm()` por conveniencia → **reemplazar siempre** con `confirm()` del service.
+- Usar `window.confirm()`/`window.alert()` por conveniencia → **reemplazar siempre** con
+  `Swal.fire()`.
 - Olvidar `await` → el código continúa sin esperar la respuesta del usuario.
+- Importar `vendor/clavisco/alerts` — **ese wrapper ya no existe** (ver §7). Si aparece,
+  migrarlo a esta receta en el mismo cambio.
 
 ---
 

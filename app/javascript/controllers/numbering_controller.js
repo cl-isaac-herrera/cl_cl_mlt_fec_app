@@ -1,7 +1,7 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { TabulatorFull } from 'tabulator-tables';
 import { Storage, SStore } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 import { docTypeDescription } from 'controllers/create_document_constants';
 
@@ -205,7 +205,15 @@ export default class extends TabulatorController {
     } catch (err) {
       this.#hideLoader(this.numberingLoaderTarget);
       this.#hideLoader(this.receptionLoaderTarget);
-      showToast(err.message || 'Error al cargar las sucursales.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar las sucursales.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -221,9 +229,25 @@ export default class extends TabulatorController {
     try {
       const numRes = await this.#apiFetch(`/api/Numbering?companyId=${this.#companyId}`);
       this.#numTable?.setData((numRes.Data || []).map(x => this.#mapNum(x)));
-      if (!numRes.Data?.length && numRes.Message) showToast(numRes.Message, 'warning');
+      if (!numRes.Data?.length && numRes.Message) Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: numRes.Message,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showToast(err.message || 'Error al recargar numeración.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al recargar numeración.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } finally {
       this.#hideLoader(loader);
     }
@@ -235,9 +259,25 @@ export default class extends TabulatorController {
     try {
       const res = await this.#apiFetch(`/api/Numbering/GetReceptNumberingByCompany?companyId=${this.#companyId}`);
       this.#recTable?.setData((res.Data || []).map(x => this.#mapRec(x)));
-      if (!res.Data?.length && res.Message) showToast(res.Message, 'warning');
+      if (!res.Data?.length && res.Message) Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: res.Message,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showToast(err.message || 'Error al recargar numeración de recepción.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al recargar numeración de recepción.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } finally {
       this.#hideLoader(loader);
     }
@@ -352,7 +392,15 @@ export default class extends TabulatorController {
 
   openCreateNumbering() {
     if (!this.#hasPerm('Configurations_Numbering_Create')) {
-      showToast('No cuenta con permisos para realizar esta acción.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para realizar esta acción.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#editingNum = null;
@@ -372,7 +420,15 @@ export default class extends TabulatorController {
 
   #openEditNum(row) {
     if (!this.#hasPerm('Configurations_Numbering_Update')) {
-      showToast('No cuenta con permisos para realizar esta acción.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para realizar esta acción.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#editingNum = row;
@@ -421,7 +477,15 @@ export default class extends TabulatorController {
           integration: parseInt(this.numIntegrationTarget.value),
         };
         await this.#apiFetch('/api/Numbering/', { method: 'PATCH', body: JSON.stringify(patch) });
-        showToast('Numeración actualizada exitosamente.', 'success');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'Numeración actualizada exitosamente.',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       } else {
         const post = {
           Id:          0,
@@ -435,12 +499,25 @@ export default class extends TabulatorController {
           Integration: parseInt(this.numIntegrationTarget.value),
         };
         await this.#apiFetch('/api/Numbering/', { method: 'POST', body: JSON.stringify(post) });
-        showToast('Numeración registrada exitosamente.', 'success');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'Numeración registrada exitosamente.',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       }
       this.closeNumberingPanel();
       await this.#reloadNum();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: `Error al ${this.#editingNum ? 'actualizar' : 'registrar'} la numeración`, message: err.message });
+      Swal.fire({
+        icon: 'error',
+        title: `Error al ${this.#editingNum ? 'actualizar' : 'registrar'} la numeración`,
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.numSaveBtnTarget.disabled = false;
     }
@@ -485,7 +562,15 @@ export default class extends TabulatorController {
 
   openCreateReception() {
     if (!this.#hasPerm('Configurations_Numbering_CreateReception')) {
-      showToast('No cuenta con permisos para realizar esta acción.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para realizar esta acción.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#editingRec = null;
@@ -504,7 +589,15 @@ export default class extends TabulatorController {
 
   #openEditRec(row) {
     if (!this.#hasPerm('Configurations_Numbering_UpdateReception')) {
-      showToast('No cuenta con permisos para realizar esta acción.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para realizar esta acción.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#editingRec = row;
@@ -552,15 +645,36 @@ export default class extends TabulatorController {
 
       if (this.#editingRec) {
         await this.#apiFetch('/api/Numbering/PatchReceptNumbering/', { method: 'PATCH', body: JSON.stringify(payload) });
-        showToast('Numeración de Recepción actualizada exitosamente.', 'success');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'Numeración de Recepción actualizada exitosamente.',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       } else {
         await this.#apiFetch('/api/Numbering/PostReceptNumbering/', { method: 'POST', body: JSON.stringify(payload) });
-        showToast('Numeración de Recepción registrada exitosamente.', 'success');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'Numeración de Recepción registrada exitosamente.',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       }
       this.closeReceptionPanel();
       await this.#reloadRec();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: `Error al ${this.#editingRec ? 'actualizar' : 'registrar'} la numeración de recepción`, message: err.message });
+      Swal.fire({
+        icon: 'error',
+        title: `Error al ${this.#editingRec ? 'actualizar' : 'registrar'} la numeración de recepción`,
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.recSaveBtnTarget.disabled = false;
     }

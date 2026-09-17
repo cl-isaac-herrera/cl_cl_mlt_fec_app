@@ -1,6 +1,6 @@
 import { Controller } from '@hotwired/stimulus';
 import { Storage, SStore } from 'vendor/clavisco/core';
-import { showToast } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 
 /**
  * DocumentsReportsController — Reportes de documentos emitidos y recepcionados.
@@ -93,7 +93,15 @@ export default class extends Controller {
     const endDate   = this.endDateTarget.value
 
     if (!startDate || !endDate) {
-      showToast('El formulario no puede enviarse con campos vacíos. Complete todos los campos antes de continuar.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'El formulario no puede enviarse con campos vacíos. Complete todos los campos antes de continuar.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -103,7 +111,15 @@ export default class extends Controller {
     today.setHours(23, 59, 59, 999)
 
     if (start > today || end > today || start > end) {
-      showToast('La fecha de búsqueda es futura o la fecha de inicio es posterior a la fecha final. Por favor, verifica y ajusta las fechas para asegurarte de que el rango de búsqueda sea válido.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'La fecha de búsqueda es futura o la fecha de inicio es posterior a la fecha final. Por favor, verifica y ajusta las fechas para asegurarte de que el rango de búsqueda sea válido.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -127,10 +143,26 @@ export default class extends Controller {
       if (data?.Data) {
         this.#renderPdf(data.Data)
       } else {
-        showToast('Lo sentimos, no hay información disponible para generar el reporte en el rango de fechas proporcionados', 'warning')
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: 'Lo sentimos, no hay información disponible para generar el reporte en el rango de fechas proporcionados',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
       }
     } catch (err) {
-      showToast(err.message || 'Error al generar el reporte', 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al generar el reporte',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     } finally {
       this.#hideOverlay()
     }

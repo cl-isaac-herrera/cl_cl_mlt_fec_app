@@ -1189,6 +1189,41 @@ independiente de cablear la llamada: qué archivo se sube y con qué contenido.
       es la misma deuda anotada arriba en "Ajustes de la instalación" y se
       resuelve junto con ella.
 
+- [ ] **⚠️ `spec/requests/api/hacienda_schemas_spec.rb` — "el catálogo sembrado"
+      (2 ejemplos) falla contra una base de test SIN sembrar, que es el estado
+      normal de la suite.** Confirmado 2026-09-16: son pre-existentes (fallaban
+      ya antes de tocar nada de esta sesión) y **no** hay que "arreglarlos"
+      corriendo `db:seed` en CI — se probó, y sembrar de verdad la base de test
+      rompe otros 188 specs que asumen la tabla vacía y arman sus propios datos
+      con factories (`ActiveRecord::RecordInvalid: El código ya está en uso`
+      al chocar con las 88 filas de `sl_resources` que siembra `db/seeds.rb`).
+      **Pendiente:** o esos dos ejemplos arman su propio fixture con
+      `Hacienda::SchemaStore::CODES` (sin depender de `db/seeds.rb`), o se
+      mueven a un contexto aparte que sí siembre y limpie explícitamente
+      (`before(:all)` + `after(:all)` con su propia transacción/truncado), sin
+      tocar el `config/ci.rb` general.
+
+- [ ] **Revisar el tipo de caché de `Hacienda::SchemaStore` ahora que `solid_cache`
+      quedó conectado de verdad (2026-09-16).** El esquema compilado (un
+      `Nokogiri::XML::Schema`) se guarda en un `Hash` de clase + `Mutex`, **por
+      proceso** y a propósito — no pasa por `Rails.cache` porque ese objeto no se
+      puede serializar (ver el comentario de cabecera de
+      `app/services/hacienda/schema_store.rb`, líneas 38-44). Mientras el cache
+      store de la app era `:memory_store` esto no se notaba como una excepción —
+      ambos eran "por proceso" igual. Con `solid_cache_store` ya wireado
+      (`config/cache.yml`, `config/database.yml`, `db/cache_schema.rb`), `Rails.cache`
+      pasa a ser compartido entre procesos/réplicas, y el caché de XSD queda como el
+      único que sigue siendo local a cada proceso — cada worker recompila su propia
+      copia del esquema al arrancar y al detectar un digest nuevo.
+      **No es un bug** (recompilar un XSD de <200 KB es barato y se invalida solo por
+      el digest en la ruta), pero vale la pena revisar si sigue siendo la mejor
+      opción ahora que hay un cache store real disponible, o si conviene, por ejemplo,
+      cachear en `Rails.cache` los **bytes** del XSD (sí serializables) para evitar
+      la bajada de Azure entre procesos, y dejar solo la compilación a
+      `Nokogiri::XML::Schema` como el `Hash`/`Mutex` local.
+      **Pendiente:** decidir si se toca o se deja documentado como diseño
+      intencional — no bloquea nada hoy.
+
 ---
 
 ## Emisión de documentos — sincronización de emitidos (`SyncIssuedDocumentsJob`)
@@ -2513,3 +2548,66 @@ mueve el puntero del submódulo y se borra el workaround.
       Bearer. El initializer ya calcula `issuer` y `jwks_uri` correctos, pero nadie los consume.
       **Pendiente submódulo:** `initialize(domain:, audience:, issuer: nil, jwks_uri: nil)`
       leyendo esos valores de la config, con el patrón Auth0 solo como fallback.
+
+---
+
+## Frontend — paquetes vendor incompletos (`rptmng-menu`, `dynamics-udfs-presentation`)
+
+`bin/setup` (plantilla estándar) agrega estos dos paquetes como git submodule solo si el
+directorio `app/javascript/vendor/clavisco/<paquete>` **no existe todavía**. En este producto
+ya existían como carpetas planas con únicamente `index.js` (vendoreadas a mano en una migración
+anterior, sin `controllers/`), así que al correr `bin/setup` el submodule real nunca se agregó,
+pero igual se registraron en `app/javascript/controllers/index.js` los imports de sus
+controllers Stimulus asumiendo que sí estaban completos. Un import a un módulo ES que no
+existe en disco no tiene pin en el importmap y rompe la carga de **todo** el bundle de
+controllers (la app queda muda después del login) — así se detectó este pendiente.
+
+- [ ] **`vendor/clavisco/rptmng-menu` — falta `controllers/rpt_parameters_modal_controller.js` y
+      `controllers/rpt_send_email_modal_controller.js`.** El registro de ambos se quitó de
+      `app/javascript/controllers/index.js` para no romper el arranque. El paquete real
+      (`ClavisCo/cl-ui-report-manager-js`) sí los trae — confirmado contra el submodule real en
+      el proyecto hermano `cl_cl_mlt_fes` — pero depende de `lib/shared_utilities`
+      (`showOverlay`/`hideOverlay`), que no existe en este producto (usa
+      `vendor/clavisco/overlay` Tipo B en su lugar, ver `CLAUDE.md` §15). ⚠️ La otra dependencia
+      que le faltaba (`sweetalert2`) **ya no es un bloqueo**: se agregó al proyecto el
+      2026-09-16 al adoptar CLAVISCO-PLATFORM-STANDARDS §5.1 (ver §7/§16 de `CLAUDE.md`).
+      **Pendiente:** decidir si se agrega el submodule real y se adapta el `showOverlay`/
+      `hideOverlay` de esos dos controllers a `vendor/clavisco/overlay`, o si se reescriben
+      desde cero. Ninguna vista de este producto usa todavía `rpt-parameters-modal` /
+      `rpt-send-email-modal`, así que no bloquea ninguna pantalla existente.
+
+- [ ] **`vendor/clavisco/dynamics-udfs-presentation` — falta
+      `controllers/dynamics_udfs_presentation_controller.js`.** Mismo problema: solo llegó el
+      `index.js`. El registro también se quitó de `index.js`. Nada en este producto usa hoy
+      `data-controller="dynamics-udfs-presentation"`.
+      **Pendiente:** agregar el submodule real (`cl-sap-udf-presentation-js`) o su equivalente
+      cuando la funcionalidad se necesite.
+
+- [ ] **Cinco componentes vendor "slide/modal" sin usar todavía, con dependencias incompletas.**
+      `batch-slide`, `bin-location-slide`, `series-slide`, `stock-warehouse-slide`,
+      `payment-slide`, `payment-modal`, `search-modal`, `dimensions-slide` y `rptmng-desk`
+      (bajo `app/javascript/vendor/clavisco/`) no están registrados en
+      `app/javascript/controllers/index.js` — son componentes reutilizables vendoreados para
+      cuando el producto necesite buscador de ítems/socios de negocio, selector de lotes,
+      ubicaciones, series o pago con PinPad, pero ninguna vista los usa hoy.
+      Su dependencia a `lib/api_helpers` (`getAPIHeaders`/`getMasterDataHeaders`) ya se resolvió
+      (2026-09-16, ver `app/javascript/lib/api_helpers.js`), y su `showToast` interno (que
+      antes despachaba un `CustomEvent("toast")` muerto — nadie lo escuchaba, ver nota de
+      SweetAlert2 abajo) ya se migró a `Swal.fire` directo.
+      **Pendiente real:** `payment-slide/controllers/payment_slide_controller.js` importa
+      `{ CurrentSession } from "mixins/use_current_session"` — ese path **no existe** en este
+      producto (`app/javascript/mixins/` no está creado). Si se registra este controller antes
+      de resolver esa dependencia, rompe el arranque igual que pasó con `rptmng-menu` /
+      `dynamics-udfs-presentation` / `lib/api_helpers` — no registrar `payment-slide` sin
+      antes crear ese mixin o adaptar el controller a como este producto resuelve la sesión
+      actual (`Storage`/`SStore` de `vendor/clavisco/core`).
+
+- [x] **SweetAlert2 reemplazó al wrapper propio `vendor/clavisco/alerts`.** Adoptado
+      CLAVISCO-PLATFORM-STANDARDS §5.1 el 2026-09-16: se migraron los ~400 call sites de
+      `showToast`/`showAlert`/`confirm`/`ALERT_TYPES` en los 26 controllers de la app a
+      `Swal.fire()` directo (sin wrapper), se corrigió el `CustomEvent("toast")` muerto que
+      dispatcheaban `tabulator_controller.js`, los 5 slides de arriba y
+      `notification-center/index.js` (nadie lo escuchaba desde que `alerts_controller.js`
+      —el único listener— nunca estuvo registrado), y se borró `vendor/clavisco/alerts/`
+      entero por quedar huérfano. `sweetalert2` está pineado en `config/importmap.rb`. Ver
+      `CLAUDE.md` §7/§16.

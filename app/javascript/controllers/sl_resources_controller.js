@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { SStore, getApiHeaders } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
@@ -141,7 +141,15 @@ export default class extends TabulatorController {
       const { json } = await this.#apiFetch(`${url}?${qp}`);
 
       if (!json.Data) {
-        showToast(json.Message || 'Error al obtener las consultas', 'error');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: json.Message || 'Error al obtener las consultas',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
         return { data: [], last_page: 1 };
       }
 
@@ -149,7 +157,15 @@ export default class extends TabulatorController {
       this.#totalRecords = total;
       return { data: json.Data.Items ?? [], last_page: Math.max(1, Math.ceil(total / size)) };
     } catch (err) {
-      showToast(err.message || 'Error al obtener las consultas', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al obtener las consultas',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return { data: [], last_page: 1 };
     }
   }
@@ -164,7 +180,15 @@ export default class extends TabulatorController {
 
   async #onEditClick(row) {
     if (!this.#hasPerm('Configurations_SlResources_Update')) {
-      showToast('No cuenta con permisos para realizar esta acción.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para realizar esta acción.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -177,13 +201,29 @@ export default class extends TabulatorController {
     try {
       const { json } = await this.#apiFetch(`/api/sl_resources/${this.#resourceId}`);
       if (!json.Data) {
-        showToast(json.Message || 'No se encontró la consulta', 'error');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: json.Message || 'No se encontró la consulta',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
         this.closePanel();
         return;
       }
       this.#fillPanel(json.Data);
     } catch (err) {
-      showToast(err.message || 'Error al cargar la consulta', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar la consulta',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.closePanel();
     }
   }
@@ -239,19 +279,33 @@ export default class extends TabulatorController {
       });
 
       if (!json.Data) {
-        showAlert({
-          type: ALERT_TYPES.ERROR,
+        await Swal.fire({
+          icon: 'error',
           title: 'Error al actualizar la consulta',
-          message: json.Message || 'Error desconocido',
+          text: json.Message || 'Error desconocido',
+          confirmButtonText: 'Aceptar'
         });
         return;
       }
 
-      showToast('Consulta actualizada con éxito', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Consulta actualizada con éxito',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.closePanel();
       this.table.setData();   // refresca la lista (la fila pasa a "Personalizado")
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.submitBtnTarget.disabled = false;
     }
@@ -288,7 +342,15 @@ export default class extends TabulatorController {
     this.fResourceErrorTarget.classList.toggle('hidden', !resourceEmpty);
 
     if (resourceEmpty) {
-      showToast('Por favor complete todos los campos requeridos', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Por favor complete todos los campos requeridos',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return false;
     }
     return true;

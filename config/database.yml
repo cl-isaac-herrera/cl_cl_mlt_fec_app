@@ -20,11 +20,24 @@ default: &default
 # migraciones de `db/migrate` se aplicarían también sobre la base de la cola. El schema
 # de la cola no se versiona con migraciones — lo carga `db/queue_schema.rb`, que Rails
 # asocia a esta conexión por el nombre (`queue` → `db/queue_schema.rb`).
+#
+# `cache:` sigue el mismo patrón, por la misma razón de fondo (un solo escritor por
+# archivo SQLite): `config/environments/production.rb` ya declaraba
+# `config.cache_store = :solid_cache_store` desde que existe el proyecto, pero sin esta
+# conexión ni `config/cache.yml`/`db/cache_schema.rb` esa tabla no existía en ningún
+# lado — el primer `Rails.cache.write` (el token OIDC de `AuthController`, ver
+# `app/controllers/auth_controller.rb`) habría reventado en cuanto corriera con
+# `RAILS_ENV=production`. Se conecta también en `development` para poder probarlo antes
+# del primer deploy real.
 
 development:
   primary:
     <<: *default
     database: db/development.sqlite3
+  cache:
+    <<: *default
+    database: db/development_cache.sqlite3
+    migrations_paths: db/cache_migrate
   queue:
     <<: *default
     database: db/development_queue.sqlite3
@@ -34,6 +47,10 @@ test:
   primary:
     <<: *default
     database: db/test.sqlite3
+  cache:
+    <<: *default
+    database: db/test_cache.sqlite3
+    migrations_paths: db/cache_migrate
   queue:
     <<: *default
     database: db/test_queue.sqlite3
@@ -43,6 +60,10 @@ production:
   primary:
     <<: *default
     database: db/production.sqlite3
+  cache:
+    <<: *default
+    database: db/production_cache.sqlite3
+    migrations_paths: db/cache_migrate
   queue:
     <<: *default
     database: db/production_queue.sqlite3

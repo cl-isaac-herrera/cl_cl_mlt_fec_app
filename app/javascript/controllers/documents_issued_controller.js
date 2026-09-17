@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { Storage, SStore } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 import { relativeDate } from 'vendor/clavisco/format/dates';
 
@@ -281,7 +281,7 @@ export default class extends TabulatorController {
     const json = await this.#apiFetch(`/api/documents?${queryParams}`);
 
     if (!json.Data) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener los documentos', message: json.Message || 'Error desconocido' });
+      Swal.fire({ icon: 'error', title: 'Se produjo un error al obtener los documentos', text: json.Message || 'Error desconocido', confirmButtonText: 'Aceptar' });
       // Retornar formato válido para que Tabulator no quede en estado roto
       this.#lastPageRowCount = 0;
       return { data: [], last_page: 1 };
@@ -295,7 +295,7 @@ export default class extends TabulatorController {
     // suficiente para que el botón "Siguiente" de Tabulator se habilite o no.
     const lastPage = json.Data.HasMore ? page + 1 : page;
 
-    showToast('Documentos obtenidos correctamente!', 'success');
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Documentos obtenidos correctamente!', showConfirmButton: false, timer: 3000, timerProgressBar: true });
 
     // Tabulator espera { data: [...], last_page: N } para paginación remota
     return { data: docs, last_page: lastPage };
@@ -565,33 +565,33 @@ export default class extends TabulatorController {
   async #viewPDF(id) {
     try {
       const json = await this.#apiFetch(`/api/Report/PrintInvoicePDF?id=${id}`);
-      if (!json.Data) { showToast('No se pudo obtener el PDF', 'error'); return; }
+      if (!json.Data) { Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'No se pudo obtener el PDF', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return; }
       this.#openBase64InTab(json.Data, 'application/pdf');
-      showToast('Información cargada con éxito!', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Información cargada con éxito!', showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } catch (err) {
-      showToast(err.message, 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message, showConfirmButton: false, timer: 3000, timerProgressBar: true });
     }
   }
 
   async #downloadPDF(id, numeroConsecutivo) {
     try {
       const json = await this.#apiFetch(`/api/Report/DownloadInvoicePDF?id=${id}`);
-      if (!json.Data) { showToast('No se pudo descargar el PDF', 'error'); return; }
+      if (!json.Data) { Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'No se pudo descargar el PDF', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return; }
       this.#downloadBase64(json.Data, `${numeroConsecutivo}-PDF`, 'application/pdf');
-      showToast('Proceso de descarga exitoso!', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Proceso de descarga exitoso!', showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } catch (err) {
-      showToast(err.message, 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message, showConfirmButton: false, timer: 3000, timerProgressBar: true });
     }
   }
 
   async #viewXML(id) {
     try {
       const json = await this.#apiFetch(`/api/Documents/PrintDocumentXML?docId=${id}`);
-      if (!json.Data?.HrRespuestaXml) { showToast('No se encontró respuesta XML', 'error'); return; }
+      if (!json.Data?.HrRespuestaXml) { Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'No se encontró respuesta XML', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return; }
       this.#openBase64InTab(json.Data.HrRespuestaXml, 'application/xml');
-      showToast('Información cargada con éxito!', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Información cargada con éxito!', showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } catch (err) {
-      showToast(err.message, 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message, showConfirmButton: false, timer: 3000, timerProgressBar: true });
     }
   }
 
@@ -629,10 +629,10 @@ export default class extends TabulatorController {
                        `${kind === 'response' ? '_respuesta' : ''}.xml`;
 
       this.#saveBlob(await response.blob(), this.#fileNameFromResponse(response) || fallback);
-      showToast('Proceso de descarga exitoso!', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Proceso de descarga exitoso!', showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } catch (err) {
       // Lectura fallida → toast (§9).
-      showToast(err.message, 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message, showConfirmButton: false, timer: 3000, timerProgressBar: true });
     }
   }
 
@@ -648,18 +648,25 @@ export default class extends TabulatorController {
   }
 
   async #skipValidations(docId) {
-    const confirmed = await confirm('Esta acción omitirá las validaciones y enviará el documento a Hacienda con errores bajo su propia responsabilidad. ¿Está seguro que desea continuar?', 'Omitir validaciones');
-    if (!confirmed) return;
+    const { isConfirmed } = await Swal.fire({
+      title: 'Omitir validaciones',
+      text: 'Esta acción omitirá las validaciones y enviará el documento a Hacienda con errores bajo su propia responsabilidad. ¿Está seguro que desea continuar?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!isConfirmed) return;
     try {
       const session = Storage.get('Session') || {};
       await this.#apiFetch('/api/Documents', {
         method: 'PATCH',
         body: JSON.stringify({ docId, feToken: '' }),
       });
-      showToast('Estado cambiado con éxito', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Estado cambiado con éxito', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       this.table?.replaceData();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al omitir validaciones', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al omitir validaciones', text: err.message, confirmButtonText: 'Aceptar' });
     }
   }
 
@@ -670,23 +677,30 @@ export default class extends TabulatorController {
     };
     const statusText = statusLabels[row.Status] || 'Desconocido';
 
-    const confirmed = await confirm('¿Está seguro que desea continuar?', `Esta acción anulará de manera interna la FEC bajo su propia responsabilidad, la cuál se encuentra en estado: ${statusText}`);
-    if (!confirmed) return;
+    const { isConfirmed } = await Swal.fire({
+      title: `Esta acción anulará de manera interna la FEC bajo su propia responsabilidad, la cuál se encuentra en estado: ${statusText}`,
+      text: '¿Está seguro que desea continuar?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!isConfirmed) return;
     try {
       await this.#apiFetch('/api/Documents/SetDocStatusInternalCancelled', {
         method: 'PATCH',
         body: JSON.stringify({ docId: row.Id, feToken: '' }),
       });
-      showToast('Documento anulado con éxito', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Documento anulado con éxito', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       this.table?.replaceData();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al anular el documento', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al anular el documento', text: err.message, confirmButtonText: 'Aceptar' });
     }
   }
 
   async #reprocess(row) {
     if (!this.#hasPerm('Documents_Emission_Reprocess')) {
-      showToast('No tiene permiso para realizar esta acción', 'info');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No tiene permiso para realizar esta acción', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return;
     }
     const docId = row.Id;
@@ -700,9 +714,9 @@ export default class extends TabulatorController {
         `/api/documents/${docId}/reprocess?doc_type=${encodeURIComponent(row.DocType)}`,
         { method: 'PATCH' }
       );
-      showToast('Solicitud de reprocesamiento enviada', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Solicitud de reprocesamiento enviada', showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } catch (err) {
-      showToast(err.message, 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message, showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } finally {
       // Refrescar manteniéndose en la página actual: setPage(n) recarga esa página desde el
       // servidor con los filtros vigentes (replaceData/setData resetean a la página 1).
@@ -821,7 +835,7 @@ export default class extends TabulatorController {
       // falló es afirmar algo que no se sabe.
       this.emailErrorTarget.textContent = err.message || 'No se pudieron consultar los correos.';
       this.#setEmailState('error');
-      showToast(err.message, 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message, showConfirmButton: false, timer: 3000, timerProgressBar: true });
     }
   }
 
@@ -1103,7 +1117,7 @@ export default class extends TabulatorController {
           }),
         },
       );
-      showToast(json.Data?.Message || 'Reenvío registrado.', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: json.Data?.Message || 'Reenvío registrado.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
 
       // Los campos se limpian y el formulario se cierra: lo que se pidió ya
       // quedó registrado y aparece como una fila más del historial.
@@ -1113,7 +1127,7 @@ export default class extends TabulatorController {
 
       await this.#refreshEmailTable();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al reenviar correo', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al reenviar correo', text: err.message, confirmButtonText: 'Aceptar' });
     }
   }
 
@@ -1399,7 +1413,7 @@ export default class extends TabulatorController {
 
     const total = values.reduce((a, b) => a + b, 0);
     if (total === 0) {
-      showToast('No hay datos para mostrar', 'warning');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'No hay datos para mostrar', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return;
     }
 
@@ -1442,8 +1456,15 @@ export default class extends TabulatorController {
   // ── Descarga Masiva ────────────────────────────────────────────────────────
 
   async bulkDownload() {
-    const confirmed = await confirm('Se creará una solicitud de descarga masiva según los filtros aplicados. Los archivos serán enviados al correo del usuario que ejecuta la acción.', 'Descarga masiva de documentos', ALERT_TYPES.INFO);
-    if (!confirmed) return;
+    const { isConfirmed } = await Swal.fire({
+      title: 'Descarga masiva de documentos',
+      text: 'Se creará una solicitud de descarga masiva según los filtros aplicados. Los archivos serán enviados al correo del usuario que ejecuta la acción.',
+      icon: 'info',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!isConfirmed) return;
     {
 
         try {
@@ -1467,9 +1488,9 @@ export default class extends TabulatorController {
               CCEmail: '',
             }),
           });
-          showToast('Solicitud creada con éxito!!!', 'success');
+          Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Solicitud creada con éxito!!!', showConfirmButton: false, timer: 3000, timerProgressBar: true });
         } catch (err) {
-          showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al crear solicitud de descarga masiva', message: err.message });
+          Swal.fire({ icon: 'error', title: 'Error al crear solicitud de descarga masiva', text: err.message, confirmButtonText: 'Aceptar' });
         }
     }
   }

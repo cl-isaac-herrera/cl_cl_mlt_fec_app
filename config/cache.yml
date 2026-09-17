@@ -1,0 +1,18 @@
+default: &default
+  store_options:
+    max_size: <%= 256.megabytes %>
+    namespace: <%= Rails.env %>
+
+# `database: cache` en los tres ambientes: apunta a la conexión `cache:` propia
+# de config/database.yml, nunca a `primary` (mismo criterio que solid_queue).
+development:
+  database: cache
+  <<: *default
+
+test:
+  database: cache
+  <<: *default
+
+production:
+  database: cache
+  <<: *default

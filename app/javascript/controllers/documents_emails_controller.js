@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { Storage, SStore } from 'vendor/clavisco/core';
-import { showToast, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 import { showLoading, hideLoading } from 'vendor/clavisco/overlay';
 import { relativeDate } from 'vendor/clavisco/format/dates';
@@ -74,11 +74,27 @@ export default class extends TabulatorController {
     const initial = this.inputInitialDateTarget.value;
     const end     = this.inputEndDateTarget.value;
     if (!initial || !end) {
-      showToast('Ingrese ambas fechas para consultar.', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Ingrese ambas fechas para consultar.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     if (initial > end) {
-      showToast('La fecha de inicio no puede ser posterior a la fecha final.', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'La fecha de inicio no puede ser posterior a la fecha final.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.table?.setData();
@@ -226,7 +242,15 @@ export default class extends TabulatorController {
       const lastPage = Math.max(1, Math.ceil(total / size));
       return { data: json.Data ?? [], last_page: lastPage };
     } catch (err) {
-      showToast(err.message || 'Error al consultar correos.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al consultar correos.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return { data: [], last_page: 1 };
     } finally {
       this.table?.clearAlert();
@@ -360,7 +384,15 @@ export default class extends TabulatorController {
 
   #goToDocument(rowData) {
     if (!rowData.DocClave) {
-      showToast('Sin clave de documento.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'Sin clave de documento.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     Turbo.visit(`/documents/issued?clave=${encodeURIComponent(rowData.DocClave)}`);

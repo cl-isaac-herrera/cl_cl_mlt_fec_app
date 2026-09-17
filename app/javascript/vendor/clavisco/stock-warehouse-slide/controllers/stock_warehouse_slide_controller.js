@@ -1,6 +1,7 @@
 import BaseSlideController from "vendor/clavisco/base/controllers/base_slide_controller"
 import { getAPIHeaders } from "lib/api_helpers"
 import { TabulatorFull as Tabulator } from 'tabulator-tables'
+import Swal from 'sweetalert2'
 
 /**
  * Stock & Warehouse Selection Slide Panel Controller
@@ -258,6 +259,14 @@ export default class extends BaseSlideController {
   }
 
   showToast(message, type = "info") {
-    document.dispatchEvent(new CustomEvent("toast", { detail: { message, type }, bubbles: true }))
+    Swal.fire({
+      toast: true,
+      position: "top-end",
+      icon: type,
+      title: message,
+      showConfirmButton: false,
+      timer: 3000,
+      timerProgressBar: true
+    })
   }
 }

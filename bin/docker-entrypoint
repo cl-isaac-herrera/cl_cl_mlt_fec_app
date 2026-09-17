@@ -1,0 +1,37 @@
+#!/bin/bash -e
+
+# If running the rails server then create or migrate existing database
+if [ "${@: -2:1}" == "./bin/rails" ] && [ "${@: -1:1}" == "server" ]; then
+  ./bin/rails db:prepare
+
+  # ── Y sembrar, en CADA deploy ───────────────────────────────────────────────
+  #
+  # `db:prepare` NO alcanza: siembra solo cuando la base se acaba de crear.
+  # Verificado en el fuente de ActiveRecord
+  # (`Tasks::DatabaseTasks.prepare_all`):
+  #
+  #     seed = true if database_initialized && db_config.seeds?
+  #     …
+  #     load_seed if seed
+  #
+  # La base vive en el volumen persistente de `config/deploy.yml`
+  # (`fes_storage:/rails/storage`), así que sobrevive los deploys. Resultado sin
+  # esta línea: el primer deploy siembra y ninguno más. Un ajuste o un permiso
+  # que se agregue después a `db/seeds.rb` no llega nunca a un ambiente que ya
+  # existe — y el síntoma es silencioso: la pantalla de configuración
+  # simplemente no muestra el ajuste nuevo.
+  #
+  # Es seguro correrlo siempre porque `db/seeds.rb` es idempotente por diseño:
+  # upsert por llave natural (`code` / `name`), y **nunca asigna `value`** — ver
+  # el encabezado de la sección 2 de ese archivo. Sin esa garantía, sembrar en
+  # cada arranque pisaría las credenciales que escribió el operador.
+  #
+  # Acá y no en `.github/workflows/deploy.yml` por tres razones: corre ANTES del
+  # `exec` de abajo, así que la app nunca atiende tráfico con el catálogo viejo;
+  # cubre por igual `deploy-dev`, `promote` a test/prod y cualquier reinicio
+  # manual del contenedor, sin repetir el paso en tres lugares; y no necesita
+  # SSH ni Tailscale.
+  ./bin/rails db:seed
+fi
+
+exec "${@}"

@@ -1,6 +1,6 @@
 import { Controller } from '@hotwired/stimulus';
 import { Storage, SStore, getApiHeaders } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 
 /**
  * Con cuántos días de anticipación se avisa que el certificado está por vencer.
@@ -352,7 +352,12 @@ export default class extends Controller {
 
       this.#validateForm();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener la información', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Se produjo un error al obtener la información',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
+      });
     }
   }
 
@@ -378,14 +383,30 @@ export default class extends Controller {
     // tiene que esperarlo también. Las dos peticiones van en paralelo.
     const connections = this.#railsFetch('/api/connections/assignable')
       .then(resp => { if (resp.Data) this.#fillSapConnectionsSelect(resp.Data); })
-      .catch(err => showToast(`No se pudieron cargar las conexiones de SAP: ${err.message}`, 'error'));
+      .catch(err => Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `No se pudieron cargar las conexiones de SAP: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      }));
 
     // El select de bandejas también es de la sección general: mismo tratamiento
     // que las conexiones, y tiene que estar poblado antes de aplicarle el valor
     // de la compañía.
     const inboxes = this.#railsFetch('/api/email_configs/assignable')
       .then(resp => { if (resp.Data) this.#fillEmailConfigsSelect(resp.Data); })
-      .catch(err => showToast(`No se pudieron cargar las bandejas de correo: ${err.message}`, 'error'));
+      .catch(err => Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `No se pudieron cargar las bandejas de correo: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      }));
 
     const general = this.#railsFetch(`/api/companies/${companyId}`)
       .then((resp) => {
@@ -393,10 +414,11 @@ export default class extends Controller {
         this.#companyData = resp.Data;
       })
       .catch((err) => {
-        showAlert({
-          type:    ALERT_TYPES.ERROR,
-          title:   'Se produjo un error al obtener la información de la compañía',
-          message: err.message,
+        Swal.fire({
+          icon: 'error',
+          title: 'Se produjo un error al obtener la información de la compañía',
+          text: err.message,
+          confirmButtonText: 'Aceptar',
         });
       });
 
@@ -412,7 +434,15 @@ export default class extends Controller {
         }));
         this.#renderActivityCodes();
       })
-      .catch(err => showToast(`No se pudieron cargar los códigos de actividad: ${err.message}`, 'error'));
+      .catch(err => Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `No se pudieron cargar los códigos de actividad: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      }));
 
     try {
       // El orden importa: las conexiones tienen que estar en el <select> antes de
@@ -1039,7 +1069,15 @@ export default class extends Controller {
 
     if (!file.name.endsWith('.p12') && !file.name.endsWith('.pfx')) {
       this.certFileInputTarget.value = '';
-      showToast('Seleccione un certificado con extensión válida (.p12 o .pfx).', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'Seleccione un certificado con extensión válida (.p12 o .pfx).',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -1049,7 +1087,12 @@ export default class extends Controller {
     this.#refreshAtvSaveState();
 
     if (!this.certPinTarget.value) {
-      showAlert({ type: ALERT_TYPES.WARNING, title: 'Pin requerido', message: 'Para obtener la fecha de expiración del certificado debe colocar el PIN.' });
+      Swal.fire({
+        icon: 'warning',
+        title: 'Pin requerido',
+        text: 'Para obtener la fecha de expiración del certificado debe colocar el PIN.',
+        confirmButtonText: 'Aceptar',
+      });
       return;
     }
     this.#getCertExpireDate();
@@ -1081,7 +1124,12 @@ export default class extends Controller {
       this.#showCertExpiresAt(json.Data?.CertExpireDate);
     } catch (err) {
       this.#showCertExpiresAt(null);
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error de certificado', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error de certificado',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
+      });
     } finally {
       // La fecha es un campo de la sección: cambie o falle, el botón tiene que
       // reflejar el estado real.
@@ -1293,7 +1341,15 @@ export default class extends Controller {
     const ext = file.name.split('.').pop().toLowerCase();
     if (!['jpg', 'jpeg', 'png'].includes(ext)) {
       this.logoFileInputTarget.value = '';
-      showToast('Seleccione un logo con formato válido (JPG, JPEG o PNG).', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'Seleccione un logo con formato válido (JPG, JPEG o PNG).',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#selectedLogoFile    = file;
@@ -1306,7 +1362,15 @@ export default class extends Controller {
     // puede manipular (§26).
     const blocked = this.#logoDownloadBlockedReason();
     if (blocked) {
-      showToast(blocked, 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: blocked,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -1332,7 +1396,15 @@ export default class extends Controller {
 
     if (!file.name.endsWith('.rpt')) {
       this.printFormatFileInputTarget.value = '';
-      showToast('Seleccione un formato de impresión válido (.rpt).', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'Seleccione un formato de impresión válido (.rpt).',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#selectedPrintFormatFile    = file;
@@ -1343,7 +1415,15 @@ export default class extends Controller {
   async downloadPrintFormat() {
     const blocked = this.#printFormatDownloadBlockedReason();
     if (blocked) {
-      showToast(blocked, 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: blocked,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -1372,15 +1452,27 @@ export default class extends Controller {
     // puede manipular (§26).
     const blocked = this.#resetFormatBlockedReason();
     if (blocked) {
-      showToast(blocked, 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: blocked,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
-    const confirmed = await confirm(
-      'Esta acción restablecerá el formato de impresión de la compañía al por defecto. ¿Desea continuar?',
-      'Restablecer formato'
-    );
-    if (!confirmed) return;
+    const { isConfirmed } = await Swal.fire({
+      title: 'Restablecer formato',
+      text: 'Esta acción restablecerá el formato de impresión de la compañía al por defecto. ¿Desea continuar?',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!isConfirmed) return;
 
     this.#showLoader(this.loaderAttachmentsTarget);
     try {
@@ -1391,9 +1483,22 @@ export default class extends Controller {
       // El servidor cambió la ruta, así que el nombre que hay en pantalla ya no
       // es el que quedó guardado: se relee la sección en vez de adivinarlo.
       await this.#reloadAttachmentsSection();
-      showToast('Formato de impresión restablecido con éxito', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Formato de impresión restablecido con éxito',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al restablecer formato', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al restablecer formato',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
+      });
     } finally {
       this.#hideLoader(this.loaderAttachmentsTarget);
     }
@@ -1422,7 +1527,11 @@ export default class extends Controller {
   removeEmail(event) {
     const idx = parseInt(event.currentTarget.dataset.index);
     if (this.#emailCcItems.length === 1) {
-      showAlert({ type: ALERT_TYPES.WARNING, message: 'No se puede eliminar el último registro del correo copia' });
+      Swal.fire({
+        icon: 'warning',
+        text: 'No se puede eliminar el último registro del correo copia',
+        confirmButtonText: 'Aceptar',
+      });
       return;
     }
     this.#emailCcItems.splice(idx, 1);
@@ -1488,11 +1597,15 @@ export default class extends Controller {
       return;
     }
 
-    const confirmed = await confirm(
-      `¿Está seguro de que desea eliminar el código de actividad "${item.ActivityCode}"?`,
-      'Eliminar código de actividad',
-    );
-    if (!confirmed) return;
+    const { isConfirmed } = await Swal.fire({
+      title: 'Eliminar código de actividad',
+      text: `¿Está seguro de que desea eliminar el código de actividad "${item.ActivityCode}"?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!isConfirmed) return;
 
     this.#showLoader(this.loaderActivityCodesTarget);
     try {
@@ -1500,9 +1613,22 @@ export default class extends Controller {
         { method: 'PATCH' });
       this.#activityCodes.splice(idx, 1);
       this.#renderActivityCodes();
-      showToast('Código de actividad eliminado con éxito.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Código de actividad eliminado con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al eliminar código de actividad', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al eliminar código de actividad',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
+      });
     } finally {
       this.#hideLoader(this.loaderActivityCodesTarget);
     }
@@ -1566,7 +1692,15 @@ export default class extends Controller {
    */
   async saveActivityCodes() {
     if (!this.#validateActivityCodes()) {
-      showToast('Revise los códigos de actividad (duplicados).', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'Revise los códigos de actividad (duplicados).',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -1585,7 +1719,15 @@ export default class extends Controller {
           item.Code = json.Data?.Code ?? item.Code;
         }
       }
-      showToast('Códigos de actividad actualizados con éxito.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Códigos de actividad actualizados con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
       failed = err;
     } finally {
@@ -1606,7 +1748,12 @@ export default class extends Controller {
     }
 
     if (failed) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al actualizar códigos de actividad', message: failed.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al actualizar códigos de actividad',
+        text: failed.message,
+        confirmButtonText: 'Aceptar',
+      });
     }
   }
 
@@ -1780,12 +1927,36 @@ export default class extends Controller {
       const sapListErrors = this.#collectSapListErrors(warehouseResp, taxResp, currenciesResp);
       this.#setSapListError(sapListErrors);
       if (sapListErrors.length) {
-        showToast('No se pudieron cargar los datos para factura proveedor', 'error');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: 'No se pudieron cargar los datos para factura proveedor',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
         return;
       }
-      showToast('Información recargada correctamente', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Información recargada correctamente',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showToast(`Error al recargar: ${err.message}`, 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `Error al recargar: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
@@ -1807,7 +1978,15 @@ export default class extends Controller {
     // manipular (CLAUDE.md §26).
     const blocked = this.#generalSaveBlockedReason();
     if (blocked) {
-      showToast(blocked, 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: blocked,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -1826,13 +2005,22 @@ export default class extends Controller {
         this.#fillGeneralSection(this.#companyData);
       }
 
-      showToast(json.Message || 'Datos generales actualizados con éxito.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: json.Message || 'Datos generales actualizados con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
       // Error de escritura → modal, no toast (CLAUDE.md §9).
-      showAlert({
-        type:    ALERT_TYPES.ERROR,
-        title:   'Error al guardar datos generales',
-        message: err.message,
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al guardar datos generales',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
       });
     } finally {
       this.#hideLoader(this.loaderGeneralTarget);
@@ -1869,8 +2057,16 @@ export default class extends Controller {
     this.#showLoader(this.loaderAdditionalTarget);
     try {
       await this.#sendEditRequest(5);
-      showToast('Información adicional actualizada con éxito.', 'success');
-    } catch (err) { showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar información adicional', message: err.message }); }
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Información adicional actualizada con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
+    } catch (err) { await Swal.fire({ icon: 'error', title: 'Error al guardar información adicional', text: err.message, confirmButtonText: 'Aceptar' }); }
     finally { this.#hideLoader(this.loaderAdditionalTarget); }
   }
 
@@ -1887,7 +2083,15 @@ export default class extends Controller {
     // manipular (CLAUDE.md §26).
     const blocked = this.#atvSaveBlockedReason();
     if (blocked) {
-      showToast(blocked, 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: blocked,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -1907,13 +2111,22 @@ export default class extends Controller {
         this.#fillAtvSection(this.#companyData);
       }
 
-      showToast(json.Message || 'Datos de Hacienda actualizados con éxito.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: json.Message || 'Datos de Hacienda actualizados con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
       // Error de escritura → modal, no toast (CLAUDE.md §9).
-      showAlert({
-        type:    ALERT_TYPES.ERROR,
-        title:   'Error al guardar datos de Hacienda',
-        message: err.message,
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al guardar datos de Hacienda',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
       });
     } finally {
       this.#hideLoader(this.loaderAtvTarget);
@@ -1958,7 +2171,15 @@ export default class extends Controller {
     // manipular (§26).
     const blocked = this.#attachmentsSaveBlockedReason();
     if (blocked) {
-      showToast(blocked, 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: blocked,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -1977,10 +2198,18 @@ export default class extends Controller {
         this.#fillAttachmentsSection(this.#companyData);
       }
 
-      showToast(json.Message || 'Adjuntos actualizados con éxito.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: json.Message || 'Adjuntos actualizados con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
       // Error de escritura → modal, no toast (§9).
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar adjuntos', message: err.message });
+      await Swal.fire({ icon: 'error', title: 'Error al guardar adjuntos', text: err.message, confirmButtonText: 'Aceptar' });
     } finally {
       this.#hideLoader(this.loaderAttachmentsTarget);
     }
@@ -2007,7 +2236,15 @@ export default class extends Controller {
     // Solo se validan tolerancias/monedas cuando la funcionalidad está activa.
     // Si el usuario desactiva "Usa factura a proveedor", se guarda igual para apagarla.
     if (this.useFactProvTarget.checked && (!this.#xmlTolerances.length || !this.#validateTolerances())) {
-      showToast('Verifique los datos de factura proveedor (tolerancias requeridas, sin duplicados).', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'Verifique los datos de factura proveedor (tolerancias requeridas, sin duplicados).',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#showLoader(this.loaderSapTarget);
@@ -2017,8 +2254,16 @@ export default class extends Controller {
         method: 'PUT',
         body:   JSON.stringify(this.#currencyMappings),
       });
-      showToast('Datos de factura proveedor actualizados con éxito.', 'success');
-    } catch (err) { showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar datos de factura proveedor', message: err.message }); }
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Datos de factura proveedor actualizados con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
+    } catch (err) { await Swal.fire({ icon: 'error', title: 'Error al guardar datos de factura proveedor', text: err.message, confirmButtonText: 'Aceptar' }); }
     finally { this.#hideLoader(this.loaderSapTarget); }
   }
 
@@ -2030,19 +2275,51 @@ export default class extends Controller {
     const tokenUsr       = this.tokenUsrTarget.value.replace(/[^0-9]/g, '');
 
     if (certPath && !certPath.includes(identification)) {
-      showToast('El nombre del certificado no coincide con la identificación de la compañía.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'El nombre del certificado no coincide con la identificación de la compañía.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     if (tokenUsr && !tokenUsr.includes(identification)) {
-      showToast('El token del usuario no coincide con la identificación de la compañía.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'El token del usuario no coincide con la identificación de la compañía.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     if (!this.#validateGeneralForm()) {
-      showToast('La información ingresada contiene errores. Verifíquela antes de continuar.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'La información ingresada contiene errores. Verifíquela antes de continuar.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     if (this.useFactProvTarget.checked && !this.#xmlTolerances.length) {
-      showToast('Verifique que los datos de factura a proveedor estén correctos.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'Verifique que los datos de factura a proveedor estén correctos.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -2067,10 +2344,23 @@ export default class extends Controller {
       
       if (json.Error) throw new Error(json.Message);
 
-      showToast('Compañía registrada exitosamente.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Compañía registrada exitosamente.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       setTimeout(() => { Turbo.visit('/configurations/companies'); }, 1200);
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al registrar compañía', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al registrar compañía',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
+      });
     }
   }
 
@@ -2166,7 +2456,15 @@ export default class extends Controller {
       link.click();
       URL.revokeObjectURL(link.href);
     } catch (err) {
-      showToast(`Error al descargar: ${err.message}`, 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `Error al descargar: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
@@ -2332,7 +2630,15 @@ export default class extends Controller {
    */
   async saveConnectionFromPanel() {
     if (!this.#validateConnectionPanel()) {
-      showToast('Complete los campos requeridos.', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Complete los campos requeridos.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -2351,7 +2657,12 @@ export default class extends Controller {
       });
 
       if (!json.Data) {
-        showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al crear la conexión', message: json.Message || 'Error desconocido' });
+        await Swal.fire({
+          icon: 'error',
+          title: 'Error al crear la conexión',
+          text: json.Message || 'Error desconocido',
+          confirmButtonText: 'Aceptar',
+        });
         return;
       }
 
@@ -2368,9 +2679,22 @@ export default class extends Controller {
       }
 
       this.closeConnectionPanel();
-      showToast('Conexión creada con éxito.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Conexión creada con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al crear la conexión', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al crear la conexión',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
+      });
     } finally {
       this.connSaveBtnTarget.disabled = false;
     }
@@ -2427,7 +2751,15 @@ export default class extends Controller {
 
     const problem = this.#connLicenseTestBlocker();
     if (problem) {
-      showToast(problem, 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: problem,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -2452,14 +2784,20 @@ export default class extends Controller {
       if (json?.Data === true) {
         this.#connVerifiedFingerprint = fingerprint;
       } else {
-        showAlert({
-          type:    ALERT_TYPES.ERROR,
-          title:   'Credenciales de licencia inválidas',
-          message: json?.Message || 'No se pudo conectar al Service Layer de SAP.',
+        await Swal.fire({
+          icon: 'error',
+          title: 'Credenciales de licencia inválidas',
+          text: json?.Message || 'No se pudo conectar al Service Layer de SAP.',
+          confirmButtonText: 'Aceptar',
         });
       }
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al comprobar las credenciales', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al comprobar las credenciales',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
+      });
     } finally {
       this.#connIsTesting = false;
       this.#syncConnTestLicenseBtn();

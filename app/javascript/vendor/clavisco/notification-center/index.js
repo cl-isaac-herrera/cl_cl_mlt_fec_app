@@ -5,6 +5,7 @@
 
 import { clPrint, CL_DISPLAY, Storage } from 'vendor/clavisco/core'
 import { publish } from 'vendor/clavisco/linker'
+import Swal from 'sweetalert2'
 
 // ============================================================
 // NOTIFICATION TYPES
@@ -94,12 +95,15 @@ class NotificationCenterService {
    * @param {Object} notification - Notification object
    */
   showToast(notification) {
-    document.dispatchEvent(new CustomEvent('toast', {
-      detail: {
-        message: notification.message,
-        type: notification.type
-      }
-    }))
+    Swal.fire({
+      toast: true,
+      position: 'top-end',
+      icon: notification.type,
+      title: notification.message,
+      showConfirmButton: false,
+      timer: 3000,
+      timerProgressBar: true
+    })
   }
 
   /**

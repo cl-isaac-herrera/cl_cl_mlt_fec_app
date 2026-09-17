@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { Storage, SStore } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
@@ -224,7 +224,15 @@ export default class extends TabulatorController {
     // Defensa en profundidad: el botón se deshabilita sin permiso, pero
     // reverificamos aquí (ver CLAUDE.md §26).
     if (!this.#hasPerm('Configurations_MailParser_Create')) {
-      showToast('No cuenta con permisos para crear bandejas.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para crear bandejas.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#editingRecord = null;
@@ -323,7 +331,15 @@ export default class extends TabulatorController {
       this.#credentialSnapshot = this.#getCredentialValues(); // actualizar snapshot al estado validado
       this.#updateValidateButton(false, true);
       this.saveBtnTarget.disabled = false;
-      showToast('Credenciales validadas correctamente.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Credenciales validadas correctamente.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
       // El endpoint puede devolver el cuerpo JSON crudo como texto del error si responde non-2xx
       let displayMessage = err.message || 'Error al validar las credenciales.';
@@ -336,7 +352,12 @@ export default class extends TabulatorController {
       this.#isCredentialsValidated = false;
       this.#updateValidateButton(false, false);
       this.saveBtnTarget.disabled = true;
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al validar', message: displayMessage });
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al validar',
+        text: displayMessage,
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.#isValidating = false;
     }
@@ -344,7 +365,15 @@ export default class extends TabulatorController {
 
   async save() {
     if (!this.#isCredentialsValidated) {
-      showToast('Debe probar las credenciales antes de guardar.', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Debe probar las credenciales antes de guardar.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     if (!this.#validateForm()) return;
@@ -358,11 +387,24 @@ export default class extends TabulatorController {
       } else {
         await this.#apiFetch('/api/mail-parser', { method: 'POST', body: JSON.stringify(payload) });
       }
-      showToast('Bandeja configurada correctamente.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Bandeja configurada correctamente.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.#closePanel();
       this.table?.setData();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar', message: err.message || 'No se pudo guardar la configuración.' });
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al guardar',
+        text: err.message || 'No se pudo guardar la configuración.',
+        confirmButtonText: 'Aceptar'
+      });
     }
   }
 
@@ -398,11 +440,15 @@ export default class extends TabulatorController {
     const action = newStatus
       ? `reanudar el procesamiento de correos de la compañía "${tenant.CompanyName}"`
       : `detener el procesamiento de correos de la compañía "${tenant.CompanyName}"`;
-    const confirmed = await confirm(
-      `¿Está seguro que desea ${action}?`,
-      'Confirmar procesamiento de correos'
-    );
-    if (!confirmed) return;
+    const { isConfirmed } = await Swal.fire({
+      title: 'Confirmar procesamiento de correos',
+      text: `¿Está seguro que desea ${action}?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!isConfirmed) return;
 
     try {
       await this.#apiFetch(`/api/mail-parser/processing-tenants/${id}/status`, {
@@ -411,9 +457,25 @@ export default class extends TabulatorController {
       });
       tenant.IsActive = newStatus;
       this.filterTenants();
-      showToast(`Se ${newStatus ? 'reanudó' : 'detuvo'} el procesamiento de correos de la compañía correctamente.`, 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: `Se ${newStatus ? 'reanudó' : 'detuvo'} el procesamiento de correos de la compañía correctamente.`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showToast(err.message || 'Error al cambiar el estado.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cambiar el estado.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
@@ -458,7 +520,15 @@ export default class extends TabulatorController {
       const lastPage = Math.max(1, Math.ceil(total / size));
       return { data: records, last_page: lastPage };
     } catch (err) {
-      showToast(err.message || 'Error al consultar los procesadores de correo.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al consultar los procesadores de correo.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return { data: [], last_page: 1 };
     }
   }
@@ -481,11 +551,27 @@ export default class extends TabulatorController {
       const data = await this.#apiFetch(`/api/mail-parser/processing-tenants/${row.Id}`);
       this.#allTenants = data.Data || [];
       if (this.#allTenants.length === 0) {
-        showToast('No se encontraron compañías procesadas para esta bandeja.', 'warning');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: 'No se encontraron compañías procesadas para esta bandeja.',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       }
       this.#renderTenants(this.#allTenants);
     } catch (err) {
-      showToast(err.message || 'Error al obtener las compañías.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al obtener las compañías.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } finally {
       this.tenantsLoadingTarget.classList.add('hidden');
     }
@@ -495,7 +581,15 @@ export default class extends TabulatorController {
 
   #openEditPanel(row) {
     if (!this.#hasPerm('Configurations_MailParser_Update')) {
-      showToast('No cuenta con permisos para editar bandejas.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para editar bandejas.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#editingRecord = row;
@@ -622,7 +716,15 @@ export default class extends TabulatorController {
     }
 
     if (!valid) {
-      showToast('Favor completar los espacios requeridos.', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Favor completar los espacios requeridos.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
     return valid;
   }

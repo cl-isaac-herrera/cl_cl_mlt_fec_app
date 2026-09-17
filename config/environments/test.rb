@@ -9,6 +9,15 @@ require 'active_support/core_ext/integer/time'
 # Se crea con lo mínimo: el adaptador de jobs. Nada más, para no cambiar en silencio el
 # comportamiento de los specs que ya pasaban.
 Rails.application.configure do
+  # Llaves de ActiveRecord::Encryption con valores LITERALES y sin valor real
+  # (CLAVISCO-PLATFORM-STANDARDS.md §8.1, excepción para test): la suite no
+  # puede depender de tener RAILS_MASTER_KEY disponible, porque el job de CI
+  # que corre los tests no lo recibe (§11.5). No son secretos y no cifran
+  # nada real — no hay que rotarlas ni sacarlas del repo.
+  config.active_record.encryption.primary_key = "test_ar_encryption_primary_key__"
+  config.active_record.encryption.deterministic_key = "test_ar_encryption_determinist__"
+  config.active_record.encryption.key_derivation_salt = "test_ar_encryption_key_salt_____"
+
   # Rails venía avisando en cada corrida de specs que esto quedaba en `nil` ("config.eager_load
   # is set to nil. Please update your config/environments/*.rb files accordingly"). No había
   # dónde ponerlo porque el archivo no existía; `false` es el valor que la propia advertencia

@@ -1,6 +1,6 @@
 import { Controller } from '@hotwired/stimulus';
 import { SStore, getApiHeaders } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 
 // Compañías con campo OCTypeControl habilitado (CompanyWhitOC enum del legacy Angular)
 const COMPANIES_WITH_OC = [186, 1206];
@@ -107,7 +107,12 @@ export default class extends Controller {
         this.#setOcTypeValue(this.#userInfo.DocNumberPreference);
       }
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener la información', message: this.#extractError(err) });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Se produjo un error al obtener la información',
+        text: this.#extractError(err),
+        confirmButtonText: 'Aceptar',
+      });
     }
   }
 
@@ -225,12 +230,28 @@ export default class extends Controller {
     const sapPass = this.sapPassInputTarget.value;
 
     if (!selectedCompanyId) {
-      showToast('Seleccione una compañía para probar las credenciales.', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Seleccione una compañía para probar las credenciales.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
     if (!sapUser || !sapPass) {
-      showToast('Complete el Usuario y Contraseña de SAP antes de probar.', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Complete el Usuario y Contraseña de SAP antes de probar.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -253,11 +274,21 @@ export default class extends Controller {
       } else {
         this.#credentialsValidated = false;
         const message = data?.Message || 'No se pudo conectar a SAP Service Layer.';
-        showAlert({ type: ALERT_TYPES.ERROR, title: 'Credenciales inválidas', message });
+        await Swal.fire({
+          icon: 'error',
+          title: 'Credenciales inválidas',
+          text: message,
+          confirmButtonText: 'Aceptar',
+        });
       }
     } catch (err) {
       this.#credentialsValidated = false;
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al validar credenciales', message: this.#extractError(err) });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al validar credenciales',
+        text: this.#extractError(err),
+        confirmButtonText: 'Aceptar',
+      });
     } finally {
       this.#isValidating = false;
       this.#syncButtonStates();
@@ -291,10 +322,23 @@ export default class extends Controller {
 
     try {
       await this.#patch('/api/profile', payload);
-      showToast('Información actualizada con éxito!!!', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Información actualizada con éxito!!!',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.#onLoad();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al actualizar perfil', message: this.#extractError(err) });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al actualizar perfil',
+        text: this.#extractError(err),
+        confirmButtonText: 'Aceptar',
+      });
     } finally {
       this.btnUpdateTarget.disabled = false;
     }

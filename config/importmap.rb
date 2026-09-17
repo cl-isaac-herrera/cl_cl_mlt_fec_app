@@ -9,6 +9,8 @@ pin '@hotwired/stimulus-loading', to: 'stimulus-loading.js'
 pin_all_from 'app/javascript/controllers', under: 'controllers'
 pin_all_from 'app/javascript/vendor',      under: 'vendor'
 pin_all_from 'app/javascript/data',        under: 'data'
+pin_all_from 'app/javascript/lib',         under: 'lib'
 
 # Tabulator - JavaScript data grid library (igual que EMA)
 pin "tabulator-tables" # @6.3.1
+pin "sweetalert2" # @11.26.25

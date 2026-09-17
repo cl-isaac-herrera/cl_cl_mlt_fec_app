@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { SStore, getApiHeaders } from 'vendor/clavisco/core';
-import { showToast } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
@@ -123,7 +123,15 @@ export default class extends TabulatorController {
       const json = await this.#apiFetch(`${url}?${qp}`);
 
       if (!json.Data) {
-        showToast(json.Message || 'Error al obtener las compañías', 'error');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: json.Message || 'Error al obtener las compañías',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
         return { data: [], last_page: 1 };
       }
 
@@ -132,7 +140,15 @@ export default class extends TabulatorController {
       const lastPage = Math.max(1, Math.ceil(total / size));
       return { data: json.Data.Items ?? [], last_page: lastPage };
     } catch (err) {
-      showToast(err.message || 'Error al obtener las compañías', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al obtener las compañías',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return { data: [], last_page: 1 };
     }
   }
@@ -148,7 +164,15 @@ export default class extends TabulatorController {
     // Defensa en profundidad: la UI ya deshabilita el botón, pero se puede
     // manipular (CLAUDE.md §26).
     if (!this.#hasPerm('Configurations_Companies_Create')) {
-      showToast('No cuenta con permisos para crear compañías.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para crear compañías.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     Turbo.visit('/configurations/companies/new');
@@ -158,7 +182,15 @@ export default class extends TabulatorController {
 
   #onEditClick(company) {
     if (!this.#hasPerm('Configurations_Companies_Update')) {
-      showToast('No cuenta con permisos para editar compañías.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para editar compañías.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     Turbo.visit(`/configurations/companies/${company.Id}/edit`);

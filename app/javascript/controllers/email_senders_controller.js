@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { SStore, getApiHeaders } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
@@ -198,7 +198,15 @@ export default class extends TabulatorController {
     // Defensa en profundidad: el botón se deshabilita sin permiso, pero
     // reverificamos acá (CLAUDE.md §26).
     if (!this.#hasPerm('Configurations_EmailInbox_Create')) {
-      showToast('No cuenta con permisos para crear bandejas de correo.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para crear bandejas de correo.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#editingRecord = null;
@@ -239,7 +247,15 @@ export default class extends TabulatorController {
 
     const blocked = this.#validateBlockedReason();
     if (blocked) {
-      showToast(blocked, 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: blocked,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -268,16 +284,30 @@ export default class extends TabulatorController {
       // `Message`: no es un error de la petición, es el resultado de la prueba.
       if (json?.Data === true) {
         this.#verifiedFingerprint = fingerprint;
-        showToast(json.Message || 'Se envió el correo de prueba.', 'success');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: json.Message || 'Se envió el correo de prueba.',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       } else {
-        showAlert({
-          type:    ALERT_TYPES.ERROR,
-          title:   'No se pudo enviar el correo de prueba',
-          message: json?.Message || 'El servidor de correo rechazó la configuración.',
+        await Swal.fire({
+          icon: 'error',
+          title: 'No se pudo enviar el correo de prueba',
+          text: json?.Message || 'El servidor de correo rechazó la configuración.',
+          confirmButtonText: 'Aceptar'
         });
       }
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al probar la bandeja', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al probar la bandeja',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.#isValidating = false;
       this.#syncValidateButton();
@@ -290,7 +320,15 @@ export default class extends TabulatorController {
     // manipular (CLAUDE.md §26).
     const blocked = this.#saveBlockedReason();
     if (blocked) {
-      showToast(blocked, 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: blocked,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -303,10 +341,23 @@ export default class extends TabulatorController {
       const json = await this.#apiFetch(url, { method, body: JSON.stringify(this.#payload()) });
       this.closePanel();
       this.table?.setData();
-      showToast(json.Message || 'Bandeja guardada con éxito.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: json.Message || 'Bandeja guardada con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
       // Error de escritura → modal, no toast (CLAUDE.md §9).
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar la bandeja', message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al guardar la bandeja',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
       this.#syncSaveButton();
     }
   }
@@ -336,7 +387,15 @@ export default class extends TabulatorController {
       return { data: json.Data?.Items ?? [], last_page: Math.max(1, Math.ceil(total / size)) };
     } catch (err) {
       // Error de lectura → toast (CLAUDE.md §9).
-      showToast(err.message || 'Error al buscar las bandejas.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al buscar las bandejas.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.#totalRecords = 0;
       return { data: [], last_page: 1 };
     }
@@ -346,7 +405,15 @@ export default class extends TabulatorController {
 
   #openEditPanel(row) {
     if (!this.#hasPerm('Configurations_EmailInbox_Update')) {
-      showToast('No cuenta con permisos para editar bandejas de correo.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para editar bandejas de correo.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#editingRecord = row;

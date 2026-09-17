@@ -33,7 +33,7 @@
 
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { SStore, getApiHeaders } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 // ── Compañías que requieren campo Tipo de OC ──────────────────────────────────
@@ -279,12 +279,12 @@ export default class extends TabulatorController {
       const items = json.Data?.Items ?? [];
 
       this.#totalRecords = total;
-      if (!total) showToast('No se encontraron usuarios.', 'warning');
+      if (!total) Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'No se encontraron usuarios.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
 
       return { data: items, last_page: Math.max(1, Math.ceil(total / size)) };
     } catch (err) {
       this.#totalRecords = 0;
-      showToast(err.message || 'Error al cargar usuarios.', 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message || 'Error al cargar usuarios.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return { data: [], last_page: 1 };
     }
   }
@@ -296,7 +296,7 @@ export default class extends TabulatorController {
 
   #onEditClick(row) {
     if (!this.#hasPerm('Configurations_Users_Update')) {
-      showToast('No cuenta con permisos para editar usuarios.', 'info');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No cuenta con permisos para editar usuarios.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return;
     }
     this.#openEditPanel(row.Id);
@@ -327,14 +327,14 @@ export default class extends TabulatorController {
         this.#railsFetch(`/api/users/${encodeURIComponent(userId)}/companies`),
       ]);
       if (!userRes.Data) {
-        showAlert({ type: ALERT_TYPES.ERROR, title: 'Error', message: 'No se encontró el usuario.' });
+        Swal.fire({ icon: 'error', title: 'Error', text: 'No se encontró el usuario.', confirmButtonText: 'Aceptar' });
         this.closeEditPanel();
         return;
       }
       this.#fillEditForm(userRes.Data);
       this.#populateEditCompanies(companiesRes.Data || []);
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al cargar usuario', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al cargar usuario', text: err.message, confirmButtonText: 'Aceptar' });
       this.closeEditPanel();
     } finally {
       this.editLoadingOverlayTarget.classList.add('hidden');
@@ -409,11 +409,11 @@ export default class extends TabulatorController {
     const companyId = parseInt(this.editCredentialCompanyTarget.value);
 
     if (!sapUser || !sapPass) {
-      showToast('Complete Usuario y Contraseña de SAP antes de probar.', 'warning');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Complete Usuario y Contraseña de SAP antes de probar.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return;
     }
     if (!companyId) {
-      showToast('Seleccione una compañía para probar las credenciales.', 'warning');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Seleccione una compañía para probar las credenciales.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return;
     }
 
@@ -433,14 +433,14 @@ export default class extends TabulatorController {
       });
       if (res.Data === true) {
         this.#credentialsValidated = true;
-        showToast('Credenciales válidas', 'success');
+        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Credenciales válidas', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       } else {
         this.#credentialsValidated = false;
-        showAlert({ type: ALERT_TYPES.ERROR, title: 'Credenciales inválidas', message: res.Message || 'No se pudo conectar a SAP.' });
+        Swal.fire({ icon: 'error', title: 'Credenciales inválidas', text: res.Message || 'No se pudo conectar a SAP.', confirmButtonText: 'Aceptar' });
       }
     } catch (err) {
       this.#credentialsValidated = false;
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al validar', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al validar', text: err.message, confirmButtonText: 'Aceptar' });
     } finally {
       this.#updateEditTestCredBtn();
       this.#updateEditSubmitBtn();
@@ -466,11 +466,11 @@ export default class extends TabulatorController {
       await this.#railsFetch(`/api/users/${encodeURIComponent(this.#editUserId)}`, {
         method: 'PATCH', body: JSON.stringify(payload),
       });
-      showToast('Usuario actualizado con éxito', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Usuario actualizado con éxito', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       this.closeEditPanel();
       this.table?.setData();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al actualizar usuario', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al actualizar usuario', text: err.message, confirmButtonText: 'Aceptar' });
       this.editSubmitBtnTarget.disabled = false;
     } finally {
       this.editLoadingOverlayTarget.classList.add('hidden');
@@ -495,7 +495,7 @@ export default class extends TabulatorController {
     // Defensa en profundidad: el botón se deshabilita sin permiso, pero
     // reverificamos aquí (ver CLAUDE.md §26).
     if (!this.#hasPerm('Configurations_Users_Create')) {
-      showToast('No cuenta con permisos para crear usuarios.', 'info');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No cuenta con permisos para crear usuarios.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return;
     }
     this.createBackdropTarget.classList.remove('hidden');
@@ -535,7 +535,7 @@ export default class extends TabulatorController {
       this.#createDataLoaded = true;
       this.#validateCreateFormState();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al cargar datos', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al cargar datos', text: err.message, confirmButtonText: 'Aceptar' });
     } finally {
       this.createLoadingOverlayTarget.classList.add('hidden');
     }
@@ -604,11 +604,11 @@ export default class extends TabulatorController {
 
     try {
       await this.#railsFetch('/api/users', { method: 'POST', body: JSON.stringify(payload) });
-      showToast('Usuario registrado exitosamente', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Usuario registrado exitosamente', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       this.closeCreatePanel();
       this.table?.setData();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al registrar usuario', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al registrar usuario', text: err.message, confirmButtonText: 'Aceptar' });
       this.createSubmitBtnTarget.disabled = false;
     } finally {
       this.createLoadingOverlayTarget.classList.add('hidden');
@@ -707,11 +707,15 @@ export default class extends TabulatorController {
   // guardar en CUALQUIERA de los tabs.
   async requestCloseAccessPanel() {
     if (this.#anyAccessChanges()) {
-      const ok = await confirm(
-        'Hay cambios sin guardar que se perderán si cierra el panel. ¿Desea cerrar de todos modos?',
-        'Cambios sin guardar'
-      );
-      if (!ok) return;
+      const { isConfirmed } = await Swal.fire({
+        title: 'Cambios sin guardar',
+        text: 'Hay cambios sin guardar que se perderán si cierra el panel. ¿Desea cerrar de todos modos?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Confirmar',
+        cancelButtonText: 'Cancelar'
+      });
+      if (!isConfirmed) return;
     }
     this.closeAccessPanel();
   }
@@ -725,11 +729,15 @@ export default class extends TabulatorController {
 
     if (pending.length) {
       const labels = pending.map(name => ACCESS_TAB_LABELS[name]).join(' y ');
-      const ok = await confirm(
-        `Hay cambios sin guardar en ${labels} que se perderán si cierra el panel. ¿Desea cerrar de todos modos?`,
-        'Cambios sin guardar'
-      );
-      if (!ok) return;
+      const { isConfirmed } = await Swal.fire({
+        title: 'Cambios sin guardar',
+        text: `Hay cambios sin guardar en ${labels} que se perderán si cierra el panel. ¿Desea cerrar de todos modos?`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Confirmar',
+        cancelButtonText: 'Cancelar'
+      });
+      if (!isConfirmed) return;
     }
     this.closeAccessPanel();
   }
@@ -792,7 +800,7 @@ export default class extends TabulatorController {
       this.#renderAccessRoleList();
       this.#updateAccessSaveBtn();
     } catch (err) {
-      showToast(err.message || 'Error al cargar los roles del usuario', 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message || 'Error al cargar los roles del usuario', showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } finally {
       this.accessLoaderTarget.classList.add('hidden');
     }
@@ -860,12 +868,12 @@ export default class extends TabulatorController {
         method: 'PUT',
         body: JSON.stringify({ RoleId: parseInt(this.#accessCurrentRolId) }),
       });
-      showToast('Asignación realizada correctamente.', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Asignación realizada correctamente.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       this.#accessInitialRolId = this.#accessCurrentRolId;
       this.#updateAccessSaveBtn();
       this.#afterAccessSave();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar la asignación', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al guardar la asignación', text: err.message, confirmButtonText: 'Aceptar' });
     } finally {
       this.accessLoaderTarget.classList.add('hidden');
     }
@@ -891,7 +899,7 @@ export default class extends TabulatorController {
         if (catalogRes.Data && catalogRes.Data.length) {
           this.#accessGlobalPerms = catalogRes.Data;
         } else {
-          showToast(catalogRes.Message || 'No hay permisos globales disponibles', 'warning');
+          Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: catalogRes.Message || 'No hay permisos globales disponibles', showConfirmButton: false, timer: 3000, timerProgressBar: true });
         }
       }
 
@@ -905,7 +913,7 @@ export default class extends TabulatorController {
       this.#renderAccessGlobalList();
       this.#updateAccessSaveBtn();
     } catch (err) {
-      showToast(err.message || 'Error al cargar los permisos globales', 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message || 'Error al cargar los permisos globales', showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } finally {
       this.accessLoaderTarget.classList.add('hidden');
     }
@@ -985,7 +993,7 @@ export default class extends TabulatorController {
 
   async #saveAccessGlobal() {
     if (!this.#tabHasChanges('global')) {
-      showToast('No hay cambios para guardar', 'info');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No hay cambios para guardar', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return;
     }
 
@@ -999,12 +1007,12 @@ export default class extends TabulatorController {
         body: JSON.stringify({ PermissionIds: [...this.#accessGlobalCurrent] }),
       });
 
-      showToast('Permisos globales actualizados exitosamente', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Permisos globales actualizados exitosamente', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       this.#accessGlobalInitial = new Set(this.#accessGlobalCurrent);
       this.#updateAccessSaveBtn();
       this.#afterAccessSave();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al aplicar cambios', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al aplicar cambios', text: err.message, confirmButtonText: 'Aceptar' });
     } finally {
       this.accessLoaderTarget.classList.add('hidden');
     }
@@ -1037,7 +1045,7 @@ export default class extends TabulatorController {
       if (catalogRes) {
         this.#accessCompanies = catalogRes.Data || [];
         if (this.#accessCompanies.length === 0) {
-          showToast('No hay compañías que usted pueda asignar.', 'warning');
+          Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'No hay compañías que usted pueda asignar.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
         }
       }
 
@@ -1057,7 +1065,7 @@ export default class extends TabulatorController {
       this.#renderAccessCompanyList();
       this.#updateAccessSaveBtn();
     } catch (err) {
-      showToast(err.message || 'Error al cargar las compañías del usuario', 'error');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message || 'Error al cargar las compañías del usuario', showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } finally {
       this.accessLoaderTarget.classList.add('hidden');
     }
@@ -1154,7 +1162,7 @@ export default class extends TabulatorController {
 
   async #saveAccessCompanies() {
     if (!this.#tabHasChanges('companies')) {
-      showToast('No hay cambios para guardar', 'info');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No hay cambios para guardar', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return;
     }
 
@@ -1167,12 +1175,12 @@ export default class extends TabulatorController {
         body: JSON.stringify({ CompanyIds: [...this.#accessCompaniesCurrent] }),
       });
 
-      showToast('Compañías actualizadas exitosamente', 'success');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Compañías actualizadas exitosamente', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       this.#accessCompaniesInitial = new Set(this.#accessCompaniesCurrent);
       this.#updateAccessSaveBtn();
       this.#afterAccessSave();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al aplicar cambios', message: err.message });
+      Swal.fire({ icon: 'error', title: 'Error al aplicar cambios', text: err.message, confirmButtonText: 'Aceptar' });
     } finally {
       this.accessLoaderTarget.classList.add('hidden');
     }

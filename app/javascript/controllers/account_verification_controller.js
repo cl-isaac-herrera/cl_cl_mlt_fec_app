@@ -1,6 +1,6 @@
 import { Controller } from '@hotwired/stimulus'
 import { Storage, SStore } from 'vendor/clavisco/core'
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 import { showLoading, hideLoading } from 'vendor/clavisco/overlay'
 
 /**
@@ -60,7 +60,15 @@ export default class extends Controller {
         method: 'PATCH',
       })
       this.passwordSectionTarget.classList.remove('hidden')
-      showToast('Correo verificado con éxito.', 'success')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Correo verificado con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     } catch {
       // El correo no se pudo verificar (OTP inválido/expirado) → volver al login.
       this.#goToLogin()
@@ -76,22 +84,54 @@ export default class extends Controller {
     const confirmPassword  = this.confirmPasswordTarget.value
 
     if (!password || !confirmPassword) {
-      showToast('Por favor complete todos los campos requeridos.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Por favor complete todos los campos requeridos.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
     if (password.length < this.minPasswordLengthValue) {
-      showToast(`La contraseña debe tener un mínimo de ${this.minPasswordLengthValue} caracteres.`, 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: `La contraseña debe tener un mínimo de ${this.minPasswordLengthValue} caracteres.`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
     if (password.length > this.maxPasswordLengthValue) {
-      showToast(`La contraseña no puede superar ${this.maxPasswordLengthValue} caracteres.`, 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: `La contraseña no puede superar ${this.maxPasswordLengthValue} caracteres.`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
     if (password !== confirmPassword) {
-      showToast('Las contraseñas no coinciden.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Las contraseñas no coinciden.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -102,10 +142,23 @@ export default class extends Controller {
         `/api/User/set-password/${encodeURIComponent(this.otpCodeValue)}?password=${encodeURIComponent(password)}`,
         { method: 'PATCH' }
       )
-      showToast('Contraseña cambiada con éxito.', 'success')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Contraseña cambiada con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       this.#goToLogin()
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al establecer la contraseña', message: err.message || 'Error desconocido.' })
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al establecer la contraseña',
+        text: err.message || 'Error desconocido.',
+        confirmButtonText: 'Aceptar'
+      })
     } finally {
       this.submitButtonTarget.disabled = false
       hideLoading()

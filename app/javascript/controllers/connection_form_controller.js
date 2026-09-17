@@ -1,6 +1,6 @@
 import { Controller } from '@hotwired/stimulus';
 import { SStore, getApiHeaders } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 
 /**
  * ConnectionFormController — Crear / Editar una conexión SAP.
@@ -66,7 +66,12 @@ export default class extends Controller {
 
   async #initCreateMode() {
     if (!this.#hasPerm('Configurations_Connections_Create')) {
-      await showAlert({ type: ALERT_TYPES.WARNING, title: 'Acceso Denegado', message: 'No cuenta con permisos para crear conexiones.' });
+      await Swal.fire({
+        icon: 'warning',
+        title: 'Acceso Denegado',
+        text: 'No cuenta con permisos para crear conexiones.',
+        confirmButtonText: 'Aceptar'
+      });
       Turbo.visit('/configurations/connections');
       return;
     }
@@ -78,7 +83,12 @@ export default class extends Controller {
 
   async #initEditMode() {
     if (!this.#hasPerm('Configurations_Connections_Update')) {
-      await showAlert({ type: ALERT_TYPES.WARNING, title: 'Acceso Denegado', message: 'No cuenta con permisos para actualizar conexiones.' });
+      await Swal.fire({
+        icon: 'warning',
+        title: 'Acceso Denegado',
+        text: 'No cuenta con permisos para actualizar conexiones.',
+        confirmButtonText: 'Aceptar'
+      });
       Turbo.visit('/configurations/connections');
       return;
     }
@@ -96,14 +106,30 @@ export default class extends Controller {
       const json = await this.#apiFetch(`/api/connections/${this.connectionIdValue}`);
 
       if (!json.Data) {
-        showToast(json.Message || 'No se encontró la conexión', 'error');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: json.Message || 'No se encontró la conexión',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
         setTimeout(() => Turbo.visit('/configurations/connections'), 2000);
         return;
       }
 
       this.#fillForm(json.Data);
     } catch (err) {
-      showToast(err.message || 'Error al cargar la conexión', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar la conexión',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       setTimeout(() => Turbo.visit('/configurations/connections'), 2000);
     }
   }
@@ -186,16 +212,34 @@ export default class extends Controller {
 
       if (!json.Data) {
         const action = isCreate ? 'crear' : 'actualizar';
-        showAlert({ type: ALERT_TYPES.ERROR, title: `Error al ${action} conexión`, message: json.Message || 'Error desconocido' });
+        Swal.fire({
+          icon: 'error',
+          title: `Error al ${action} conexión`,
+          text: json.Message || 'Error desconocido',
+          confirmButtonText: 'Aceptar'
+        });
         return;
       }
 
       const msg = isCreate ? 'Conexión creada con éxito' : 'Conexión actualizada con éxito';
-      showToast(msg, 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: msg,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
 
       setTimeout(() => Turbo.visit('/configurations/connections'), 1500);
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error', message: err.message });
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     }
   }
 
@@ -213,7 +257,15 @@ export default class extends Controller {
     this.slUrlErrorTarget.classList.toggle('hidden', !urlInvalid);
 
     if (nameEmpty || urlInvalid) {
-      showToast('Por favor complete todos los campos requeridos', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Por favor complete todos los campos requeridos',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return false;
     }
     return true;
@@ -255,7 +307,15 @@ export default class extends Controller {
 
     const problem = this.#licenseTestBlocker();
     if (problem) {
-      showToast(problem, 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: problem,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -281,14 +341,20 @@ export default class extends Controller {
       if (json?.Data === true) {
         this.#verifiedFingerprint = fingerprint;
       } else {
-        showAlert({
-          type:    ALERT_TYPES.ERROR,
+        Swal.fire({
+          icon:    'error',
           title:   'Credenciales de licencia inválidas',
-          message: json?.Message || 'No se pudo conectar al Service Layer de SAP.',
+          text:    json?.Message || 'No se pudo conectar al Service Layer de SAP.',
+          confirmButtonText: 'Aceptar'
         });
       }
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al comprobar las credenciales', message: err.message });
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al comprobar las credenciales',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.#isTesting = false;
       this.#syncTestLicenseBtn();

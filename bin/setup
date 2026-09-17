@@ -1,0 +1,1284 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Clavisco Rails Starter — setup script
+#
+# Runs once after cloning from the template repo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+require "fileutils"
+
+# Force UTF-8 regardless of the running shell's locale (e.g. a minimal CI
+# image with LANG=C) — this script reads/rewrites files containing accented
+# Spanish text and em-dashes, which raise Encoding::UndefinedConversionError
+# under a non-UTF-8 external encoding.
+Encoding.default_external = Encoding::UTF_8
+Encoding.default_internal = Encoding::UTF_8
+
+BOLD  = "\e[1m"
+GREEN = "\e[32m"
+CYAN  = "\e[36m"
+RESET = "\e[0m"
+
+def ask(prompt)
+  print "#{CYAN}#{prompt}#{RESET} "
+  $stdout.flush
+  $stdin.gets.chomp.strip
+end
+
+def confirm(prompt)
+  answer = ask("#{prompt} [y/n]")
+  answer.downcase.start_with?("y")
+end
+
+def banner(text)
+  puts "\n#{BOLD}#{GREEN}▸ #{text}#{RESET}"
+end
+
+def step(text)
+  puts "  #{text}"
+end
+
+# ── 1. Gather inputs ──────────────────────────────────────────────────────────
+
+repo_name = File.basename(Dir.pwd)  # ej: cl_cl_mlt_fec
+
+puts "\n#{BOLD}Clavisco Rails Starter#{RESET}"
+puts "─" * 40
+puts "Repo: #{repo_name}"
+puts
+
+# Nombre interno: usado para el namespace Rails (module Fec) y Sentry (fec@production).
+# Puede diferir del nombre del repo si la nomenclatura del repo es más larga.
+product_name = loop do
+  name = ask("Nombre interno del producto (ej: fec, pms, fe):")
+  break name unless name.empty?
+  puts "  El nombre no puede estar vacío."
+end
+
+puts "\nTipo de producto:"
+puts "  1. API + UI  (Rails + Stimulus + Turbo + Tailwind)"
+puts "  2. API only  (solo endpoints JSON, sin vistas)"
+product_type = loop do
+  choice = ask("Opción [1/2]:")
+  break :api_ui   if choice == "1"
+  break :api_only if choice == "2"
+  puts "  Ingresa 1 o 2."
+end
+
+uses_sap = confirm("\n¿Este producto integra SAP Business One? (platform-standards asume que todo\nproducto Clavisco real lo hace — responde 'no' solo si este es un caso genuinamente distinto)")
+
+# Motor de base de datos — Rails cae en SQLite por defecto si no se declara, lo cual
+# coincide con lo que pide platform-standards §7.1/§8 para el producto típico, pero de
+# forma implícita. Se declara explícito aquí para que quede documentado en el propio
+# comando, no heredado de un default silencioso (ver rails-starter#2).
+db_engine = loop do
+  choice = ask("\nMotor de base de datos [sqlite3] (Enter para el default del estándar):")
+  break "sqlite3" if choice.empty?
+  break choice
+end
+
+# ── 2. Derive names ───────────────────────────────────────────────────────────
+
+# "my-product" → "MyProduct" (namespace usado en config/application.rb)
+namespace = product_name.split(/[-_]/).map(&:capitalize).join
+
+banner "Configurando #{product_name} (namespace: #{namespace})"
+
+# ── 3. Git submodules Ruby (backend) — antes de `rails new` ─────────────────
+#
+# Tiene que ir aquí, no después de `rails new`: config/initializers/clavisco_submodules.rb
+# hace `require_relative` de los 6 submódulos obligatorios de forma incondicional, y ESE
+# archivo se carga en cualquier boot de Rails — incluyendo los que corre `rails new` por
+# su cuenta al instalar bundle (los hooks after_bundle de importmap-rails/turbo-rails/
+# stimulus-rails/solid_cache, que internamente llaman `bin/rails <generator>` y eso carga
+# config/environment.rb). Si los submódulos todavía no existen en ese momento, esos
+# comandos truenan con LoadError y `rails new` nunca termina de generar el resto del
+# andamiaje de JS/CSS (encontrado probando bin/setup en la práctica, 2026-08-17).
+
+banner "Inicializando git submodules de vendor/clavisco/ (backend)..."
+
+submodule_base = "https://github.com/ClavisCo"
+
+# Maps local vendor path → actual GitHub repo name
+submodule_repos = {
+  "structures"  => "cl-core-structures-ruby",
+  "common"      => "cl-core-common-ruby",
+  "data_access" => "cl-data-access-ruby",
+  "auth"        => "cl-auth-ruby",
+  "licensing"   => "cl-licensing-ruby",
+  "app_menu"    => "cl-app-menu-ruby"
+}
+if uses_sap
+  submodule_repos["service_layer"] = "cl-sap-servicelayer-ruby"
+  submodule_repos["sap_udfs"]      = "cl-sap-udfs-ruby"
+end
+
+submodule_repos.each do |mod, repo|
+  path = "vendor/clavisco/#{mod}"
+  unless Dir.exist?(path)
+    step "Agregando #{mod}..."
+    system("git submodule add #{submodule_base}/#{repo}.git #{path}", exception: false)
+  end
+end
+
+# ── 4. Verificar Rails instalado ─────────────────────────────────────────────
+
+# ⚠️ Los dos `system` van en forma de ARREGLO y con `File::NULL`, no como una sola
+# cadena con redirecciones de shell. En Windows `system` con un string se ejecuta
+# por cmd.exe, y ahí:
+#
+#   · `> /dev/null 2>&1` no es una ruta válida ("The system cannot find the path
+#     specified") y el chequeo daba SIEMPRE false, incluso con Rails instalado.
+#     `File::NULL` resuelve a `NUL` en Windows y a `/dev/null` en Unix.
+#
+#   · las comillas simples no son comillas: `gem install rails '~> 8.1'` llegaba
+#     como dos nombres de gema y fallaba con "Could not find a valid gem '~'".
+#     Eso además estaba mal en cualquier plataforma —la versión va con `-v`, no
+#     como segundo argumento— solo que no se notaba porque el `unless` de arriba
+#     nunca era falso donde Rails ya estaba.
+#
+# La forma de arreglo no pasa por ningún shell, así que no hay nada que citar.
+unless system("rails", "--version", out: File::NULL, err: File::NULL)
+  puts "\n  Rails no está instalado. Instalando..."
+  system("gem", "install", "rails", "-v", "~> 8.1") || abort("No se pudo instalar Rails.")
+end
+
+# ── 5. Generar esqueleto Rails ────────────────────────────────────────────────
+
+# Este producto ya es una app Rails madura (no un clon recién iniciado del template):
+# `rails new .` siempre falla acá con "Can't initialize a new Rails application within
+# the directory of another" — es el guard normal de Rails, no un bug del script. Se
+# salta el paso por completo cuando config/application.rb ya existe, para poder seguir
+# con el resto de bin/setup (submódulos, middleware, credentials, CI/CD) sin tocar el
+# esqueleto ya generado.
+if File.exist?("config/application.rb")
+  step "config/application.rb ya existe — se salta `rails new` (proyecto ya inicializado)."
+else
+  step "Generando esqueleto Rails con `rails new` (--skip preserva archivos Clavisco)..."
+
+  rails_flags = "--name=#{product_name} --skip --skip-git -d #{db_engine}"
+  if product_type == :api_only
+    rails_flags += " --api"
+  else
+    # --css=tailwind: importmap-rails/turbo-rails/stimulus-rails se instalan solos porque
+    # son el default de Rails para una app no-API, pero Tailwind NO tiene ese comportamiento
+    # - que el gem ya este en el Gemfile no alcanza. Sin este flag, `rails new` nunca corre
+    # `rails tailwindcss:install`, y app/assets/tailwind/application.css (el input que pide
+    # `assets:precompile => tailwindcss:build`) nunca se genera - el build de Docker/produccion
+    # truena con "Specified input file ... does not exist" (encontrado probando el deploy real
+    # contra GHCR + GitHub Actions, 2026-08-18 - no se detecta en dev porque bin/dev no llega
+    # a correr assets:precompile).
+    rails_flags += " --css=tailwind"
+  end
+
+  # Sin --skip-bundle: rails new necesita correr bundle install para disparar los hooks
+  # after_bundle de importmap-rails/turbo-rails/stimulus-rails, que son los que generan
+  # config/importmap.rb, Procfile.dev y el resto del andamiaje de JS. Con --skip-bundle
+  # esos hooks nunca corren y el paso de más abajo revienta al intentar leer
+  # config/importmap.rb, que nunca llegó a existir (encontrado probando bin/setup en
+  # la práctica, 2026-08-17).
+  system("rails new . #{rails_flags}") || abort("rails new falló.")
+end
+
+# ── 5b. bin/dev (foreman) no debe cargar su propio .env — choca con dotenv-rails ─
+#
+# `rails new --css=tailwind` genera bin/dev usando `foreman start`, y foreman trae
+# su PROPIO cargador de .env (mucho mas simple que la gema dotenv: no recorta
+# comentarios inline, toma todo lo que sigue al '=' como valor literal). Foreman
+# carga .env ANTES de que Ruby/Rails arranque, asi que exporta variables ya
+# corrompidas (ej. una clave vacia con un comentario pegado en la misma linea,
+# como "SENTRY_DSN=          # comentario") al proceso hijo. dotenv-rails corre
+# despues y relee .env correctamente, pero por defecto nunca sobreescribe una
+# variable que ya existe en ENV - asi que el valor corrompido de foreman se queda,
+# y Rails truena al arrancar (encontrado probando bin/dev en un proyecto real,
+# 2026-08-19; ver .env.example — los placeholders vacios con comentario inline
+# son exactamente el patron que dispara esto).
+#
+# Fix: decirle a foreman que no cargue ningun .env el mismo, dejando a
+# dotenv-rails como unica fuente de verdad.
+if File.exist?("bin/dev")
+  step "Corrigiendo bin/dev (foreman no debe cargar .env por su cuenta)..."
+  dev_script = File.read("bin/dev")
+  fixed = dev_script.sub(
+    /^exec foreman start -f Procfile\.dev "\$@"$/,
+    'exec foreman start -f Procfile.dev -e /dev/null "$@"'
+  )
+  File.write("bin/dev", fixed) if fixed != dev_script
+end
+
+# ── 6. API-only: limpiar archivos UI del template ────────────────────────────
+
+if product_type == :api_only
+  step "Modo API only — eliminando archivos de UI del template..."
+
+  %w[
+    app/javascript app/views app/assets config/importmap.rb config/menu.json.example
+    app/controllers/sentry_tunnel_controller.rb
+  ].each do |path|
+    FileUtils.rm_rf(path) if File.exist?(path)
+  end
+
+  # Reemplazar ApplicationController por versión API
+  File.write("app/controllers/application_controller.rb", <<~RUBY)
+    # frozen_string_literal: true
+
+    class ApplicationController < ActionController::API
+    end
+  RUBY
+
+  # Eliminar gems de UI del Gemfile
+  gemfile = File.read("Gemfile")
+  %w[importmap-rails turbo-rails stimulus-rails tailwindcss-rails].each do |g|
+    gemfile.gsub!(/^gem "#{g}".*\n/, "")
+  end
+  gemfile.gsub!(/^# ── UI.*\n/, "")
+  File.write("Gemfile", gemfile)
+
+  # Quitar la ruta del tunnel de Sentry (Section 10.1 es [solo UI])
+  routes = File.read("config/routes.rb")
+  routes.gsub!(/^\s*# ── Sentry tunnel.*\n\s*post "tunnel".*\n\n?/, "")
+  File.write("config/routes.rb", routes)
+else
+  # Este producto no usa config/menu.json: el menú vive como array estático en
+  # app/javascript/data/menu.js (ver menu_controller.js). config/menu.json.example
+  # nunca existió en este repo — el paso se salta cuando no está.
+  if File.exist?("config/menu.json.example")
+    step "Modo API + UI — activando config/menu.json desde el ejemplo..."
+    FileUtils.cp("config/menu.json.example", "config/menu.json") unless File.exist?("config/menu.json")
+  else
+    step "config/menu.json.example no existe — se salta (el menú de este producto vive en app/javascript/data/menu.js)."
+  end
+end
+
+# ── 7. Middleware Clavisco (Section 2.4) — aplica a todo tipo de producto ───
+
+banner "Registrando middleware Clavisco en config/application.rb..."
+
+app_rb_path = "config/application.rb"
+app_rb = File.read(app_rb_path)
+middleware_snippet = <<~RUBY.chomp
+    # Clavisco shared submodules — required early (not via the normal initializer load
+    # order) so Middleware::ErrorHandler/RequestLogger already exist below.
+    require_relative "../config/initializers/clavisco_submodules"
+
+    # Clavisco Common — orden obligatorio: ErrorHandler antes del logger (Section 2.4)
+    config.middleware.insert_before Rails::Rack::Logger, Middleware::ErrorHandler
+    config.middleware.insert_after  Middleware::ErrorHandler, Middleware::RequestLogger
+RUBY
+
+if app_rb.include?("Middleware::ErrorHandler")
+  step "Middleware ya registrado — se deja como está."
+else
+  # Insert right after the `class Application < Rails::Application` line, indented
+  # to match the class body.
+  indented_snippet = middleware_snippet.lines.map { |l| l.strip.empty? ? l : "    #{l}" }.join
+  app_rb.sub!(/(class Application < Rails::Application\n)/) { "#{Regexp.last_match(1)}#{indented_snippet}\n\n" }
+  File.write(app_rb_path, app_rb)
+  step "Middleware registrado en #{app_rb_path}."
+end
+
+# ── 7b. Llaves de ActiveRecord::Encryption (estándar §8.1) ──────────────────
+#
+# Las exigen dos columnas: `sap_licenses.sap_password` (§8.1 del estándar) y
+# `settings.value`, que guarda las credenciales de la base externa y tiene que
+# poder DESCIFRARLAS para armar la cadena de conexión ODBC
+# (`app/models/setting.rb`, `docs/CONSULTA-BASE-EXTERNA.md`) — ninguna de las dos
+# puede ser un digest.
+#
+# Sin llaves, `encrypts` no falla al boot: falla en la primera lectura o
+# escritura de la fila, con `ActiveRecord::Encryption::Errors::Configuration`.
+#
+# ── Dónde viven, y por qué NO en el entorno ──────────────────────────────────
+#
+# En `config/credentials.yml.enc`, bajo `active_record_encryption:`. Lo fija el
+# estándar §8.1: nunca como variable de entorno ni secret de CI. Se descifran con
+# el mismo RAILS_MASTER_KEY que ya existe en el pipeline (§11), así que esto no
+# agrega ningún secret nuevo a GitHub ni a .kamal/secrets-common.
+#
+# NO hace falta código en config/application.rb: el initializer
+# `active_record_encryption.configuration` de Rails lee esas 3 claves de
+# credentials por su cuenta (activerecord/lib/active_record/railtie.rb).
+# `support_unencrypted_data` ya viene en `false` por defecto
+# (active_record/encryption/config.rb), así que tampoco hay que declararlo.
+#
+# Se generan SIEMPRE, no solo con SAP: `settings.value` las necesita en cualquier
+# producto, y §8 del estándar además dice que no existe un producto sin SAP.
+
+banner "Generando llaves de ActiveRecord::Encryption en config/credentials.yml.enc..."
+
+if !File.exist?("config/master.key") && ENV["RAILS_MASTER_KEY"].to_s.empty?
+  step "⚠️  No hay config/master.key ni RAILS_MASTER_KEY — no se pueden escribir las"
+  step "    credentials. Corré `bin/rails credentials:edit` y agregá el bloque"
+  step "    `active_record_encryption:` a mano (ver estándar §8.1)."
+else
+  # Se corre en un proceso aparte con `bundle exec` a propósito: usa
+  # ActiveSupport::EncryptedConfiguration —la clase oficial, la misma que hay
+  # detrás de `credentials:edit`— sin arrancar la app. `rails runner` no sirve
+  # acá: bootearía los initializers, y los submodules de vendor/clavisco todavía
+  # no se clonaron (eso pasa recién en el paso 10).
+  credentials_script = ".clavisco_setup_credentials.rb"
+
+  File.write(credentials_script, <<~'RUBY')
+    # frozen_string_literal: true
+
+    require "active_support"
+    require "active_support/encrypted_configuration"
+    require "securerandom"
+
+    creds = ActiveSupport::EncryptedConfiguration.new(
+      config_path:          "config/credentials.yml.enc",
+      key_path:             "config/master.key",
+      env_key:              "RAILS_MASTER_KEY",
+      raise_if_missing_key: true
+    )
+
+    # `read` levanta MissingContentError si el archivo no existe. `rails new` ya
+    # lo creó, así que llegar acá sin él significa que alguien lo borró: se
+    # arranca de cero en vez de tumbar el setup.
+    content = begin
+      creds.read.to_s
+    rescue ActiveSupport::EncryptedFile::MissingContentError
+      ""
+    end
+
+    # Idempotente: si ya están, no se tocan. Regenerarlas dejaría indescifrable
+    # todo lo ya guardado, y el operador tendría que volver a escribir cada
+    # credencial sin ningún error que lo explicara.
+    if content.include?("active_record_encryption")
+      puts "  Las llaves ya están en config/credentials.yml.enc — se dejan como están."
+    else
+      creds.write(<<~YAML)
+        #{content.chomp}
+
+        # Llaves de ActiveRecord::Encryption — CLAVISCO-PLATFORM-STANDARDS.md §8.1.
+        #
+        # Las usan `sap_licenses.sap_password` y `settings.value` (credenciales de
+        # la base externa por ODBC, ver docs/CONSULTA-BASE-EXTERNA.md). Rails las
+        # lee de acá por su cuenta — no hay código en config/application.rb.
+        #
+        # ⚠️ Rotarlas deja indescifrable TODO lo ya cifrado con las anteriores: no
+        # hay forma de recuperar esos valores, hay que volver a escribirlos.
+        #
+        # El entorno `test` NO usa estas llaves: config/environments/test.rb fija
+        # valores literales, porque el job de CI que corre los tests no recibe
+        # RAILS_MASTER_KEY (§8.1, excepción para test).
+        active_record_encryption:
+          primary_key: #{SecureRandom.hex(32)}
+          deterministic_key: #{SecureRandom.hex(32)}
+          key_derivation_salt: #{SecureRandom.hex(32)}
+      YAML
+
+      puts "  3 llaves escritas en config/credentials.yml.enc (active_record_encryption)."
+    end
+  RUBY
+
+  system("bundle exec ruby #{credentials_script}", exception: false)
+  FileUtils.rm_f(credentials_script)
+end
+
+# Excepción del §8.1 para el entorno `test`: las 3 llaves con valores literales,
+# no vía credentials. La suite no debe depender de tener RAILS_MASTER_KEY — el
+# job de CI que corre los tests no lo recibe (§11.5).
+
+test_env_path = "config/environments/test.rb"
+
+if !File.exist?(test_env_path)
+  step "⚠️  No existe #{test_env_path} — configurá las llaves de test a mano (§8.1)."
+elsif File.read(test_env_path).include?("active_record.encryption.primary_key")
+  step "Llaves de test ya configuradas — se dejan como están."
+else
+  test_env = File.read(test_env_path)
+  test_snippet = <<~RUBY.chomp
+    # Llaves de ActiveRecord::Encryption con valores LITERALES y sin valor real
+    # (CLAVISCO-PLATFORM-STANDARDS.md §8.1, excepción para test): la suite no
+    # puede depender de tener RAILS_MASTER_KEY disponible, porque el job de CI
+    # que corre los tests no lo recibe (§11.5). No son secretos y no cifran
+    # nada real — no hay que rotarlas ni sacarlas del repo.
+    config.active_record.encryption.primary_key = "test_ar_encryption_primary_key__"
+    config.active_record.encryption.deterministic_key = "test_ar_encryption_determinist__"
+    config.active_record.encryption.key_derivation_salt = "test_ar_encryption_key_salt_____"
+  RUBY
+
+  indented_snippet = test_snippet.lines.map { |l| l.strip.empty? ? l : "  #{l}" }.join
+  test_env.sub!(/(Rails\.application\.configure do\n)/) { "#{Regexp.last_match(1)}#{indented_snippet}\n\n" }
+  File.write(test_env_path, test_env)
+  step "Llaves literales de test configuradas en #{test_env_path}."
+end
+
+# ── 8. SAP: migración, modelos y association opcional ────────────────────────
+
+if uses_sap
+  step "Habilitando submodules e infraestructura de datos SAP..."
+
+  submodules_file = "config/initializers/clavisco_submodules.rb"
+  content = File.read(submodules_file)
+  content.gsub!(/^# (require_relative.*service_layer.*)$/, '\1')
+  content.gsub!(/^# (require_relative.*sap_udfs.*)$/, '\1')
+  content.gsub!(/^# module Sap\n#   (.*)\n# end$/, "module Sap\n  \\1\nend")
+  File.write(submodules_file, content)
+
+  FileUtils.mkdir_p("config/sap_schemas")
+  File.write("config/sap_schemas/.keep", "") unless File.exist?("config/sap_schemas/.keep")
+  step "  config/sap_schemas/ creado — coloca aquí los JSON schemas de UDTs/UDFs."
+
+  # Company#connection association — vive comentada en el modelo hasta que se habilita SAP.
+  company_model = File.read("app/models/company.rb")
+  company_model.gsub!(/^\s*# (belongs_to :connection.*)$/, '  \1')
+  File.write("app/models/company.rb", company_model)
+else
+  step "Sin integración SAP — eliminando migración y modelos SAP del template..."
+  FileUtils.rm_f("db/migrate/20240101000002_create_sap_tables.rb")
+  %w[sap_license connection company_membership].each { |m| FileUtils.rm_f("app/models/#{m}.rb") }
+end
+
+# ── 9. Git submodules JS (frontend vendor) — solo API + UI ───────────────────
+# Los 13 componentes de app/javascript/vendor/clavisco/ (Guías para desarrollo,
+# ítems 18-30 — extraídos de cl-ema, ver PR #20 de ese repo). Se agregan todos,
+# igual que en cl-ema (el producto de referencia), para que ningún desarrollador
+# tenga que salir a buscar nombres de repo más adelante. No tienen costo en
+# runtime si nunca se importan — importmap solo sirve lo que el JS pide.
+
+if product_type == :api_ui
+  banner "Inicializando git submodules de app/javascript/vendor/clavisco/ (frontend)..."
+
+  js_submodule_repos = {
+    "core"                 => "cl-ui-core-js",
+    "overlay"              => "cl-ui-overlay-js",
+    "linker"               => "cl-ui-linker-js",
+    "login"                => "cl-ui-login-js",
+    "menu"                 => "cl-ui-menu-js",
+    "base"                 => "cl-ui-slide-base-js",
+    "slide-search"         => "cl-ui-slide-search-js",
+    "action-buttons"       => "cl-ui-action-buttons-js",
+    "tabulator"            => "cl-ui-tabulator-js",
+    "skeleton"             => "cl-ui-skeleton-js",
+    "notification-center"  => "cl-ui-notification-center-js",
+    "rptmng-menu"          => "cl-ui-report-manager-js"
+  }
+  js_submodule_repos["dynamics-udfs-presentation"] = "cl-sap-udf-presentation-js" if uses_sap
+
+  js_submodule_repos.each do |mod, repo|
+    path = "app/javascript/vendor/clavisco/#{mod}"
+    unless Dir.exist?(path)
+      step "Agregando #{mod}..."
+      system("git submodule add #{submodule_base}/#{repo}.git #{path}", exception: false)
+    end
+  end
+
+  step "Registrando pins en config/importmap.rb..."
+  importmap_path = "config/importmap.rb"
+  importmap = File.read(importmap_path)
+
+  unless importmap.include?("vendor/clavisco/core")
+    pins = +"\n# ── Clavisco frontend vendor submodules ──────────────────────────────────────\n"
+    js_submodule_repos.each_key do |mod|
+      dir = "app/javascript/vendor/clavisco/#{mod}"
+      pins << %(pin_all_from "#{dir}", under: "vendor/clavisco/#{mod}"\n)
+      # Submodules with a controllers/ (or config/, helpers/) subfolder need their own
+      # pin_all_from call — importmap-rails' pin_all_from does not recurse into subdirs.
+      %w[controllers config helpers].each do |subdir|
+        pins << %(pin_all_from "#{dir}/#{subdir}", under: "vendor/clavisco/#{mod}/#{subdir}"\n) if Dir.exist?("#{dir}/#{subdir}")
+      end
+    end
+    File.write(importmap_path, "#{importmap}#{pins}")
+  end
+
+  step "Registrando Stimulus controllers reutilizables en app/javascript/controllers/index.js..."
+  controllers_index_path = "app/javascript/controllers/index.js"
+  controllers_index = File.read(controllers_index_path)
+
+  unless controllers_index.include?("vendor/clavisco/overlay")
+    # Only the components meant to be used as-is (registered directly under a Stimulus
+    # identifier). `base` and `tabulator` are abstract base classes meant to be *extended*
+    # by product-specific controllers instead (see their pages in "Guías para desarrollo"),
+    # so they're intentionally not registered here.
+    reusable_controllers = {
+      "overlay"              => ["vendor/clavisco/overlay/controllers/overlay_controller", "OverlayController"],
+      "slide-search"         => ["vendor/clavisco/slide-search/controllers/slide_search_controller", "SlideSearchController"],
+      "action-buttons"       => ["vendor/clavisco/action-buttons/controllers/action_buttons_controller", "ActionButtonsController"],
+      "skeleton"             => ["vendor/clavisco/skeleton/controllers/skeleton_controller", "SkeletonController"],
+      "notifications"        => ["vendor/clavisco/notification-center/controllers/notifications_controller", "NotificationsController"],
+      "rpt-parameters-modal" => ["vendor/clavisco/rptmng-menu/controllers/rpt_parameters_modal_controller", "RptParametersModalController"],
+      "rpt-send-email-modal" => ["vendor/clavisco/rptmng-menu/controllers/rpt_send_email_modal_controller", "RptSendEmailModalController"]
+    }
+    if uses_sap
+      reusable_controllers["dynamics-udfs-presentation"] =
+        ["vendor/clavisco/dynamics-udfs-presentation/controllers/dynamics_udfs_presentation_controller", "DynamicsUdfsPresentationController"]
+    end
+
+    registration = +"\n// ── Clavisco vendor controllers (reusable as-is) ─────────────────────────────\n"
+    reusable_controllers.each do |identifier, (import_path, class_name)|
+      registration << %(import #{class_name} from "#{import_path}"\n)
+      registration << %(application.register("#{identifier}", #{class_name})\n\n)
+    end
+    registration << <<~JS
+      // `base` (BaseSlideController) and `tabulator` (TabulatorController) are abstract —
+      // extend them in your own product-specific controllers instead of registering them
+      // directly. See "Guías para desarrollo" (Confluence) for examples.
+    JS
+
+    File.write(controllers_index_path, "#{controllers_index}#{registration}")
+  end
+end
+
+# ── 10. Copy .env.example → .env ──────────────────────────────────────────────
+
+unless File.exist?(".env")
+  require "securerandom"
+  env_content = File.read(".env.example")
+  env_content.gsub!(/^SECRET_KEY_BASE=.*$/, "SECRET_KEY_BASE=#{SecureRandom.hex(64)}")
+  # OIDC_CLIENT_ID es el codigo del producto en Keycloak (Seccion 2.3 del estandar),
+  # igual en los 3 ambientes - no hay razon para que cada developer lo escriba a mano.
+  env_content.gsub!(/^OIDC_CLIENT_ID=.*$/, "OIDC_CLIENT_ID=#{product_name}")
+  File.write(".env", env_content)
+  step "Creado .env con SECRET_KEY_BASE generado automáticamente y OIDC_CLIENT_ID=#{product_name}."
+end
+
+system("git submodule update --init --recursive", exception: false)
+
+# ── 11. Bundle + DB ────────────────────────────────────────────────────────────
+
+banner "Instalando dependencias..."
+system("bundle install", exception: false)
+
+banner "Creando base de datos..."
+system("bundle exec rails db:create db:migrate", exception: false)
+
+# ── 12. RSpec ──────────────────────────────────────────────────────────────────
+
+unless File.exist?(".rspec")
+  File.write(".rspec", "--require spec_helper\n--format documentation\n")
+end
+
+# ── 12b. Spec de protección contra binstubs corruptos (Ruby LSP) ────────────
+#
+# La extensión VSCode "Ruby LSP" a veces reescribe bin/rails apuntándolo a su
+# propio Gemfile temporal (.ruby-lsp/Gemfile, que está en .gitignore y no
+# existe fuera de la máquina del developer). Si eso se commitea sin querer, el
+# binstub no falla ruidosamente: en algunos casos imprime la ayuda de `rails` y
+# sale con exit 0 sin ejecutar nada — y como el entrypoint del contenedor corre
+# `./bin/rails db:prepare`, el contenedor arrancaría "sano" sin haber migrado
+# nada. Este spec corre con el resto de la suite (bundle exec rspec), tanto en
+# la máquina del developer como en CI — no depende de un paso aparte en el
+# workflow. Ver CLAVISCO-PLATFORM-STANDARDS.md Sección 11.
+
+banner "Agregando spec de protección de binstubs (Ruby LSP)..."
+
+binstubs_spec_path = "spec/binstubs_spec.rb"
+if File.exist?(binstubs_spec_path)
+  step "#{binstubs_spec_path} ya existe — se deja como está."
+else
+  File.write(binstubs_spec_path, <<~'RUBY')
+    # frozen_string_literal: true
+
+    require "rails_helper"
+
+    # Guarda contra un problema real y silencioso: la extensión VSCode "Ruby LSP"
+    # a veces reescribe bin/rails apuntándolo a su propio Gemfile temporal
+    # (.ruby-lsp/Gemfile), que está en .gitignore y no existe fuera de la máquina
+    # del developer — ni en CI ni en el contenedor de producción. Si eso llega a
+    # commitearse, el binstub no falla ruidosamente: en algunos casos imprime la
+    # ayuda de `rails` y sale con éxito (exit 0) sin ejecutar nada. Ver
+    # CLAVISCO-PLATFORM-STANDARDS.md Sección 11 para el detalle completo.
+    RSpec.describe "Binstubs" do
+      it "bin/rails es el binstub de Rails, no el de Bundler" do
+        content = File.read(Rails.root.join("bin/rails"))
+
+        expect(content).not_to include("This file was generated by Bundler"),
+          "bin/rails es el binstub de Bundler (probablemente regenerado por la " \
+          "extensión Ruby LSP). Restaure el binstub de Rails: debe definir " \
+          "APP_PATH y requerir config/boot."
+        expect(content).to include("APP_PATH")
+      end
+
+      it "ningún binstub apunta su BUNDLE_GEMFILE a .ruby-lsp/Gemfile" do
+        rotos = Dir[Rails.root.join("bin/*")].select do |path|
+          File.file?(path) && File.read(path) =~ /ENV\["BUNDLE_GEMFILE"\].*\.ruby-lsp/
+        end
+
+        expect(rotos).to be_empty,
+          "Estos binstubs apuntan su BUNDLE_GEMFILE a .ruby-lsp/Gemfile, que no " \
+          "existe fuera de la máquina del developer: #{rotos.join(', ')}. Corrija " \
+          "reemplazando '../.ruby-lsp/Gemfile' por '../Gemfile' en cada uno."
+      end
+    end
+  RUBY
+  step "Creado #{binstubs_spec_path} — corre con `bundle exec rspec`, en la máquina del developer y en CI."
+end
+
+# ── 13. CI/CD: GitHub Actions + Kamal + GHCR ─────────────────────────────────
+#
+# `rails new` ya genero config/deploy.yml, .kamal/secrets, Dockerfile y
+# .dockerignore (Kamal viene por defecto desde Rails 8), pero con valores
+# placeholder genericos (registry localhost:5555, IP de servidor de ejemplo,
+# sin proxy, .kamal/secrets sin una fuente real para RAILS_MASTER_KEY /
+# KAMAL_REGISTRY_PASSWORD). Se ajustan aqui para dejarlos listos para el
+# estandar Clavisco: GitHub Actions + Kamal + GitHub Container Registry
+# (GHCR), validado de punta a punta contra un servidor real en
+# clavisco-deploy-poc (2026-08-18/19).
+
+banner "Configurando CI/CD (GitHub Actions + Kamal + GHCR)..."
+
+# -- config/deploy.yml --------------------------------------------------------
+
+deploy_yml_path = "config/deploy.yml"
+if File.exist?(deploy_yml_path)
+  deploy_yml = File.read(deploy_yml_path)
+  original_deploy_yml = deploy_yml.dup
+
+  # image: por defecto Kamal usa el nombre de la app sin namespace, lo cual en
+  # GHCR publicaria bajo la cuenta personal que autentique el push, no bajo el
+  # org clavisco. El namespace "clavisco/" va AQUI (no en registry.server, que
+  # ya aporta "ghcr.io/") - ponerlo en los dos lados da una referencia
+  # duplicada "ghcr.io/ghcr.io/..." y el pull falla en silencio (bug real
+  # encontrado 2026-08-18).
+  deploy_yml.sub!(/^image: #{Regexp.escape(product_name)}$/, <<~PATCH.chomp)
+    # Nombre del contenedor - SIN el host del registro (eso lo aporta registry.server
+    # de abajo). Kamal arma la referencia final concatenando registry.server + image;
+    # ponerle "ghcr.io/" aqui tambien da "ghcr.io/ghcr.io/..." (bug real encontrado
+    # 2026-08-18, el pull fallaba silenciosamente contra ese path duplicado). El org
+    # (clavisco) SI va aqui, porque es la ruta del repositorio dentro de GHCR (no el host).
+    image: clavisco/#{product_name}
+  PATCH
+
+  # servers: el servidor de gestion suele solo ser alcanzable por una red
+  # privada (ej. Tailscale), no por su IP publica/WAN (patron confirmado con
+  # Sistemas 2026-08-18: puerto 22 cerrado en la IP WAN). La IP NO se
+  # hardcodea ni se deja como placeholder en el archivo - se referencia via
+  # ERB a DEPLOY_TAILSCALE_IP (misma logica que KAMAL_REGISTRY_USERNAME mas
+  # abajo), para que exista un solo lugar (la Variable de GitHub) donde vive -
+  # sin archivo Y secret/variable que puedan desincronizarse.
+  deploy_yml.sub!(<<~DEFAULT.chomp, <<~PATCH.chomp)
+    servers:
+      web:
+        - 192.168.0.1
+      # job:
+      #   hosts:
+      #     - 192.168.0.1
+      #   cmd: bin/jobs
+  DEFAULT
+    # Deploy a este/estos servidores. Si el servidor de gestion solo es alcanzable
+    # por una red privada (ej. Tailscale) y no por su IP publica/WAN - patron comun
+    # en la infraestructura de Sistemas (confirmado 2026-08-18: puerto 22 cerrado en
+    # la IP WAN, SSH de gestion solo via Tailscale) - usa aqui la IP de esa red
+    # privada, no la WAN. El trafico HTTP/HTTPS de la app en si puede seguir
+    # llegando por la WAN una vez el dominio este listo (ver proxy: mas abajo) -
+    # son dos rutas de red distintas.
+    #
+    # La IP viene de la variable de entorno DEPLOY_TAILSCALE_IP (real, del
+    # proceso - Kamal renderiza este archivo con ERB antes de parsear el YAML).
+    # En CI viene de vars.DEPLOY_TAILSCALE_IP (repo, distinta por servidor/cliente
+    # - ver .github/workflows/deploy.yml); en local hay que exportarla a mano
+    # antes de correr bin/kamal.
+    servers:
+      web:
+        - "<%= ENV['DEPLOY_TAILSCALE_IP'] %>"
+      # job:
+      #   hosts:
+      #     - "<%= ENV['DEPLOY_TAILSCALE_IP'] %>"
+      #   cmd: bin/jobs
+  PATCH
+
+  # proxy: se deja comentado (el dominio lo provisiona Sistemas por producto),
+  # pero con la guia real de Cloudflare/SSL aprendida probando contra un
+  # servidor real - para que el siguiente developer no tenga que redescubrirla.
+  deploy_yml.sub!(<<~DEFAULT.chomp, <<~PATCH.chomp)
+    # Enable SSL auto certification via Let's Encrypt and allow for multiple apps on a single web server.
+    # If used with Cloudflare, set encryption mode in SSL/TLS setting to "Full" to enable CF-to-app encryption.
+    #
+    # Using an SSL proxy like this requires turning on config.assume_ssl and config.force_ssl in production.rb!
+    #
+    # Don't use this when deploying to multiple web servers (then you have to terminate SSL at your load balancer).
+    #
+    # proxy:
+    #   ssl: true
+    #   host: app.example.com
+  DEFAULT
+    # Proxy interno de Kamal (kamal-proxy) - dominio pendiente de que Sistemas
+    # provisione el/los subdominio(s)/ANAME hacia la IP WAN del servidor. Una
+    # vez que existan, descomenta y sigue esta guia (validada de punta a punta
+    # en clavisco-deploy-poc, 2026-08-18/20).
+    #
+    # host: NO se hardcodea - viene de la variable de entorno DEPLOY_HOST. A
+    # diferencia de DEPLOY_TAILSCALE_IP (Variable de REPO, un solo servidor
+    # fisico para los 3 ambientes), DEPLOY_HOST debe ser una Variable de
+    # ENVIRONMENT de GitHub (dev/test/prod) - cada ambiente necesita su propio
+    # subdominio (ej. <producto>dev.clavisco.com / <producto>test.clavisco.com
+    # / <producto>.clavisco.com), y el job de .github/workflows/deploy.yml que
+    # corre contra ese Environment resuelve el valor correcto solo via
+    # vars.DEPLOY_HOST (las Variables de Environment le ganan a las de
+    # repo/org si hubiera choque de nombre) - sin tener que tocar este archivo
+    # por ambiente.
+    #
+    # Si el dominio queda detras de Cloudflare con el proxy activado (nube
+    # naranja), confirma el modo de cifrado real en el panel de Cloudflare (no
+    # asumas "Flexible" por defecto - un caso real resulto ser "Full", ver
+    # clavisco-deploy-poc, 2026-08-19): en "Flexible", Cloudflare termina el
+    # TLS publico y le habla al origen (kamal-proxy) por HTTP plano -> usa
+    # ssl: false aqui. En "Full" o "Full (strict)", Cloudflare SI exige TLS
+    # real contra el origen -> usa ssl: true (kamal-proxy necesitara su propio
+    # certificado, Let's Encrypt por defecto).
+    #
+    # Con ssl: true, agrega tambien ssl_redirect: true - kamal-proxy escucha en
+    # 80 Y 443 a la vez, pero NO redirige HTTP a HTTPS solo por ssl: true (es
+    # una bandera aparte, confirmado en lib/kamal/configuration/proxy.rb de
+    # basecamp/kamal: "tls-redirect": proxy_config.dig("ssl_redirect")). Y
+    # habilita config.assume_ssl / config.force_ssl en
+    # config/environments/production.rb (el propio comentario default de
+    # Rails ya lo pedia - facil de pasar por alto).
+    #
+    # proxy:
+    #   ssl: true
+    #   ssl_redirect: true
+    #   host: "<%= ENV['DEPLOY_HOST'] %>"
+  PATCH
+
+  # registry: estandar Clavisco es GHCR, no el localhost:5555 de ejemplo. El
+  # username NO se hardcodea - se referencia via ERB a una variable de entorno
+  # real (Kamal renderiza config/deploy.yml con ERB antes de parsear el YAML,
+  # confirmado leyendo lib/kamal/configuration.rb en github.com/basecamp/kamal,
+  # 2026-08-19). Desde 2026-08-20 existe una cuenta de servicio dedicada del
+  # org para esto - ver el comentario del patch de abajo.
+  deploy_yml.sub!(<<~DEFAULT.chomp, <<~PATCH.chomp)
+    registry:
+      # Alternatives: hub.docker.com / registry.digitalocean.com / ghcr.io / ...
+      server: localhost:5555
+
+      # Needed for authenticated registries.
+      # username: your-user
+
+      # Always use an access token rather than real password when possible.
+      # password:
+      #   - KAMAL_REGISTRY_PASSWORD
+  DEFAULT
+    # Estandar Clavisco: GitHub Container Registry (GHCR), autenticado con la
+    # cuenta de servicio dedicada automatizaciones.devops@clavisco.com (con
+    # licencia propia en el org - ya NO se usa ninguna cuenta personal), con
+    # dos Personal Access Tokens separados (principio de minimo privilegio):
+    #   - deploy-get-submodules-contents (fine-grained, Contents: Read-only,
+    #     All repositories) -> secrets.SUBMODULES_TOKEN
+    #   - deploy-push-pull-ghcr-packages (classic, solo read:packages +
+    #     write:packages, SIN scope repo) -> secrets.KAMAL_REGISTRY_PASSWORD
+    # GHCR no soporta tokens fine-grained (confirmado en la documentacion
+    # oficial de GitHub) - por eso el de paquetes tuvo que ser classic. Tanto
+    # el username (variable KAMAL_REGISTRY_USERNAME) como ambos tokens ya
+    # existen a nivel de ORGANIZACION en GitHub - un repo nuevo los hereda
+    # automaticamente, sin crear nada aqui (ver "Proximos pasos" al final de
+    # este script). El username NO se hardcodea - viene de la variable de
+    # entorno KAMAL_REGISTRY_USERNAME (real, no de .kamal/secrets - Kamal
+    # renderiza el ERB de este archivo con el ENV real del proceso, antes de
+    # cargar .kamal/secrets). En CI viene de vars.KAMAL_REGISTRY_USERNAME (ver
+    # .github/workflows/deploy.yml); en local hay que exportarla a mano antes
+    # de correr bin/kamal.
+    registry:
+      server: ghcr.io
+
+      username: "<%= ENV['KAMAL_REGISTRY_USERNAME'] %>"
+
+      # Nunca el valor real aqui - siempre por referencia a .kamal/secrets-common.
+      password:
+        - KAMAL_REGISTRY_PASSWORD
+  PATCH
+
+  # env: viene comentado por default (los ejemplos DB_HOST/RAILS_MASTER_KEY del propio
+  # Kamal). La Seccion 9 de CLAVISCO-PLATFORM-STANDARDS.md ya define el set real de
+  # variables de producto (OIDC/Sentry/Licensing) y la Seccion 9.1 ya documenta el bug
+  # real que pasa si esto queda sin descomentar (encontrado en EMA, agosto 2026:
+  # OIDC_CLIENT_SECRET nunca declarado aqui - login roto en produccion sin error
+  # visible). clear: no sensibles (Organization/Repository/Environment variable segun
+  # el alcance - ver Seccion 11.4 y "Proximos pasos" mas abajo). secret: siempre
+  # *_SECRET/*_PASSWORD/*_KEY/*_TOKEN (regla de nomenclatura de la 9.1), resueltos en
+  # .kamal/secrets-common al momento del deploy - nunca texto plano aqui. Ninguna se
+  # hardcodea en Ruby - la Seccion 2.3 exige que cambiar de proveedor OIDC sea un
+  # cambio de configuracion, nunca de codigo.
+  deploy_yml.sub!(<<~DEFAULT.chomp, <<~PATCH.chomp)
+    # Inject ENV variables into containers (secrets come from .kamal/secrets).
+    #
+    # env:
+    #   clear:
+    #     DB_HOST: 192.168.0.2
+    #   secret:
+    #     - RAILS_MASTER_KEY
+  DEFAULT
+    # OIDC_DOMAIN/OIDC_PROVIDER: Organization variable (mismo Keycloak para todo
+    # Clavisco - OIDC_PROVIDER tiene override de repo/Environment para el caso
+    # excepcional de Auth0). OIDC_CLIENT_ID: Repository variable (codigo del
+    # producto, igual en los 3 ambientes). OIDC_REALM/OIDC_CLIENT_SECRET/SENTRY_DSN/
+    # LICENSE_PUBLIC_KEY: Environment variable/secret (varian por cliente/ambiente).
+    env:
+      clear:
+        OIDC_DOMAIN: "<%= ENV['OIDC_DOMAIN'] %>"
+        OIDC_PROVIDER: "<%= ENV['OIDC_PROVIDER'] %>"
+        OIDC_CLIENT_ID: "<%= ENV['OIDC_CLIENT_ID'] %>"
+        OIDC_REALM: "<%= ENV['OIDC_REALM'] %>"
+        OIDC_AUDIENCE: "<%= ENV['OIDC_AUDIENCE'] %>"
+        SENTRY_DSN: "<%= ENV['SENTRY_DSN'] %>"
+        SENTRY_TUNNEL_PROJECT_IDS: "<%= ENV['SENTRY_TUNNEL_PROJECT_IDS'] %>"
+        LICENSE_PATH: "<%= ENV['LICENSE_PATH'] %>"
+      secret:
+        - RAILS_MASTER_KEY
+        - OIDC_CLIENT_SECRET
+        - LICENSE_PUBLIC_KEY
+  PATCH
+
+  if deploy_yml == original_deploy_yml
+    step "  ADVERTENCIA: config/deploy.yml no coincidio con el formato esperado - revisalo a mano."
+  else
+    File.write(deploy_yml_path, deploy_yml)
+    step "config/deploy.yml configurado para GHCR (registry/image/servers/proxy/env)."
+  end
+end
+
+# -- config/deploy.<destination>.yml (dev/test/prod) --------------------------
+#
+# Kamal usa 3 "destinations" (bin/kamal ... -d dev/test/prod) en vez de 3
+# servidores o 3 repos distintos - un solo config/deploy.yml + un override por
+# destination. Estos 3 archivos son OBLIGATORIOS en cuanto el workflow use -d:
+# Kamal siempre los busca y falla con "Configuration file not found" si falta
+# alguno (lib/kamal/configuration.rb, destination_config_file/load_config_file)
+# - a diferencia de .kamal/secrets.<destino>, que si no existe simplemente se
+# salta sin error.
+#
+# El unico contenido real que necesitan hoy es volumes: - Kamal NO namespacea
+# los volumes por destination automaticamente (a diferencia de containers/
+# servicios, ver Role#container_prefix en lib/kamal/configuration/role.rb) -
+# sin esto, dev/test/prod compartirian literalmente el mismo volumen Docker
+# (mismo SQLite, mismos archivos de Active Storage). Confirmado en
+# lib/kamal/configuration.rb que el merge de destinations reemplaza arrays
+# completos (ActiveSupport Hash#deep_merge!, sin bloque para concatenar) - no
+# los concatena - asi que el volumes: de cada archivo sustituye por completo
+# al de config/deploy.yml, sin quedar ambos montados a la vez. Bug real
+# encontrado y corregido en clavisco-deploy-poc, 2026-08-20.
+#
+# ⚠️ El volumen tiene que cubrir DONDE DE VERDAD viven los archivos SQLite, no
+# donde los pone el `rails new` generico. El default de Rails 8 es
+# storage/<env>.sqlite3, pero un producto puede haber personalizado
+# config/database.yml para separar primary/queue/cache en su PROPIO archivo
+# bajo db/ (ver el comentario de config/database.yml sobre solid_queue) - en
+# ese caso storage/ NO alcanza: cada redeploy usa un filesystem nuevo para
+# /rails/db y BORRA la base de produccion completa, en silencio, sin ningun
+# error (encontrado en cl_cl_mlt_fec_app antes del primer deploy real,
+# 2026-09-16 - el proyecto ya tenia queue en db/development_queue.sqlite3
+# cuando este script corrio). Por eso se detecta el patron ANTES de generar
+# el volumen: si database.yml referencia "db/", se monta tambien /rails/db.
+db_uses_db_folder = File.exist?("config/database.yml") &&
+                     File.read("config/database.yml").match?(%r{database:\s*db/})
+
+%w[dev test prod].each do |destination|
+  destination_path = "config/deploy.#{destination}.yml"
+  next if File.exist?(destination_path)
+
+  extra_volume = db_uses_db_folder ? %(  - "#{product_name}_db_#{destination}:/rails/db"\n) : ""
+
+  File.write(destination_path, <<~DESTINATION)
+    # Override de destination para Kamal (`bin/kamal ... -d #{destination}`).
+    # Ver el comentario en bin/setup (seccion CI/CD) sobre por que este
+    # archivo es obligatorio y por que hace falta declarar volumes: aqui.
+    volumes:
+    #{extra_volume}  - "#{product_name}_storage_#{destination}:/rails/storage"
+  DESTINATION
+end
+step "config/deploy.dev.yml, deploy.test.yml y deploy.prod.yml creados (volumes por destination)."
+
+# -- .kamal/secrets-common -----------------------------------------------------
+#
+# IMPORTANTE (confirmado leyendo el codigo fuente real de Kamal en
+# github.com/basecamp/kamal, 2026-08-19): este archivo NO es un script de bash.
+# Kamal lo procesa con el gem "dotenv" (Dotenv::Parser), con su propio soporte
+# limitado para "$(...)":
+#   - "${VAR:-default}" (valor por defecto de bash) NO funciona - el
+#     sustituidor de variables de dotenv reconoce "${VAR" pero no exige que le
+#     siga un "}", y deja basura literal como "-}" pegada al valor final.
+#   - Bloques "if/then/fi" en lineas separadas se ignoran por completo - dotenv
+#     solo entiende lineas con forma KEY=valor.
+#   - Lo que SI funciona: referencias simples "$VAR" (sin llaves, sin ":-")
+#     dentro de un unico "$(...)", combinadas con logica real de shell adentro
+#     (&&, ||, test), porque eso se ejecuta con un shell real una vez que
+#     dotenv ya resolvio los "$VAR" sueltos correctamente.
+#
+# Nota: este archivo alimenta el mecanismo de "secret-por-referencia" de Kamal
+# (registry/password, env/secret, etc.) - es un mecanismo DISTINTO del ERB que
+# Kamal usa para renderizar el resto de config/deploy.yml (ver username arriba).
+# El username NO pasa por aqui porque Kamal no soporta ese campo en el
+# mecanismo de secrets - por eso usa ERB directo contra el ENV real en su lugar.
+#
+# El nombre es ".kamal/secrets-common", NO ".kamal/secrets" a secas: con
+# destinations (-d dev/test/prod), Kamal deja de leer el archivo base por
+# completo. Confirmado leyendo el codigo fuente real (lib/kamal/secrets.rb,
+# metodo secrets_filenames):
+#   ["#{@secrets_path}-common", "#{@secrets_path}#{".#{@destination}" if @destination}"]
+# Es decir, con -d dev busca EXACTAMENTE ".kamal/secrets-common" y
+# ".kamal/secrets.dev" - nunca ".kamal/secrets" a secas. Esto causo un fallo
+# real la primera vez que se probo ("Secret 'KAMAL_REGISTRY_PASSWORD' not
+# found, no secret files (.kamal/secrets-common, .kamal/secrets.dev)
+# provided" - clavisco-deploy-poc, 2026-08-20). Como RAILS_MASTER_KEY y
+# KAMAL_REGISTRY_PASSWORD son iguales en los 3 ambientes hoy, este archivo
+# "-common" es suficiente - no hace falta crear .kamal/secrets.dev / .test /
+# .prod a menos que algun secreto necesite un valor DISTINTO por ambiente en
+# el futuro.
+kamal_secrets_path = ".kamal/secrets-common"
+legacy_kamal_secrets_path = ".kamal/secrets"
+if File.exist?(legacy_kamal_secrets_path) && !File.exist?(kamal_secrets_path)
+  FileUtils.mv(legacy_kamal_secrets_path, kamal_secrets_path)
+end
+if File.exist?(kamal_secrets_path)
+  File.write(kamal_secrets_path, <<~SECRETS)
+    # Secrets defined here are available for reference under registry/password, env/secret, builder/secrets,
+    # and accessories/*/env/secret in config/deploy.yml. All secrets should be pulled from either
+    # password manager, ENV, or a file. DO NOT ENTER RAW CREDENTIALS HERE! This file needs to be safe for git.
+
+    # Prioriza la variable de entorno RAILS_MASTER_KEY (como llega en CI, desde
+    # secrets.RAILS_MASTER_KEY de GitHub Actions) si no esta vacia; si no, cae al
+    # archivo config/master.key (uso local, en la maquina de un developer). Ese
+    # archivo nunca existe en CI (esta gitignored, nunca se commitea) - por eso en
+    # GitHub Actions la unica fuente real es el secret.
+    RAILS_MASTER_KEY=$(test -n "$RAILS_MASTER_KEY" && printf '%s' "$RAILS_MASTER_KEY" || cat config/master.key 2>/dev/null)
+
+    # PAT de GitHub con scope read:packages + write:packages, para que el servidor pueda
+    # hacer `docker pull` de una imagen privada en ghcr.io/clavisco/* y para que Kamal
+    # pueda hacer `docker push` desde el runner de GitHub Actions. NUNCA el valor literal
+    # aqui - se exporta como variable de entorno antes de correr cualquier comando de
+    # kamal. En GitHub Actions esto viene de secrets.KAMAL_REGISTRY_PASSWORD (ver
+    # .github/workflows/deploy.yml). Referencia simple "$VAR" sin llaves - es la forma
+    # que dotenv procesa limpio.
+    KAMAL_REGISTRY_PASSWORD=$KAMAL_REGISTRY_PASSWORD
+  SECRETS
+  step ".kamal/secrets-common configurado (RAILS_MASTER_KEY + KAMAL_REGISTRY_PASSWORD, a prueba de dotenv)."
+end
+
+# -- .github/workflows/deploy.yml ----------------------------------------------
+#
+# `rails new` no genera esto (solo trae config/deploy.yml/.kamal/Dockerfile) -
+# el workflow de deploy es enteramente estandar Clavisco: 3 destinations
+# (dev/test/prod) + GitHub Environments + build-once-deploy-many, construido y
+# validado de punta a punta contra un servidor real en clavisco-deploy-poc
+# (2026-08-18/20).
+
+FileUtils.mkdir_p(".github/workflows")
+File.write(".github/workflows/deploy.yml", <<~WORKFLOW)
+  name: Deploy
+
+  # dev se despliega automatico en cada push a main (build UNA sola vez +
+  # deploy). Test y prod NO tienen "required reviewers" nativo de GitHub - esa
+  # funcion es EXCLUSIVA de GitHub Enterprise para repos PRIVADOS (confirmado
+  # en la documentacion oficial 2026-08-20; en Free/Pro/Team solo viene
+  # incluida para repos publicos, sin importar el plan). El gate real para
+  # test/prod es que alguien con permiso de escritura dispare esto a mano
+  # (workflow_dispatch).
+  on:
+    push:
+      branches: [main]
+    workflow_dispatch:
+      inputs:
+        destination:
+          description: >-
+            Promover el commit actual a este destination/Environment. Nunca
+            reconstruye: usa la imagen que el job "build" (disparado por el
+            ultimo push a main) ya construyo y publico. El dropdown lista
+            TODOS los Environments configurados en el repo (Settings >
+            Environments) - "test"/"prod" en un producto de un solo cliente,
+            o "<cliente>-<ambiente>" en uno multicliente. "dev" tambien
+            aparece aqui porque asi funciona el input type "environment" de
+            GitHub (lista todos, no se puede excluir uno puntual) -
+            dispararlo a mano no rompe nada, solo esta fuera de su uso normal
+            (se despliega solo, por push).
+          type: environment
+          required: true
+        version:
+          description: >-
+            SHA especifico a promover (opcional, para casos como un
+            rollback). Vacio = usa el commit desde el que se dispara esto (el
+            HEAD actual de main, si no cambiaste la rama en "Use workflow
+            from").
+          required: false
+
+  permissions:
+    contents: read
+    packages: write
+
+  concurrency:
+    group: deploy-\${{ github.ref }}
+    cancel-in-progress: true
+
+  jobs:
+    # Build + deploy a dev: SOLO en push automatico a main. Aqui se construye
+    # la UNICA imagen que test/prod van a promover despues via el job
+    # "promote" - nunca la reconstruyen (--skip-push en promote, ver mas
+    # abajo).
+    build:
+      if: github.event_name == 'push'
+      runs-on: ubuntu-latest
+      outputs:
+        version: \${{ steps.version.outputs.version }}
+      # environment: dev SOLO para que Kamal pueda renderizar proxy.host via
+      # ERB sin que quede vacio (build push no contacta ningun servidor ni usa
+      # este valor realmente - es puramente para que la config cargue sin
+      # errores).
+      environment: dev
+      steps:
+        # submodules: recursive + token: actions/checkout no trae git
+        # submodules por default, y el GITHUB_TOKEN automatico no alcanza a
+        # otros repos del org donde viven (aunque sean del mismo ClavisCo) -
+        # necesita un PAT con acceso de lectura (secret de organizacion
+        # SUBMODULES_TOKEN, ya existe a nivel de org - no hay que crearlo).
+        - name: Checkout code
+          uses: actions/checkout@v6
+          with:
+            submodules: recursive
+            token: \${{ secrets.SUBMODULES_TOKEN }}
+
+        # Kamal NO construye desde el checkout de este job: internamente hace
+        # su propio `git clone --recurse-submodules` a un directorio temporal
+        # (para garantizar que el build corresponda exactamente a un commit,
+        # ignorando cambios sin commitear). Ese clone nuevo no hereda el token
+        # que actions/checkout uso (ese token solo quedo configurado para
+        # ESTE repo/checkout, no globalmente) - por eso el clone interno de
+        # Kamal falla con "could not read Username for 'https://github.com'"
+        # al bajar los submodulos si no se hace esto. Con este git config
+        # global, CUALQUIER clone que el runner haga contra github.com
+        # (incluido el de Kamal) usa el mismo token.
+        - name: Configure git for private submodule access (used by Kamal's internal clone)
+          run: git config --global url."https://x-access-token:\${{ secrets.SUBMODULES_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+        - name: Set up Ruby
+          uses: ruby/setup-ruby@v1
+          with:
+            bundler-cache: true
+
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@v3
+
+        - name: Compute version (SHA del commit - mismo tag para dev/test/prod)
+          id: version
+          run: echo "version=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+        - name: Build and push image (una sola vez)
+          env:
+            RAILS_MASTER_KEY: \${{ secrets.RAILS_MASTER_KEY }}
+            KAMAL_REGISTRY_PASSWORD: \${{ secrets.KAMAL_REGISTRY_PASSWORD }}
+            KAMAL_REGISTRY_USERNAME: \${{ vars.KAMAL_REGISTRY_USERNAME }}
+            DEPLOY_TAILSCALE_IP: \${{ vars.DEPLOY_TAILSCALE_IP }}
+            DEPLOY_HOST: \${{ vars.DEPLOY_HOST }}
+            OIDC_DOMAIN: \${{ vars.OIDC_DOMAIN }}
+            OIDC_PROVIDER: \${{ vars.OIDC_PROVIDER }}
+            OIDC_CLIENT_ID: \${{ vars.OIDC_CLIENT_ID }}
+            OIDC_CLIENT_SECRET: \${{ secrets.OIDC_CLIENT_SECRET }}
+            OIDC_REALM: \${{ vars.OIDC_REALM }}
+            OIDC_AUDIENCE: \${{ vars.OIDC_AUDIENCE }}
+            SENTRY_DSN: \${{ vars.SENTRY_DSN }}
+            SENTRY_TUNNEL_PROJECT_IDS: \${{ vars.SENTRY_TUNNEL_PROJECT_IDS }}
+            LICENSE_PUBLIC_KEY: \${{ secrets.LICENSE_PUBLIC_KEY }}
+            LICENSE_PATH: \${{ vars.LICENSE_PATH }}
+          run: bin/kamal build push
+
+    deploy-dev:
+      if: github.event_name == 'push'
+      needs: build
+      environment: dev
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout code
+          # Sin submodules: este job no construye (--skip-push abajo), solo
+          # hace que el servidor haga docker pull de la imagen ya construida.
+          uses: actions/checkout@v6
+
+        - name: Set up Ruby
+          uses: ruby/setup-ruby@v1
+          with:
+            bundler-cache: true
+
+        # Si el servidor de deploy solo es alcanzable por la red privada de
+        # Tailscale (patron comun - ver config/deploy.yml), este paso hace que
+        # el runner efimero se una a la tailnet de la org antes del SSH.
+        # Requiere una auth key generada en
+        # https://login.tailscale.com/admin/settings/keys, guardada como
+        # secret de ORGANIZACION TS_AUTHKEY (una sola tailnet para toda la
+        # org - no depende del servidor/producto - ya existe, no hay que
+        # crearlo). Si el servidor de este producto SI es alcanzable directo
+        # (sin Tailscale), este paso se puede quitar.
+        - name: Connect to Tailscale
+          uses: tailscale/github-action@v3
+          with:
+            authkey: \${{ secrets.TS_AUTHKEY }}
+
+        - name: Configure SSH agent
+          uses: webfactory/ssh-agent@v0.9.0
+          with:
+            # Llave dedicada solo para que este workflow llegue al servidor
+            # de deploy - NUNCA la llave personal de nadie. Se genera aparte
+            # y su publica se agrega al servidor. Es un secret DE REPO (hoy
+            # se entrega una llave por servidor, y aunque dos productos
+            # compartan servidor, es mas simple mantenerla por repo que armar
+            # un secret de organizacion con visibilidad restringida a repos
+            # seleccionados).
+            ssh-private-key: \${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+        # Sin -H: ssh-keyscan -H hashea el hostname en known_hosts (mas
+        # seguro si el archivo se filtra), pero Net::SSH (la libreria Ruby
+        # que usa Kamal, distinta al cliente ssh de OpenSSH) no siempre
+        # matchea bien esas entradas hasheadas y tira HostKeyMismatch aunque
+        # la llave sea la correcta.
+        - name: Trust the deploy server's host key
+          run: ssh-keyscan \${{ vars.DEPLOY_TAILSCALE_IP }} >> ~/.ssh/known_hosts
+
+        - name: Deploy to dev (imagen ya construida por el job "build" - sin rebuild)
+          env:
+            RAILS_MASTER_KEY: \${{ secrets.RAILS_MASTER_KEY }}
+            KAMAL_REGISTRY_PASSWORD: \${{ secrets.KAMAL_REGISTRY_PASSWORD }}
+            KAMAL_REGISTRY_USERNAME: \${{ vars.KAMAL_REGISTRY_USERNAME }}
+            DEPLOY_TAILSCALE_IP: \${{ vars.DEPLOY_TAILSCALE_IP }}
+            DEPLOY_HOST: \${{ vars.DEPLOY_HOST }}
+            OIDC_DOMAIN: \${{ vars.OIDC_DOMAIN }}
+            OIDC_PROVIDER: \${{ vars.OIDC_PROVIDER }}
+            OIDC_CLIENT_ID: \${{ vars.OIDC_CLIENT_ID }}
+            OIDC_CLIENT_SECRET: \${{ secrets.OIDC_CLIENT_SECRET }}
+            OIDC_REALM: \${{ vars.OIDC_REALM }}
+            OIDC_AUDIENCE: \${{ vars.OIDC_AUDIENCE }}
+            SENTRY_DSN: \${{ vars.SENTRY_DSN }}
+            SENTRY_TUNNEL_PROJECT_IDS: \${{ vars.SENTRY_TUNNEL_PROJECT_IDS }}
+            LICENSE_PUBLIC_KEY: \${{ secrets.LICENSE_PUBLIC_KEY }}
+            LICENSE_PATH: \${{ vars.LICENSE_PATH }}
+          # `bin/kamal deploy`, no `setup`: `setup` solo aporta 2 cosas que
+          # `deploy` no hace - instalar Docker si falta, y arrancar accessories
+          # (`accessories:` en config/deploy.yml, ninguno definido hoy). Ambas
+          # asumen que el servidor todavia no existe - y el servidor de este
+          # producto lo entrega Sistemas ya con Docker instalado, antes de que
+          # exista cualquier deploy (confirmado 2026-08-20). `setup` queda como
+          # comando MANUAL de excepcion (nunca en CI) para el dia que un
+          # servidor nuevo no tenga Docker, o el producto agregue accessories -
+          # se corre una sola vez a mano, no se vuelve parte del pipeline.
+          run: bin/kamal deploy --skip-push --version=\${{ needs.build.outputs.version }} -d dev
+
+    # Promocion manual a test o prod: dispara SOLO con workflow_dispatch
+    # (nunca con push a main), y NUNCA reconstruye - usa el commit actual (o
+    # el SHA que se indique en "version") que el job "build" ya construyo y
+    # publico antes. Este es el gate real: alguien con permiso de escritura
+    # decide el momento y lo dispara a mano (ver el comentario del "on:"
+    # arriba).
+    promote:
+      if: github.event_name == 'workflow_dispatch'
+      # El Environment es directamente el valor elegido en el input
+      # "destination" (type: environment, dropdown dinamico segun Settings >
+      # Environments del repo) - ver el comentario de ese input arriba.
+      environment: \${{ github.event.inputs.destination }}
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v6
+
+        - name: Set up Ruby
+          uses: ruby/setup-ruby@v1
+          with:
+            bundler-cache: true
+
+        - name: Connect to Tailscale
+          uses: tailscale/github-action@v3
+          with:
+            authkey: \${{ secrets.TS_AUTHKEY }}
+
+        - name: Configure SSH agent
+          uses: webfactory/ssh-agent@v0.9.0
+          with:
+            ssh-private-key: \${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+        - name: Trust the deploy server's host key
+          run: ssh-keyscan \${{ vars.DEPLOY_TAILSCALE_IP }} >> ~/.ssh/known_hosts
+
+        - name: Promote to target environment (misma imagen del job "build" - sin rebuild)
+          env:
+            RAILS_MASTER_KEY: \${{ secrets.RAILS_MASTER_KEY }}
+            KAMAL_REGISTRY_PASSWORD: \${{ secrets.KAMAL_REGISTRY_PASSWORD }}
+            KAMAL_REGISTRY_USERNAME: \${{ vars.KAMAL_REGISTRY_USERNAME }}
+            DEPLOY_TAILSCALE_IP: \${{ vars.DEPLOY_TAILSCALE_IP }}
+            DEPLOY_HOST: \${{ vars.DEPLOY_HOST }}
+            OIDC_DOMAIN: \${{ vars.OIDC_DOMAIN }}
+            OIDC_PROVIDER: \${{ vars.OIDC_PROVIDER }}
+            OIDC_CLIENT_ID: \${{ vars.OIDC_CLIENT_ID }}
+            OIDC_CLIENT_SECRET: \${{ secrets.OIDC_CLIENT_SECRET }}
+            OIDC_REALM: \${{ vars.OIDC_REALM }}
+            OIDC_AUDIENCE: \${{ vars.OIDC_AUDIENCE }}
+            SENTRY_DSN: \${{ vars.SENTRY_DSN }}
+            SENTRY_TUNNEL_PROJECT_IDS: \${{ vars.SENTRY_TUNNEL_PROJECT_IDS }}
+            LICENSE_PUBLIC_KEY: \${{ secrets.LICENSE_PUBLIC_KEY }}
+            LICENSE_PATH: \${{ vars.LICENSE_PATH }}
+          # deploy, no setup - ver el comentario en el job "deploy-dev" de
+          # arriba (misma decision, aplica igual a test y prod). El "-d" usa
+          # el mismo input que "environment:" arriba (repetido porque
+          # "environment:" no puede leer un output de step).
+          run: bin/kamal deploy --skip-push --version=\${{ github.event.inputs.version || github.sha }} -d \${{ github.event.inputs.destination }}
+WORKFLOW
+step ".github/workflows/deploy.yml creado (build + deploy-dev + promote, GitHub Environments dev/test/prod)."
+
+# NOTA para quien migre un servicio Kamal EXISTENTE (sin destinations) a este
+# patron: kamal-proxy solo permite que un servicio a la vez controle un host
+# ("Error: host settings conflict with another service"). Con destinations,
+# el nombre del servicio cambia (Kamal le agrega el destination, ej.
+# "app-web-prod" en vez de "app-web") - el servicio VIEJO debe liberarse a
+# mano en el servidor antes del primer `-d prod` (`docker exec kamal-proxy
+# kamal-proxy remove <servicio-viejo>` + `docker rm -f` del contenedor viejo).
+# Caso real y ya resuelto asi en clavisco-deploy-poc, 2026-08-20 - no aplica a
+# un producto nuevo sin deploys previos.
+
+# ── Done ──────────────────────────────────────────────────────────────────────
+
+puts "\n#{BOLD}#{GREEN}✓ Proyecto #{product_name} listo.#{RESET}"
+puts
+puts "  Próximos pasos:"
+puts "  1. Completa las variables en .env (OIDC_DOMAIN/OIDC_REALM si usas Keycloak,"
+puts "     SENTRY_DSN, LICENSE_PUBLIC_KEY - OIDC_CLIENT_ID ya quedó en \"#{product_name}\")"
+puts "  2. bundle exec rails server"
+puts "  3. Agrega tus endpoints en config/routes.rb"
+puts "  4. Crea tus controllers heredando de Api::AuthorizedController"
+puts "  5. Da de alta roles/permisos en db/seeds.rb (tablas de la Sección 4.1, ya migradas)"
+puts "  6. Revisa 'Guías para desarrollo' en Confluence por cada submodule que actives"
+puts
+puts "  Para el deploy (GitHub Actions + Kamal + GHCR + destinations dev/test/prod),"
+puts "  antes del primer push a main / 'Run workflow':"
+puts "  a. Da acceso directo (Read basta) al repo a la cuenta de servicio"
+puts "     automatizaciones.devops (Settings → Collaborators). El Team 'desarrollo' NO"
+puts "     cubre automáticamente los repos nuevos - hay que agregarlo por repo (bug real"
+puts "     encontrado y corregido en clavisco-deploy-poc, 2026-08-20)."
+puts "  b. Crea 3 GitHub Environments (Settings → Environments): dev, test, prod. Cada uno"
+puts "     necesita SUS PROPIAS variable/secret de servidor y de producto (nunca a nivel"
+puts "     de repo, ni siquiera si hoy los 3 comparten el mismo servidor físico - así"
+puts "     ningún ambiente depende implícitamente de un valor de repo, y evita la"
+puts "     confusión de una variable con el mismo nombre existiendo en repo Y en algunos"
+puts "     Environments sí y otros no):"
+puts "     - Variable DEPLOY_HOST: el subdominio que te dé Sistemas para ese ambiente"
+puts "       (ej. appdev.clavisco.com / apptest.clavisco.com / app.clavisco.com) - luego"
+puts "       descomenta el bloque proxy: en config/deploy.yml (ya usa ENV['DEPLOY_HOST'])."
+puts "     - Variable DEPLOY_TAILSCALE_IP: la IP de Tailscale del servidor (la misma IP"
+puts "       en los 3 Environments si hoy comparten servidor físico)."
+puts "     - Secret DEPLOY_SSH_PRIVATE_KEY: la llave dedicada al servidor (la misma llave"
+puts "       en los 3 Environments si hoy comparten servidor físico)."
+puts "     - Variable OIDC_REALM: el cliente/customer de ese ambiente (Sección 2.3 -"
+puts "       nunca el producto) y Secret OIDC_CLIENT_SECRET - ambos varían por cliente."
+puts "     - Variable SENTRY_DSN: un DSN por deployment (Sección 10)."
+puts "     - Secret LICENSE_PUBLIC_KEY: la llave pública RSA de licenciamiento de ese"
+puts "       cliente."
+puts "  c. Variable DE ESTE REPO (Settings → Secrets and variables → Actions → Variables):"
+puts "     - OIDC_CLIENT_ID=#{product_name} (ya quedó en tu .env local - créala también"
+puts "       en GitHub con este mismo valor, igual en los 3 ambientes)."
+puts "  d. Secret DE ESTE REPO (Settings → Secrets and variables → Actions → Secrets):"
+puts "     - RAILS_MASTER_KEY (compartida entre ambientes - mismo código/credenciales)."
+puts "  e. Lo que YA NO hay que crear - existen a nivel de ORGANIZACIÓN, cualquier repo"
+puts "     los hereda automáticamente:"
+puts "     - Secrets: SUBMODULES_TOKEN, KAMAL_REGISTRY_PASSWORD, TS_AUTHKEY"
+puts "     - Variables: KAMAL_REGISTRY_USERNAME, OIDC_DOMAIN, OIDC_PROVIDER (default"
+puts "       \"keycloak\" - sobreescribe con una Variable de repo/Environment del mismo"
+puts "       nombre solo si este producto es la excepción documentada que usa Auth0)."
+puts "     (los 3 primeros PATs/keys viven en la cuenta de servicio"
+puts "     automatizaciones.devops@clavisco.com - ver comentario de registry: en"
+puts "     config/deploy.yml)"
+puts "  f. Agrega la llave pública SSH dedicada al servidor de deploy"
+puts "  g. Confirma con Sistemas que el servidor ya tiene Docker instalado antes del"
+puts "     primer deploy - el workflow solo usa 'bin/kamal deploy', nunca 'bin/kamal"
+puts "     setup' (ese queda como comando manual de excepción, fuera de CI, para el día"
+puts "     que un servidor nuevo no tenga Docker o el producto agregue accessories)."
+puts "  h. Primer deploy: push a main (build + deploy a dev, automático). Para promover"
+puts "     a test/prod: pestaña Actions → Deploy → Run workflow → elige el destination"
+puts "     del dropdown (lista los Environments del repo: dev, test, prod, o"
+puts "     <cliente>-<ambiente> en un producto multicliente)."
+puts

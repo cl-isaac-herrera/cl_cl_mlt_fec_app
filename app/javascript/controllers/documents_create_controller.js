@@ -1,7 +1,7 @@
 import { Controller } from '@hotwired/stimulus'
 import { TabulatorFull as Tabulator } from 'tabulator-tables'
 import { Storage, SStore } from 'vendor/clavisco/core'
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale'
 import {
   DOC_TYPE, DocTypes, IdentificationType, ForeignNonResidentIdentification,
@@ -155,7 +155,15 @@ export default class extends Controller {
     document.body.appendChild(this.#cabysTooltipEl)
 
     if (!this.#companyId) {
-      showToast('Seleccione una compañía antes de crear un documento.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Seleccione una compañía antes de crear un documento.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     this.#loadInitialData()
@@ -213,7 +221,12 @@ export default class extends Controller {
       this.#unitServicio = unitS?.UnidadMedidaType ?? []
     } catch (err) {
       this.#hideLoading()
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al cargar datos', message: err.message })
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al cargar datos',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      })
       return
     }
     this.#hideLoading()
@@ -495,13 +508,32 @@ export default class extends Controller {
           'cl-sl-pagination-page-size': String(size),
         },
       })
-      if (!json.Data) { showToast(json.Message || 'Error al obtener clientes', 'error'); return { data: [], last_page: 1 } }
+      if (!json.Data) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: json.Message || 'Error al obtener clientes',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
+        return { data: [], last_page: 1 }
+      }
       const total    = parseInt(headers.get('cl-sl-pagination-records-count') ?? '0') || json.Data.length
       this.#customerTotalRecords = total
       const lastPage = Math.max(1, Math.ceil(total / size))
       return { data: json.Data, last_page: lastPage }
     } catch (err) {
-      showToast(`Error al buscar clientes: ${err.message}`, 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `Error al buscar clientes: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return { data: [], last_page: 1 }
     }
   }
@@ -514,7 +546,18 @@ export default class extends Controller {
   }
 
   #selectCustomer(c) {
-    if (!this.#validateCustomerType(c)) { showToast('El tipo de identificación del cliente no es válido para este documento', 'warning'); return }
+    if (!this.#validateCustomerType(c)) {
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'El tipo de identificación del cliente no es válido para este documento',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
+      return
+    }
     this.rcprNombreTarget.value = this.#customerName(c)
     this.rcprIdeTipoTarget.value = c.RcprIdeTipo ?? c.IdType ?? '01'
     this.rcprIdeNumeroTarget.value = c.RcprIdeNumero ?? c.IdNumber ?? ''
@@ -604,8 +647,15 @@ export default class extends Controller {
     if (this.#references.length <= 1) return
     const ref = this.#references.find(r => r.id === id)
     if (ref && ref.tipoDoc) {
-      const ok = await confirm('¿Está seguro de eliminar esta referencia?', 'Eliminar referencia')
-      if (ok) { this.#references = this.#references.filter(r => r.id !== id); this.#renderReferences() }
+      const { isConfirmed } = await Swal.fire({
+        title: 'Eliminar referencia',
+        text: '¿Está seguro de eliminar esta referencia?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Confirmar',
+        cancelButtonText: 'Cancelar'
+      })
+      if (isConfirmed) { this.#references = this.#references.filter(r => r.id !== id); this.#renderReferences() }
     } else { this.#references = this.#references.filter(r => r.id !== id); this.#renderReferences() }
   }
   setReferenceToday(event) { const ref = this.#references.find(r => r.id === Number(event.currentTarget.dataset.id)); if (ref) { ref.fechaEmision = this.#today(); this.#renderReferences() } }
@@ -797,13 +847,32 @@ export default class extends Controller {
           'cl-sl-pagination-page-size': String(size),
         },
       })
-      if (!json.Data) { showToast(json.Message || 'Error al obtener productos', 'error'); return { data: [], last_page: 1 } }
+      if (!json.Data) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: json.Message || 'Error al obtener productos',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
+        return { data: [], last_page: 1 }
+      }
       const total    = parseInt(headers.get('cl-sl-pagination-records-count') ?? '0') || json.Data.length
       this.#productTotalRecords = total
       const lastPage = Math.max(1, Math.ceil(total / size))
       return { data: json.Data, last_page: lastPage }
     } catch (err) {
-      showToast(`Error al buscar productos: ${err.message}`, 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `Error al buscar productos: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return { data: [], last_page: 1 }
     }
   }
@@ -945,7 +1014,7 @@ export default class extends Controller {
   onExoInstitucionChange() { this.#showTarget(this.exoInstitucionOtroWrapTarget, this.exoInstitucionTarget.value === '99') }
   onRegaliaChange() {
     if (this.itemRegaliaTarget.checked && (!this.itemPriceTarget.value || Number(this.itemPriceTarget.value) <= 0)) {
-      showToast('Digite el precio antes de marcar como regalía', 'warning'); this.itemRegaliaTarget.checked = false; return
+      Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Digite el precio antes de marcar como regalía', showConfirmButton: false, timer: 3000, timerProgressBar: true }); this.itemRegaliaTarget.checked = false; return
     }
     this.recalcItem()
   }
@@ -963,11 +1032,11 @@ export default class extends Controller {
     this.surtidoTarifaTarget.value = '13'
   }
   addSurtido() {
-    if (this.#surtidos.length >= MAX_SURTIDOS) { showToast(`Máximo ${MAX_SURTIDOS} surtidos`, 'warning'); return }
+    if (this.#surtidos.length >= MAX_SURTIDOS) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: `Máximo ${MAX_SURTIDOS} surtidos`, showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
     const cant = Number(this.surtidoCantidadTarget.value) || 0
     const precio = Number(this.surtidoPrecioTarget.value) || 0
-    if (!this.surtidoCabysTarget.value.trim() || !this.surtidoDescripcionTarget.value.trim()) { showToast('CABYS y descripción del surtido son requeridos', 'warning'); return }
-    if (cant <= 0 || precio < 0) { showToast('Cantidad/precio del surtido inválidos', 'warning'); return }
+    if (!this.surtidoCabysTarget.value.trim() || !this.surtidoDescripcionTarget.value.trim()) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'CABYS y descripción del surtido son requeridos', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
+    if (cant <= 0 || precio < 0) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Cantidad/precio del surtido inválidos', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
     this.#surtidos.push({
       id: ++this.#surtidoSeq,
       Cabys: this.surtidoCabysTarget.value.trim(),
@@ -1093,12 +1162,12 @@ export default class extends Controller {
   }
 
   saveItem() {
-    if (!this.itemCabysTarget.value.trim()) { showToast('El código CABYS es requerido', 'warning'); return }
-    if (!this.itemCodeTarget.value.trim()) { showToast('El código del ítem es requerido', 'warning'); return }
-    if (!this.itemDescriptionTarget.value.trim()) { showToast('La descripción es requerida', 'warning'); return }
+    if (!this.itemCabysTarget.value.trim()) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'El código CABYS es requerido', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
+    if (!this.itemCodeTarget.value.trim()) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'El código del ítem es requerido', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
+    if (!this.itemDescriptionTarget.value.trim()) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'La descripción es requerida', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
     const r = this.#computeItem()
-    if (r.qty <= 0) { showToast('La cantidad debe ser mayor a 0', 'warning'); return }
-    if (!this.#unitCode()) { showToast('La unidad de medida es requerida', 'warning'); return }
+    if (r.qty <= 0) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'La cantidad debe ser mayor a 0', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
+    if (!this.#unitCode()) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'La unidad de medida es requerida', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
     const price = Number(this.itemPriceTarget.value) || 0
 
     const item = {
@@ -1322,11 +1391,27 @@ export default class extends Controller {
       const data = await this.#apiFetch(`/api/Numbering/GetTerminalSucursal?companyId=${this.#companyId}&docType=${this.#docType}`)
       this.#terminalSucList = data?.Data ?? data ?? []
     } catch (err) {
-      showToast(`Error al cargar terminales: ${err.message}`, 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `Error al cargar terminales: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     if (!this.#terminalSucList.length) {
-      showToast('No hay terminales/sucursales configuradas. Configure la numeración.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'No hay terminales/sucursales configuradas. Configure la numeración.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       setTimeout(() => { Turbo.visit('/configurations/numbering') }, 1500)
       return
     }
@@ -1358,17 +1443,59 @@ export default class extends Controller {
     const refCodigo = this.#references[0]?.codigo
     if (this.#docType !== DOC_TYPE.FEC || refCodigo !== CodigoRefList[0].Id) {
       const zero = this.#items.filter(i => Number(i.PrecioUnitario) === 0 && !i.Regalia && (!i.ImpCodigo || i.ImpCodigo === '' || i.ImpCodigo === '00'))
-      if (zero.length) { showToast('Existen ítems con precio 0 sin impuesto válido. Revíselos antes de continuar.', 'info'); return }
+      if (zero.length) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'info',
+          title: 'Existen ítems con precio 0 sin impuesto válido. Revíselos antes de continuar.',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
+        return
+      }
     }
     const errors = this.#validateDocument()
-    if (errors.length) { showToast(errors[0], 'warning'); return }
-    if (this.#terminal === '0' || this.#sucursal === '0') { showToast('Seleccione Terminal y Sucursal', 'warning'); this.termSucSelectTarget.focus(); return }
+    if (errors.length) {
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: errors[0],
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
+      return
+    }
+    if (this.#terminal === '0' || this.#sucursal === '0') {
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Seleccione Terminal y Sucursal',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
+      this.termSucSelectTarget.focus()
+      return
+    }
     this.#showLoading('Creando documento, espere por favor…')
     try {
       const resp = await this.#apiFetch('/api/Documents/CreateDocumentManual', { method: 'POST', body: JSON.stringify(this.#buildPayload()), headers: { 'API': 'ApiFEUrl' } })
       this.#hideLoading()
       this.#handleCreateResponse(resp)
-    } catch (err) { this.#hideLoading(); showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al crear el documento', message: err.message || 'Error al crear el documento' }) }
+    } catch (err) {
+      this.#hideLoading()
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al crear el documento',
+        text: err.message || 'Error al crear el documento',
+        confirmButtonText: 'Aceptar'
+      })
+    }
   }
 
   #validateDocument() {
@@ -1704,8 +1831,23 @@ export default class extends Controller {
     } else if (resp?.result === true && resp?.HaciendaInfo == null) {
       this.#docId = resp.DocId ?? 0
       this.btnSubmitLabelTarget.textContent = 'Reenviar'
-      showAlert({ type: ALERT_TYPES.WARNING, title: 'Documento creado con errores', message: resp?.errorInfo?.Message ?? resp?.Message ?? '' })
-    } else { showToast(resp?.errorInfo?.Message ?? resp?.Message ?? 'Error al crear el documento', 'error') }
+      Swal.fire({
+        icon: 'warning',
+        title: 'Documento creado con errores',
+        text: resp?.errorInfo?.Message ?? resp?.Message ?? '',
+        confirmButtonText: 'Aceptar'
+      })
+    } else {
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: resp?.errorInfo?.Message ?? resp?.Message ?? 'Error al crear el documento',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
+    }
   }
 
   closeSuccessModal() { this.successModalTarget.classList.add('hidden'); window.location.reload() }
@@ -1794,17 +1936,17 @@ export default class extends Controller {
 
   saveRepPayment() {
     const desc = this.repPaymentDescTarget.value.trim()
-    if (!desc) { showToast('La descripción es requerida', 'warning'); return }
+    if (!desc) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'La descripción es requerida', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
     const monto = Number(this.repPaymentMontoTarget.value) || 0
-    if (monto <= 0) { showToast('El monto de pago debe ser mayor a 0', 'warning'); return }
-    if (!this.repPaymentTaxTypeTarget.value) { showToast('El tipo de impuesto es requerido', 'warning'); return }
+    if (monto <= 0) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'El monto de pago debe ser mayor a 0', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
+    if (!this.repPaymentTaxTypeTarget.value) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'El tipo de impuesto es requerido', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
     if (this.repPaymentTaxTypeTarget.value === '99') {
       const otros = this.repPaymentTaxOtroTarget.value.trim()
-      if (!otros) { showToast('El detalle del impuesto es requerido cuando el tipo es Otros', 'warning'); return }
-      if (otros.length < 5) { showToast('El detalle del impuesto debe tener al menos 5 caracteres', 'warning'); return }
+      if (!otros) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'El detalle del impuesto es requerido cuando el tipo es Otros', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
+      if (otros.length < 5) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'El detalle del impuesto debe tener al menos 5 caracteres', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
     }
     const taxRate = Number(this.repPaymentTaxRateTarget.value) || 0
-    if (this.repPaymentTaxTypeTarget.value === '99' && taxRate < 0) { showToast('El % de impuesto debe ser 0 o mayor', 'warning'); return }
+    if (this.repPaymentTaxTypeTarget.value === '99' && taxRate < 0) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'El % de impuesto debe ser 0 o mayor', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
     const impMonto = parseFloat((monto * (taxRate / 100)).toFixed(5))
     const lineTotal = parseFloat((monto + impMonto).toFixed(5))
     const item = {

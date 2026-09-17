@@ -62,3 +62,29 @@ application.register('session-sync',    SessionSyncController)
 application.register('users',           UsersController)
 application.register('udfs',            UdfsController)
 application.register('user-menu',       UserMenuController)
+
+// ── Clavisco vendor controllers (reusable as-is) ─────────────────────────────
+import OverlayController from "vendor/clavisco/overlay/controllers/overlay_controller"
+application.register("overlay", OverlayController)
+
+import SlideSearchController from "vendor/clavisco/slide-search/controllers/slide_search_controller"
+application.register("slide-search", SlideSearchController)
+
+import ActionButtonsController from "vendor/clavisco/action-buttons/controllers/action_buttons_controller"
+application.register("action-buttons", ActionButtonsController)
+
+import SkeletonController from "vendor/clavisco/skeleton/controllers/skeleton_controller"
+application.register("skeleton", SkeletonController)
+
+import NotificationsController from "vendor/clavisco/notification-center/controllers/notifications_controller"
+application.register("notifications", NotificationsController)
+
+// `rpt-parameters-modal` / `rpt-send-email-modal` (vendor/clavisco/rptmng-menu) y
+// `dynamics-udfs-presentation` (vendor/clavisco/dynamics-udfs-presentation) NO se registran
+// todavia: solo se trajo el index.js de esos paquetes, sin su carpeta controllers/. Un import
+// a un archivo que no existe en disco rompe TODO el grafo de modulos ES (importmap no puede
+// resolver el specifier) y deja la app muda despues del login. Ver TODOS.md → Frontend.
+
+// `base` (BaseSlideController) and `tabulator` (TabulatorController) are abstract —
+// extend them in your own product-specific controllers instead of registering them
+// directly. See "Guías para desarrollo" (Confluence) for examples.

@@ -16,3 +16,9 @@
 [submodule "vendor/clavisco/sap_udfs"]
 	path = vendor/clavisco/sap_udfs
 	url = https://github.com/ClavisCo/cl-sap-udfs-ruby.git
+[submodule "vendor/clavisco/licensing"]
+	path = vendor/clavisco/licensing
+	url = https://github.com/ClavisCo/cl-licensing-ruby.git
+[submodule "vendor/clavisco/app_menu"]
+	path = vendor/clavisco/app_menu
+	url = https://github.com/ClavisCo/cl-app-menu-ruby.git

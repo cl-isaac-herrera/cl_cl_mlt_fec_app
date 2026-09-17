@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { Storage, SStore } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 import { showLoading, hideLoading } from 'vendor/clavisco/overlay';
 
@@ -68,10 +68,11 @@ export default class extends TabulatorController {
 
   search() {
     if (!this.#isValidDateRange()) {
-      showAlert({
-        type: ALERT_TYPES.INFO,
+      Swal.fire({
+        icon: 'info',
         title: 'Rango de fechas inválido',
-        message: 'La fecha de búsqueda es futura o la fecha de inicio es posterior a la fecha final. Por favor, verifica y ajusta las fechas para asegurarte de que el rango de búsqueda sea válido.',
+        text: 'La fecha de búsqueda es futura o la fecha de inicio es posterior a la fecha final. Por favor, verifica y ajusta las fechas para asegurarte de que el rango de búsqueda sea válido.',
+        confirmButtonText: 'Aceptar'
       });
       return;
     }
@@ -185,14 +186,38 @@ export default class extends TabulatorController {
       }));
 
       if (records.length) {
-        showToast('Logs de recepción obtenidos con éxito', 'success');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'Logs de recepción obtenidos con éxito',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       } else {
-        showToast(json.Message || 'No se encontraron registros', 'info');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'info',
+          title: json.Message || 'No se encontraron registros',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       }
 
       return { data: records, last_page: Math.max(1, lastPage) };
     } catch (err) {
-      showToast(err.message || 'Error al obtener los logs', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al obtener los logs',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return { data: [], last_page: 1 };
     } finally {
       this.table?.clearAlert();
@@ -243,7 +268,15 @@ export default class extends TabulatorController {
       link.click();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      showToast(err.message || 'Error al descargar el email', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al descargar el email',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } finally {
       hideLoading();
     }

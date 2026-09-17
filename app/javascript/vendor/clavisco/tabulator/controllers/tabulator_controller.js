@@ -1,5 +1,6 @@
 import { Controller } from "@hotwired/stimulus"
 import { TabulatorFull as Tabulator } from "tabulator-tables"
+import Swal from "sweetalert2"
 
 /**
  * Base Tabulator Controller
@@ -493,7 +494,15 @@ export default class extends Controller {
    * @param {string} message Message text
    */
   showToast(type, message) {
-    document.dispatchEvent(new CustomEvent("toast", { detail: { message, type }, bubbles: true }))
+    Swal.fire({
+      toast: true,
+      position: "top-end",
+      icon: type,
+      title: message,
+      showConfirmButton: false,
+      timer: 3000,
+      timerProgressBar: true
+    })
   }
 
   /**

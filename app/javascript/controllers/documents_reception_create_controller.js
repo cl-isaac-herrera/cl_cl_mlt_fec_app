@@ -1,7 +1,7 @@
 import { Controller } from '@hotwired/stimulus'
 import { TabulatorFull as Tabulator } from 'tabulator-tables'
 import { Storage, SStore } from 'vendor/clavisco/core'
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 import { showLoading, hideLoading } from 'vendor/clavisco/overlay'
 import { TABULATOR_LOCALE, TABULATOR_LANGS } from 'controllers/tabulator_locale'
 
@@ -200,11 +200,27 @@ export default class extends Controller {
   // ── Carga inicial paralela ─────────────────────────────
   async #loadAll() {
     if (!this.#companyId) {
-      showToast('No tiene una compañía seleccionada. Seleccione una antes de continuar.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'No tiene una compañía seleccionada. Seleccione una antes de continuar.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     if (this.#docTypeXML === null) {
-      showToast('Tipo de documento XML no especificado', 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'Tipo de documento XML no especificado',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       Turbo.visit(this.#getReturnUrl())
       return
     }
@@ -250,7 +266,12 @@ export default class extends Controller {
       this.#populateActivitySelect()
     } catch (err) {
       this.#hideLoading()
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al cargar datos', message: err.message })
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al cargar datos',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      })
       return
     }
 
@@ -266,7 +287,15 @@ export default class extends Controller {
       if (udfsRes?.Data)         this.#dynamicUdfs   = udfsRes.Data
       if (docTypeBaseRes?.Data)  this.#docTypeList   = docTypeBaseRes.Data
     } catch (err) {
-      showToast(`Advertencia al cargar catálogos: ${err.message}`, 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: `Advertencia al cargar catálogos: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     }
 
     // Flag de empresa: ¿ejecutar match automático al abrir el tab Líneas?
@@ -305,7 +334,15 @@ export default class extends Controller {
     } else {
       const result = await this.#openCurrencyMismatchModal(xmlCur)
       if (!result?.code) {
-        showToast('Debe seleccionar una moneda para continuar', 'warning')
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: 'Debe seleccionar una moneda para continuar',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
         return
       }
       if (result.save) {
@@ -487,7 +524,15 @@ export default class extends Controller {
       this.#updateDocDueDate()
       this.#updateHeaderFormValidity()
     } else if (this.#xmlDoc.LicTradNum) {
-      showToast(`El proveedor ${this.#xmlDoc.CardName} con la cédula ${this.#xmlDoc.LicTradNum} no existe en SAP`, 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: `El proveedor ${this.#xmlDoc.CardName} con la cédula ${this.#xmlDoc.LicTradNum} no existe en SAP`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     }
   }
 
@@ -775,11 +820,19 @@ export default class extends Controller {
   }
 
   // ── Confirmación de borrado (siempre, 1 o varias filas) ───
-  #confirmDelete(count) {
+  async #confirmDelete(count) {
     const msg = count > 1
       ? `¿Está seguro de que desea eliminar las ${count} filas seleccionadas? Esta acción no se puede deshacer.`
       : '¿Está seguro de que desea eliminar esta fila? Esta acción no se puede deshacer.'
-    return confirm(msg, 'Eliminar')
+    const { isConfirmed } = await Swal.fire({
+      title: 'Eliminar',
+      text: msg,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    })
+    return isConfirmed
   }
 
   async #confirmAndRemoveSapLines(ids) {
@@ -1185,7 +1238,15 @@ export default class extends Controller {
   // ── Previsualización (acordeón) ────────────────────────
   async previewReceptDoc() {
     if (!this.#previewDocument) {
-      showToast('No hay documento para previsualizar. Cargue un documento primero.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'No hay documento para previsualizar. Cargue un documento primero.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     this.#fillPreviewPanel(this.#previewDocument)
@@ -1520,7 +1581,15 @@ export default class extends Controller {
     const rowId = Number(event.currentTarget.dataset.rowId)
     const line  = this.#xmlDoc?.DocReceptXMLLines?.find(l => l.RowId === rowId)
     if (!line || (line.Available ?? 0) <= 0) {
-      showToast('Esta línea ya está agregada', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Esta línea ya está agregada',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     this.#openItemSelectionForLine(line)
@@ -1528,7 +1597,15 @@ export default class extends Controller {
 
   #openItemSelectionForLine(line) {
     if ((line.Available ?? 0) <= 0) {
-      showToast('Esta línea ya está agregada', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Esta línea ya está agregada',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     this.#openItemSelectionForLines([line])
@@ -1540,7 +1617,15 @@ export default class extends Controller {
   #openItemSelectionForLines(lines) {
     const available = (lines ?? []).filter(l => (l.Available ?? 0) > 0)
     if (available.length === 0) {
-      showToast('Las líneas seleccionadas ya fueron agregadas completamente', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Las líneas seleccionadas ya fueron agregadas completamente',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -1616,11 +1701,27 @@ export default class extends Controller {
     const prjCode   = this.itemSelectProjectTarget.value
 
     if (!itemCode || !whsCode) {
-      showToast('Complete artículo y almacén', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Complete artículo y almacén',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     if (!isMulti && !enteredQty) {
-      showToast('Indique la cantidad', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Indique la cantidad',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -1685,7 +1786,15 @@ export default class extends Controller {
     })
 
     if (added === 0) {
-      showToast('No se agregó ninguna línea', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'No se agregó ninguna línea',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -1738,14 +1847,30 @@ export default class extends Controller {
       })
     } catch (err) {
       this.#hideLoading()
-      showToast(`Error al obtener las líneas automáticas: ${err.message}`, 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `Error al obtener las líneas automáticas: ${err.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     this.#hideLoading()
 
     const matchedLines = res?.Data?.DocumentsLines
     if (!Array.isArray(matchedLines)) {
-      showToast(res?.Message || 'Se produjo un error al obtener las líneas para realizar el match', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: res?.Message || 'Se produjo un error al obtener las líneas para realizar el match',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -1839,7 +1964,15 @@ export default class extends Controller {
       this.#renderApInvoiceLinesHeader()
       this.#calculateTotals()
     } else {
-      showToast('No se encontraron líneas para cargar automáticamente', 'info')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No se encontraron líneas para cargar automáticamente',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     }
   }
 
@@ -1894,7 +2027,15 @@ export default class extends Controller {
   #openOcSelectionForLines(lines) {
     const available = lines.filter(l => (l.Available ?? 0) > 0)
     if (available.length === 0) {
-      showToast('Las líneas seleccionadas ya fueron agregadas completamente', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Las líneas seleccionadas ya fueron agregadas completamente',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -2065,7 +2206,15 @@ export default class extends Controller {
   addSelectedOcLines() {
     const selectedRows = this.#otrosCargosTabulator?.getSelectedRows() ?? []
     if (selectedRows.length === 0) {
-      showToast('Seleccione al menos una línea', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Seleccione al menos una línea',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     const lines = selectedRows.map(r => {
@@ -2108,14 +2257,14 @@ export default class extends Controller {
 
     // Validaciones modo 1
     if (this.#freightChargesMode === 1) {
-      if (!itemCode) { showToast('Seleccione un artículo SAP', 'warning'); return }
-      if (!whsCode)  { showToast('Seleccione un almacén', 'warning');     return }
+      if (!itemCode) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Seleccione un artículo SAP', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
+      if (!whsCode)  { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Seleccione un almacén', showConfirmButton: false, timer: 3000, timerProgressBar: true });     return }
     }
 
     // Validar cantidad solo para selección individual
     if (!isMulti) {
       const qty = Number(this.ocQuantityTarget.value)
-      if (!qty || qty <= 0) { showToast('La cantidad debe ser mayor a 0', 'warning'); return }
+      if (!qty || qty <= 0) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'La cantidad debe ser mayor a 0', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
     }
 
     lines.forEach(line => {
@@ -2162,7 +2311,7 @@ export default class extends Controller {
         // ── Modo 2: ChargesAPInvoiceBase ──
         // ExpenseCode viene del select de cargos adicionales seleccionado por el usuario
         const expenseCode = Number(this.ocSelectFreightTarget.value || 0)
-        if (!expenseCode) { showToast('Seleccione un cargo adicional SAP', 'warning'); return }
+        if (!expenseCode) { Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Seleccione un cargo adicional SAP', showConfirmButton: false, timer: 3000, timerProgressBar: true }); return }
         const existing    = this.#otherChargeLines.find(c => c.ExpenseCode === expenseCode)
 
         if (existing) {
@@ -2289,7 +2438,15 @@ export default class extends Controller {
       const val = el?.value ?? ''
 
       if (!val && udf.IsRequired) {
-        showToast('Faltan datos requeridos en UDFs', 'warning')
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: 'Faltan datos requeridos en UDFs',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
         valid = false
       }
 
@@ -2323,10 +2480,15 @@ export default class extends Controller {
 
     if (this.#currentTotal >= low && this.#currentTotal <= high) return true
 
-    showToast(
-      `El monto de la factura (${this.#fmtMoney(this.#currentTotal, docCur)}) no coincide con el XML (${this.#fmtMoney(xmlTotal, docCur)}). Tolerancia: ${tolerance}`,
-      'warning'
-    )
+    Swal.fire({
+      toast: true,
+      position: 'top-end',
+      icon: 'warning',
+      title: `El monto de la factura (${this.#fmtMoney(this.#currentTotal, docCur)}) no coincide con el XML (${this.#fmtMoney(xmlTotal, docCur)}). Tolerancia: ${tolerance}`,
+      showConfirmButton: false,
+      timer: 3000,
+      timerProgressBar: true
+    })
     return false
   }
 
@@ -2337,12 +2499,28 @@ export default class extends Controller {
 
   async #doCreate(isDraft) {
     if (!this.#selectedSupplierId) {
-      showToast('El formulario contiene errores: proveedor requerido', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'El formulario contiene errores: proveedor requerido',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
     if (this.#docTypeXML !== DOC_TYPE_FACTURA) {
-      showToast('Solo se pueden crear facturas desde este módulo', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Solo se pueden crear facturas desde este módulo',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -2354,7 +2532,15 @@ export default class extends Controller {
     const receptAndCreate = this.#sendReceptAndApInv && this.#shouldRecept
     if (receptAndCreate && !this.#errorOnCreate) {
       if (!this.#validateReceptForm()) {
-        showToast('Verificar la información de la recepción, existen datos pendientes', 'warning')
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: 'Verificar la información de la recepción, existen datos pendientes',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
         return
       }
     }
@@ -2371,7 +2557,12 @@ export default class extends Controller {
       }
     } catch (err) {
       this.#hideLoading()
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al crear la factura', message: err.message || 'Error al crear la factura' })
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al crear la factura',
+        text: err.message || 'Error al crear la factura',
+        confirmButtonText: 'Aceptar'
+      })
     }
   }
 
@@ -2388,7 +2579,12 @@ export default class extends Controller {
         : `Documento número ${response.Data.DocNum} creado correctamente`
       this.#showSuccess(msg)
     } else {
-      showAlert({ type: ALERT_TYPES.WARNING, title: 'Aviso', message: response?.Message ?? 'Error desconocido' })
+      Swal.fire({
+        icon: 'warning',
+        title: 'Aviso',
+        text: response?.Message ?? 'Error desconocido',
+        confirmButtonText: 'Aceptar'
+      })
     }
   }
 
@@ -2423,16 +2619,40 @@ export default class extends Controller {
 
     if (!response?.Data) {
       this.#errorOnCreate = true
-      showToast(`Error: ${response?.Message ?? 'Error desconocido'}`, 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `Error: ${response?.Message ?? 'Error desconocido'}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     if (!response.Data.Reception) {
-      showToast(`Error: ${response?.Message}`, 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `Error: ${response?.Message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     if (!response.Data.ApInvoiceResponse) {
       this.#errorOnCreate = true
-      showToast(`Recepción creada #${response.Data.Reception.AcceptId} pero error en factura: ${response.Message}`, 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: `Recepción creada #${response.Data.Reception.AcceptId} pero error en factura: ${response.Message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 

@@ -1,6 +1,6 @@
 import { Controller } from '@hotwired/stimulus'
 import { Storage, SStore } from 'vendor/clavisco/core'
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 import { showLoading, hideLoading } from 'vendor/clavisco/overlay'
 
 // Constantes de dominio — mismas que Angular legacy
@@ -75,7 +75,15 @@ export default class extends Controller {
     // Defensa en profundidad: el botón se deshabilita en la UI sin permiso,
     // pero reverificamos aquí (ver CLAUDE.md §26).
     if (!this.#permissions.includes('S_ReceptDocs')) {
-      showToast('No cuenta con permisos para recepcionar documentos.', 'info')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para recepcionar documentos.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
     this.#resetForm()
@@ -134,7 +142,15 @@ export default class extends Controller {
       this.inputAdjuntoTarget.value = ''
       this.fileInputTarget.value = ''
       this.errorAdjuntoTarget.classList.remove('hidden')
-      showToast('Solo se permiten archivos .xml', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Solo se permiten archivos .xml',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     }
   }
 
@@ -255,17 +271,41 @@ export default class extends Controller {
 
   async onSubmit() {
     if (!this.#companyId || parseInt(this.#companyId) === 0) {
-      showToast('No posee seleccionada una compañía. Verifique seleccionar o crear una antes de continuar.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'No posee seleccionada una compañía. Verifique seleccionar o crear una antes de continuar.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
     if (!this.#selectedFile) {
-      showToast('Actualmente no es posible enviar el documento. Por favor, proceda a cargar un documento antes de intentar acceder a esta información.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Actualmente no es posible enviar el documento. Por favor, proceda a cargar un documento antes de intentar acceder a esta información.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
     if (!this.#validate()) {
-      showToast('El formulario contiene errores', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'El formulario contiene errores',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -297,16 +337,37 @@ export default class extends Controller {
       hideLoading()
 
       if (data?.result) {
-        showToast('Se procesó correctamente la petición', 'success')
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'Se procesó correctamente la petición',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
         this.closePanel()
         this.dispatch('done')   // documents-reception:done → recarga la tabla de receptions
       } else {
         const msg = data?.errorInfo?.Message ?? 'Error al procesar la recepción'
-        showToast(msg, 'warning')
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: msg,
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
       }
     } catch (err) {
       hideLoading()
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al enviar el documento', message: err.message || 'Error al enviar el documento' })
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al enviar el documento',
+        text: err.message || 'Error al enviar el documento',
+        confirmButtonText: 'Aceptar'
+      })
     }
   }
 
@@ -316,7 +377,15 @@ export default class extends Controller {
 
   async getPreview() {
     if (!this.#selectedFile) {
-      showToast('Actualmente no es posible visualizar los datos. Por favor, proceda a cargar un documento antes de intentar acceder a esta información.', 'warning')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'Actualmente no es posible visualizar los datos. Por favor, proceda a cargar un documento antes de intentar acceder a esta información.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return
     }
 
@@ -338,11 +407,24 @@ export default class extends Controller {
         this.#fillPreview(response.Data)
         this.#openPreview()
       } else {
-        showToast(response?.Message ?? 'No se pudo obtener la previsualización', 'warning')
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: response?.Message ?? 'No se pudo obtener la previsualización',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
       }
     } catch (err) {
       hideLoading()
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al obtener la previsualización', message: err.message || 'Error al obtener la previsualización' })
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al obtener la previsualización',
+        text: err.message || 'Error al obtener la previsualización',
+        confirmButtonText: 'Aceptar'
+      })
     }
   }
 

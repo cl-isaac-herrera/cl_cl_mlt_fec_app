@@ -1,6 +1,6 @@
 import { Controller } from '@hotwired/stimulus'
 import { Storage, SStore, getApiHeaders } from 'vendor/clavisco/core'
-import { showToast } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 
 /**
  * HomeController — Dashboard principal.
@@ -194,13 +194,26 @@ export default class extends Controller {
       const json = await this.#apiFetch('/api/certificate_alarm')
 
       if (json?.Data?.ShowAlarm) {
-        showToast(json.Data.SmsAlert, 'warning')
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: json.Data.SmsAlert,
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        })
       }
     } catch (error) {
-      showToast(
-        error.message || 'Error al obtener la fecha de expiracion del certificado',
-        'error'
-      )
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: error.message || 'Error al obtener la fecha de expiracion del certificado',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
     }
   }
 

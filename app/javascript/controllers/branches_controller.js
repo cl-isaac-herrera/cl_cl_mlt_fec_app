@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { SStore, getApiHeaders } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
@@ -200,7 +200,15 @@ export default class extends TabulatorController {
       this.#populateProvinceSelect();
       this.#populateFilterProvinciaSelect();
     } catch (err) {
-      showToast('Error al cargar datos de ubicación.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: 'Error al cargar datos de ubicación.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
@@ -237,7 +245,15 @@ export default class extends TabulatorController {
       // Tabulator se habilite o no.
       return { data: items, last_page: json.Data?.HasMore ? page + 1 : page };
     } catch (err) {
-      showToast(err.message || 'Error al cargar las sucursales.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar las sucursales.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.#lastPageRowCount = 0;
       return { data: [], last_page: 1 };
     }
@@ -259,7 +275,15 @@ export default class extends TabulatorController {
     // Defensa en profundidad: el botón se deshabilita sin permiso, pero
     // reverificamos aquí (ver CLAUDE.md §26).
     if (!this.#hasPerm('Configurations_Branches_Create')) {
-      showToast('No cuenta con permisos para crear sucursales.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para crear sucursales.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     this.#editingBranch = null;
@@ -272,7 +296,15 @@ export default class extends TabulatorController {
 
   async #openEditPanel(row) {
     if (!this.#hasPerm('Configurations_Branches_Update')) {
-      showToast('No cuenta con permisos para editar sucursales.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No cuenta con permisos para editar sucursales.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -286,14 +318,30 @@ export default class extends TabulatorController {
     try {
       const json = await this.#apiFetch(`/api/branches/${row.Code}`);
       if (!json.Data) {
-        showToast(json.Message || 'No se encontró la sucursal.', 'error');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: json.Message || 'No se encontró la sucursal.',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
         return;
       }
       this.#editingBranch = json.Data;
       this.#populateFormForEdit(json.Data);
       this.#openPanel();
     } catch (err) {
-      showToast(err.message || 'Error al cargar la sucursal.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar la sucursal.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
@@ -545,13 +593,26 @@ export default class extends TabulatorController {
     this.#setLoading(true);
     try {
       const json = await this.#apiFetch(url, { method, body: JSON.stringify(payload) });
-      showToast(json.Message || 'Sucursal guardada exitosamente.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: json.Message || 'Sucursal guardada exitosamente.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.closePanel();
       // `setData()` recarga desde el servidor con los filtros actuales; una
       // sucursal recién creada puede no entrar en ellos, y eso es correcto.
       this.table?.setData();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: msgErr, message: err.message });
+      await Swal.fire({
+        icon: 'error',
+        title: msgErr,
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.#setLoading(false);
     }

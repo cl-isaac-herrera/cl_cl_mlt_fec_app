@@ -1,0 +1,10 @@
+# Override de destination para Kamal (`bin/kamal ... -d prod`).
+# Ver el comentario en bin/setup (seccion CI/CD) sobre por que este
+# archivo es obligatorio y por que hace falta declarar volumes: aqui.
+#
+# DOS volumenes: ver el comentario completo en config/deploy.dev.yml. db/ guarda
+# las bases SQLite (primary/queue/cache) de este proyecto; storage/ es
+# FILES_BASE_PATH por default (CLAUDE.md #34).
+volumes:
+  - "fec_db_prod:/rails/db"
+  - "fec_storage_prod:/rails/storage"

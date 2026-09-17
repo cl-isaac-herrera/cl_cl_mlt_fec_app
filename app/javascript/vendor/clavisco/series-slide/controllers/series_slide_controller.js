@@ -1,5 +1,6 @@
 import BaseSlideController from "vendor/clavisco/base/controllers/base_slide_controller"
 import { getAPIHeaders } from "lib/api_helpers"
+import Swal from 'sweetalert2'
 
 /**
  * Series Selection Slide Panel Controller
@@ -283,11 +284,15 @@ export default class extends BaseSlideController {
   }
 
   showToast(message, type = "info") {
-    const event = new CustomEvent("toast", {
-      detail: { message, type },
-      bubbles: true
+    Swal.fire({
+      toast: true,
+      position: "top-end",
+      icon: type,
+      title: message,
+      showConfirmButton: false,
+      timer: 3000,
+      timerProgressBar: true
     })
-    document.dispatchEvent(event)
   }
 
   escapeHtml(text) {

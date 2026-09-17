@@ -1,7 +1,7 @@
 import { Controller } from '@hotwired/stimulus'
 import { TabulatorFull } from 'tabulator-tables'
 import { SStore, getApiHeaders } from 'vendor/clavisco/core'
-import { showToast } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2'
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale'
 
 /**
@@ -331,10 +331,26 @@ export default class extends Controller {
       if (response.ok) return true
 
       const body = await response.json().catch(() => ({}))
-      showToast(body?.Message || 'No se pudo seleccionar la compañía.', 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: body?.Message || 'No se pudo seleccionar la compañía.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return false
     } catch (error) {
-      showToast(`No se pudo seleccionar la compañía: ${error.message}`, 'error')
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: `No se pudo seleccionar la compañía: ${error.message}`,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      })
       return false
     }
   }

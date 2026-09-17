@@ -15,9 +15,6 @@ vendor/clavisco/
 │   └── index.js                # Storage, API helpers, utility functions
 ├── linker/                     # Pub/Sub event communication
 │   └── index.js                # publish, subscribe, flow
-├── alerts/                     # Toast and modal alerts
-│   ├── index.js                # Alert service exports
-│   └── controllers/            # Stimulus controller
 ├── table/                      # Data table component
 │   ├── index.js                # Module exports
 │   └── controllers/            # Stimulus controller
@@ -51,7 +48,6 @@ vendor/clavisco/
 |-----------|--------|-------------|
 | ✅ core | Done | Storage, API headers, utility functions |
 | ✅ linker | Done | Pub/Sub communication between components |
-| ✅ alerts | Done | Toast notifications and modal alerts |
 | ✅ table | Done | Data table with pagination, sorting, selection |
 | ✅ search-modal | Done | Modal search with API integration |
 | ✅ payment-modal | Done | Payment processing modal |
@@ -72,13 +68,12 @@ vendor/clavisco/
 // Import specific functions
 import { Storage, getApiHeaders, apiRequest } from 'vendor/clavisco/core'
 import { publish, subscribe } from 'vendor/clavisco/linker'
-import { showToast, success, error } from 'vendor/clavisco/alerts'
+import Swal from 'sweetalert2' // notificaciones y confirmaciones (CLAVISCO-PLATFORM-STANDARDS §5.1)
 import { open, close, showLoading, hideLoading } from 'vendor/clavisco/overlay'
 import { login, logout, checkAuth } from 'vendor/clavisco/login'
 
 // Or import entire modules
 import * as Core from 'vendor/clavisco/core'
-import * as Alerts from 'vendor/clavisco/alerts'
 ```
 
 ### Stimulus Controllers Registration
@@ -120,12 +115,11 @@ application.register('search-modal', SearchModalController)
 - `subscribe(view, callback)` - Subscribe to events for a view
 - `flow(callback)` - Subscribe to all events
 
-### Alerts (`vendor/clavisco/alerts`)
+### Alerts
 
-- `showToast(message, type, duration)` - Show toast notification
-- `showAlert(options)` - Show modal alert
-- `success/error/warning/info(message)` - Convenience methods
-- `confirm(message, title)` - Show confirmation dialog
+Ya no viven acá. CLAVISCO-PLATFORM-STANDARDS §5.1 manda usar SweetAlert2 directo, sin wrapper
+propio — `import Swal from 'sweetalert2'` y `Swal.fire({...})`. Ver `CLAUDE.md` §7/§16 en el
+root del proyecto para la receta exacta de toast/confirmación.
 
 ### Overlay (`vendor/clavisco/overlay`)
 

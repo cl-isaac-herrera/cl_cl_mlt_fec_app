@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { Storage, SStore } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { showLoading, hideLoading } from 'vendor/clavisco/overlay';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
@@ -186,10 +186,28 @@ export default class extends TabulatorController {
         ValuesList:     (udf.MappedValues ?? []).filter((v) => v.IsActive).map((v) => v.Value),
       }));
 
-      if (udfsRes?.Message && !udfsRes?.Data?.length) showToast(udfsRes.Message, 'warning');
+      if (udfsRes?.Message && !udfsRes?.Data?.length) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: udfsRes.Message,
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
+      }
       return rows;
     } catch (err) {
-      showToast(err.message || 'Error al cargar los campos definidos por usuario.', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar los campos definidos por usuario.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return [];
     }
   }
@@ -286,13 +304,22 @@ export default class extends TabulatorController {
         method: 'POST',
         body:   JSON.stringify(payload),
       });
-      showToast('Campos actualizados exitosamente.', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Campos actualizados exitosamente.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.table?.setData();   // recarga via ajaxRequestFunc (loader a nivel de tabla)
     } catch (err) {
-      showAlert({
-        type:    ALERT_TYPES.ERROR,
-        title:   'Error al guardar los campos definidos por usuario',
-        message: err.message,
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al guardar los campos definidos por usuario',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
       });
     } finally {
       hideLoading();

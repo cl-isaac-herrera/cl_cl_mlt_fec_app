@@ -6,6 +6,16 @@ ruby '~> 3.3.11'
 
 gem 'rails', '~> 8.0'
 
+# Pin explícito a la serie 2.x: la 3.0 elimina la firma de dos argumentos
+# posicionales de `JSON.parse(source, options)` que
+# `ActiveSupport::JSON.decode`/`ActiveRecord::Coders::JSON.load` todavía usan
+# en Rails 8.1.3.1 — un `bundle update json` sin este pin salta a la 3.x y
+# revienta con `ArgumentError: wrong number of arguments (given 2, expected 1)`
+# en cualquier columna serializada (confirmado 2026-09-16: Solid Queue
+# entraba en crash-loop al deserializar `arguments`). 2.21.2 ya trae el fix
+# de CVE-2026-54696 (heap buffer overflow) sin el breaking change.
+gem 'json', '~> 2.21'
+
 # Servidor web
 gem 'puma', '>= 5.0'
 
@@ -77,9 +87,26 @@ gem 'propshaft'
 gem "sentry-ruby"
 gem "sentry-rails"
 
+# Reduce boot times cacheando el resultado de requires/loads costosos. El
+# Dockerfile estándar (§Deploy) corre `bundle exec bootsnap precompile` en el
+# build stage — sin esta gema esa capa del build falla.
+gem 'bootsnap', require: false
+
+# Deploy vía Kamal + GHCR (CLAUDE.md, sección CI/CD). `require: false`: es una
+# herramienta de línea de comandos para la máquina que despliega, no algo que
+# la app cargue en runtime.
+gem 'kamal', require: false
+
+# Cache/compresión HTTP + X-Sendfile delante de Puma dentro del contenedor
+# (`bin/thrust`, el CMD del Dockerfile). A diferencia de kamal, esta SÍ corre
+# en producción — por eso va fuera de cualquier `group` (BUNDLE_WITHOUT en el
+# Dockerfile excluye `development`, no el grupo default).
+gem 'thruster', require: false
+
 group :development, :test do
   gem 'debug', platforms: %i[mri windows], require: 'debug/prelude'
   gem 'brakeman', require: false
+  gem 'bundler-audit', require: false
   gem 'factory_bot_rails'
   gem 'rspec-rails'
   gem 'rubocop-rails-omakase', require: false

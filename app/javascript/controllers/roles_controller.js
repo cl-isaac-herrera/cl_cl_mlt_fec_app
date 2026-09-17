@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { getApiHeaders } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
 /**
@@ -136,7 +136,12 @@ export default class extends TabulatorController {
     const json = await this.#apiFetch('/api/roles');
 
     if (!json.Data) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Se produjo un error al obtener los roles', message: json.Message || 'Error desconocido' });
+      Swal.fire({
+        icon: 'error',
+        title: 'Se produjo un error al obtener los roles',
+        text: json.Message || 'Error desconocido',
+        confirmButtonText: 'Aceptar'
+      });
       return [];
     }
 
@@ -198,7 +203,15 @@ export default class extends TabulatorController {
     if (!role) return;
 
     if (role.Name === 'OWNER') {
-      showToast('Este rol no permite su edición', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'Este rol no permite su edición',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -224,16 +237,37 @@ export default class extends TabulatorController {
     try {
       if (this.#editingRole) {
         await this.#updateRole(this.#editingRole.Id, name);
-        showToast('Se actualizó el rol correctamente!!!', 'success');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'Se actualizó el rol correctamente!!!',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       } else {
         await this.#createRole(name);
-        showToast('Se creó el rol correctamente!!!', 'success');
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: 'Se creó el rol correctamente!!!',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
       }
       this.closeModal();
       this.table?.setData();   // recarga via ajaxRequestFunc (loader a nivel de tabla)
     } catch (err) {
       const action = this.#editingRole ? 'actualizar' : 'registrar';
-      showAlert({ type: ALERT_TYPES.ERROR, title: `Se produjo un error al ${action} el rol`, message: err.message });
+      Swal.fire({
+        icon: 'error',
+        title: `Se produjo un error al ${action} el rol`,
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     }
   }
 
@@ -267,7 +301,15 @@ export default class extends TabulatorController {
     if (!role) return;
 
     if (role.Name === 'OWNER') {
-      showToast('Este rol administra todos los permisos y no es editable', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'Este rol administra todos los permisos y no es editable',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -293,11 +335,15 @@ export default class extends TabulatorController {
   // cambios sin guardar.
   async requestClosePermsPanel() {
     if (this.#hasPermsChanges()) {
-      const ok = await confirm(
-        'Hay cambios sin guardar que se perderán si cierra el panel. ¿Desea cerrar de todos modos?',
-        'Cambios sin guardar'
-      );
-      if (!ok) return;
+      const { isConfirmed } = await Swal.fire({
+        title: 'Cambios sin guardar',
+        text: 'Hay cambios sin guardar que se perderán si cierra el panel. ¿Desea cerrar de todos modos?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Confirmar',
+        cancelButtonText: 'Cancelar'
+      });
+      if (!isConfirmed) return;
     }
     this.closePermsPanel();
   }
@@ -327,7 +373,15 @@ export default class extends TabulatorController {
         if (allPermsRes.Data && allPermsRes.Data.length) {
           this.#allPerms = allPermsRes.Data;
         } else {
-          showToast(allPermsRes.Message || 'No se pudieron cargar los permisos', 'warning');
+          Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: 'warning',
+            title: allPermsRes.Message || 'No se pudieron cargar los permisos',
+            showConfirmButton: false,
+            timer: 3000,
+            timerProgressBar: true
+          });
         }
       }
 
@@ -341,7 +395,15 @@ export default class extends TabulatorController {
       this.#renderPermsList();
       this.#updatePermsUI();
     } catch (err) {
-      showToast(err.message || 'Error al cargar los permisos del rol', 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message || 'Error al cargar los permisos del rol',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } finally {
       this.permsLoaderTarget.classList.add('hidden');
     }
@@ -450,7 +512,15 @@ export default class extends TabulatorController {
 
   async savePermissions() {
     if (!this.#permsRole || !this.#hasPermsChanges()) {
-      showToast('No hay cambios para guardar', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No hay cambios para guardar',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
@@ -465,12 +535,25 @@ export default class extends TabulatorController {
         body: JSON.stringify({ PermissionIds: Array.from(this.#currentPermIds) }),
       });
 
-      showToast('Permisos asignados con éxito!!!', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Permisos asignados con éxito!!!',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.#initialPermIds = new Set(this.#currentPermIds);
       this.#updatePermsUI();
       this.closePermsPanel();
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al guardar los permisos', message: err.message || 'Error desconocido' });
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al guardar los permisos',
+        text: err.message || 'Error desconocido',
+        confirmButtonText: 'Aceptar'
+      });
     } finally {
       this.permsLoaderTarget.classList.add('hidden');
     }

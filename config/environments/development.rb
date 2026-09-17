@@ -8,8 +8,13 @@ Rails.application.configure do
   config.consider_all_requests_local = true
   config.server_timing = true
 
-  # Caché en memoria en desarrollo
-  config.cache_store = :memory_store
+  # Mismo store que producción, a propósito: `AuthController` cachea el ID token de
+  # OIDC vía `Rails.cache` (ver app/controllers/auth_controller.rb), y `:memory_store`
+  # solo se nota "roto" el día que Puma corra con `workers > 0` o haya más de un
+  # servidor — cada proceso tendría su propia copia y el login fallaría intermitente.
+  # `:solid_cache_store` usa la conexión `cache:` de config/database.yml (base propia,
+  # mismo criterio que solid_queue), así que se prueba acá antes del primer deploy real.
+  config.cache_store = :solid_cache_store
 
   # Mismo adaptador de jobs que producción, a propósito. El default de Rails en
   # desarrollo (`:async`) corre el job en un thread del propio Puma: ve las mismas

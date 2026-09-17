@@ -1,6 +1,6 @@
 import TabulatorController from 'vendor/clavisco/tabulator/controllers/tabulator_controller';
 import { Storage, SStore } from 'vendor/clavisco/core';
-import { showToast, showAlert, ALERT_TYPES, confirm } from 'vendor/clavisco/alerts';
+import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 import { showLoading, hideLoading } from 'vendor/clavisco/overlay';
 
@@ -317,7 +317,12 @@ export default class extends TabulatorController {
       const json = await this.#apiFetch(`/api/Documents/SearchDocumentsAccepted?${queryParams}`);
 
       if (!json.Data) {
-        showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al obtener documentos', message: json.Message || 'Error desconocido' });
+        Swal.fire({
+          icon: 'error',
+          title: 'Error al obtener documentos',
+          text: json.Message || 'Error desconocido',
+          confirmButtonText: 'Aceptar'
+        });
         return { data: [], last_page: 1 };
       }
 
@@ -339,11 +344,24 @@ export default class extends TabulatorController {
         this.btnChartTarget.classList.remove('hidden');
       }
 
-      showToast('Documentos obtenidos correctamente!', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Documentos obtenidos correctamente!',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
 
       return { data: docs, last_page: lastPage };
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error al obtener documentos', message: err.message });
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al obtener documentos',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
       return { data: [], last_page: 1 };
     }
   }
@@ -543,32 +561,94 @@ export default class extends TabulatorController {
 
   async #viewPDF(row) {
     if (!row.HavePathReceptPDF) {
-      showToast('No se encontró un archivo PDF para este documento', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No se encontró un archivo PDF para este documento',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     try {
       const json = await this.#apiFetch(`/api/Documents/DownloadPDF?docId=${row.Id}`);
-      if (!json.Data) { showToast('No se pudo obtener el PDF', 'error'); return; }
+      if (!json.Data) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: 'No se pudo obtener el PDF',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
+        return;
+      }
       this.#openBase64InTab(json.Data, 'application/pdf');
       this.#downloadBase64(json.Data, `RECEP-${row.Id}-PDF`, 'application/pdf');
-      showToast('PDF obtenido con éxito', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'PDF obtenido con éxito',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showToast(err.message, 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
   async #viewXMLHacienda(id) {
     try {
       const json = await this.#apiFetch(`/api/Documents/GetDocumentXMLAccepted?docId=${id}`);
-      if (!json.Data?.HrRespuestaXml) { showToast('No se encontró la respuesta XML de Hacienda', 'info'); return; }
+      if (!json.Data?.HrRespuestaXml) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'info',
+          title: 'No se encontró la respuesta XML de Hacienda',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
+        return;
+      }
       const decoded = this.#b64DecodeUnicode(json.Data.HrRespuestaXml);
       const blob    = new Blob([decoded], { type: 'application/xml' });
       const url     = URL.createObjectURL(blob);
       const tab     = window.open();
       if (tab) tab.location.href = url;
-      showToast('XML obtenido con éxito', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'XML obtenido con éxito',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showToast(err.message, 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
@@ -580,9 +660,25 @@ export default class extends TabulatorController {
       const filename = match ? match[1].replace(/['"]/g, '') : `RECEP-${row.Id}.xml`;
       const blob = await response.blob();
       this.#saveBlob(blob, filename);
-      showToast('XML descargado con éxito', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'XML descargado con éxito',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showToast(err.message, 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
@@ -607,10 +703,26 @@ export default class extends TabulatorController {
         }),
         headers: { 'API': 'ApiFEUrl' },
       });
-      showToast('Aceptación enviada con éxito', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Aceptación enviada con éxito',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.table?.replaceData();
     } catch (err) {
-      showToast(err.message, 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
@@ -720,12 +832,28 @@ export default class extends TabulatorController {
         headers: { 'API': 'ApiFEUrl' },
       });
       hideLoading();
-      showToast('Documento recepcionado con éxito', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Documento recepcionado con éxito',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       this.closeReceptPanel();
       this.table?.replaceData();
     } catch (err) {
       hideLoading();
-      showToast(err.message, 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     }
   }
 
@@ -801,15 +929,39 @@ export default class extends TabulatorController {
 
   #sendToSAP(row) {
     if (row.Status !== 1) {
-      showToast('Esta opción no está disponible para el estado actual del documento', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'Esta opción no está disponible para el estado actual del documento',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     if (!this.#hasPerm('F_CreateAPInvoice')) {
-      showToast('No tiene permiso para realizar esta acción', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No tiene permiso para realizar esta acción',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     if (!this.#companyInfo?.UseFactProv) {
-      showToast('La compañía seleccionada no tiene habilitada la facturación de proveedor.', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'La compañía seleccionada no tiene habilitada la facturación de proveedor.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     if (!this.#companyInfo?.DefaultTaxForXML) {
@@ -823,7 +975,15 @@ export default class extends TabulatorController {
 
   async #reprocess(id) {
     if (!this.#hasPerm('Documents_Acceptance_Reprocess')) {
-      showToast('No tiene permiso para reprocesar este documento', 'info');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: 'No tiene permiso para reprocesar este documento',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
     // Loader a nivel de fila: marca la celda Estado como "Reencolando" durante la solicitud
@@ -835,9 +995,25 @@ export default class extends TabulatorController {
         `/api/Documents/${id}/Reprocess?isReceptionDocument=true&companyId=${this.#companyId}`,
         { method: 'PATCH', body: JSON.stringify({}), headers: { 'API': 'ApiFEUrl' } }
       );
-      showToast('Solicitud de reprocesamiento enviada', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Solicitud de reprocesamiento enviada',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showToast(err.message, 'error');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'error',
+        title: err.message,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } finally {
       // Refrescar manteniéndose en la página actual: setPage(n) recarga esa página desde el
       // servidor con los filtros vigentes (replaceData/setData resetean a la página 1).
@@ -852,12 +1028,15 @@ export default class extends TabulatorController {
   // ── Descarga Masiva ────────────────────────────────────────────────────────
 
   async bulkDownload() {
-    const confirmed = await confirm(
-      'Se creará una solicitud de descarga masiva según los filtros aplicados. Los archivos serán enviados al correo del usuario.',
-      'Descarga Masiva',
-      ALERT_TYPES.INFO
-    );
-    if (!confirmed) return;
+    const { isConfirmed } = await Swal.fire({
+      title: 'Descarga Masiva',
+      text: 'Se creará una solicitud de descarga masiva según los filtros aplicados. Los archivos serán enviados al correo del usuario.',
+      icon: 'info',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!isConfirmed) return;
     try {
       const today = new Date().toISOString().split('T')[0];
       await this.#apiFetch('/api/Report/BulkDownloadOfDocuments/', {
@@ -879,9 +1058,22 @@ export default class extends TabulatorController {
           CCEmail:        '',
         }),
       });
-      showToast('Solicitud de descarga masiva creada con éxito', 'success');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: 'Solicitud de descarga masiva creada con éxito',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
     } catch (err) {
-      showAlert({ type: ALERT_TYPES.ERROR, title: 'Error en descarga masiva', message: err.message });
+      Swal.fire({
+        icon: 'error',
+        title: 'Error en descarga masiva',
+        text: err.message,
+        confirmButtonText: 'Aceptar'
+      });
     }
   }
 
@@ -936,7 +1128,15 @@ export default class extends TabulatorController {
     const total  = values.reduce((a, b) => a + b, 0);
 
     if (total === 0) {
-      showToast('No hay datos para mostrar', 'warning');
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'warning',
+        title: 'No hay datos para mostrar',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
       return;
     }
 
