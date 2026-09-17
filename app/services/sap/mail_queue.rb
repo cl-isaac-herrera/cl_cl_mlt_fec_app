@@ -110,9 +110,14 @@ module Sap
     # catálogo y no una sola con dos usos.
     #
     # @return [Array<Mail>]
+    #
+    # Sin `$top`/`$skip` propio: trae TODO el historial de una vez, así que
+    # necesita el header `Prefer: odata.maxpagesize` (`Sap::ResourceQuery#headers`)
+    # para que el Service Layer no lo corte en 20 filas (`TODOS.md` → SAP,
+    # "deuda del acceso a Service Layer" — resuelto).
     def list(doc_entry:, doc_type:)
-      rows = Array.wrap(client.get(Sap::ResourceQuery.path_for(LIST_CODE,
-                                                               DocEntry: doc_entry, DocType: doc_type)))
+      query = Sap::ResourceQuery.new(LIST_CODE, bindings: { DocEntry: doc_entry, DocType: doc_type })
+      rows  = Array.wrap(client.get(query.path, headers: query.headers))
 
       rows.map do |raw|
         row = Documents::Row.new(raw)

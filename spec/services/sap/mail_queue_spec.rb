@@ -83,7 +83,8 @@ RSpec.describe Sap::MailQueue do
       mail_queue.list(doc_entry: 25, doc_type: '01')
 
       expect(client).to have_received(:get).with(
-        "U_CL_FEC_MAILSDETAILS?$filter=(U_DocEntry eq 25 and U_DocType eq '01')&$orderby=Code desc"
+        "U_CL_FEC_MAILSDETAILS?$filter=(U_DocEntry eq 25 and U_DocType eq '01')&$orderby=Code desc",
+        headers: { 'Prefer' => 'odata.maxpagesize=0' }
       )
     end
 

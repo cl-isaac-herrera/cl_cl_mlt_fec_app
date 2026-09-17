@@ -139,6 +139,22 @@ RSpec.describe Sap::ResourceQuery do
     end
   end
 
+  describe '#headers' do
+    # Sin este header, SAP corta cualquier colección en 20 filas por respuesta
+    # sin importar el `$top` que se pida (`TODOS.md` → SAP).
+    it 'pide odata.maxpagesize con el page_size del catálogo' do
+      create_resource(code: 'GetSuppliers', resource: 'view.svc/CL_SUPPLIERS_B1SLQuery', page_size: 0)
+
+      expect(described_class.new('GetSuppliers').headers).to eq({ 'Prefer' => 'odata.maxpagesize=0' })
+    end
+
+    it 'refleja un page_size positivo sin hardcodear el valor' do
+      create_resource(code: 'GetTaxes', resource: 'view.svc/CL_TAXES_B1SLQuery', page_size: 50)
+
+      expect(described_class.new('GetTaxes').headers).to eq({ 'Prefer' => 'odata.maxpagesize=50' })
+    end
+  end
+
   describe 'resolución del código' do
     it 'levanta cuando el código no existe' do
       expect { described_class.new('NoExiste').path }

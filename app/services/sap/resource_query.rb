@@ -26,7 +26,7 @@ module Sap
   # instancia:
   #
   #   query = Sap::ResourceQuery.new('GetSuppliers')
-  #   client.get(query.merge('$top' => query.page_size).path)
+  #   client.get(query.path, headers: query.headers)
   #
   # ⚠️ La query se pega al recurso (`Users?$top=1&...`) y NO se pasa por el
   # `params:` del Client. `Client#get` serializa `params:` con
@@ -131,6 +131,30 @@ module Sap
     # Tamaño de página que definió el catálogo. 0 significa "sin paginación"
     # (ver `SlResource#paginated?`), no "cero filas".
     def page_size = record.page_size
+
+    # Header que le pide al Service Layer un tamaño de página REAL.
+    #
+    # Sin este header, SAP corta cualquier colección en 20 filas por respuesta
+    # sin importar el `$top` que se pida (`TODOS.md` → SAP, "deuda del acceso a
+    # Service Layer" — resuelto agregando este header). El submódulo recién
+    # empezó a aceptar headers custom en `get`/`post`/`patch`/`delete`.
+    #
+    # `page_size` en 0 pide TODAS las filas coincidentes en una sola respuesta,
+    # y es el valor que siembra el catálogo por defecto (`db/seeds.rb`) — nunca
+    # se manda `0` a mano acá. Un `page_size` positivo pide páginas de ese
+    # tamaño, pero el submódulo TODAVÍA no sigue `odata.nextLink`
+    # (`Client#handle_response` no arma la página siguiente), así que una
+    # colección con más filas que ese número se queda a medias sin ningún
+    # aviso. Mientras eso no exista, cualquier fila nueva del catálogo que
+    # necesite traer todo de un tirón va en 0, no en un número "grande a ojo"
+    # como se hacía antes (`999`).
+    #
+    #   client.get(query.path, headers: query.headers)
+    #
+    # @return [Hash{String => String}]
+    def headers
+      { 'Prefer' => "odata.maxpagesize=#{page_size.to_i}" }
+    end
 
     private
 

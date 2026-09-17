@@ -9,20 +9,17 @@ RSpec.describe Sap::DocumentDetails do
   let(:client) { instance_double(Clavisco::ServiceLayer::Client) }
 
   # Las seis consultas del catálogo, con el mismo filtro y `page_size` que siembra
-  # `db/seeds.rb`. Se crean acá porque los specs no corren el seed.
+  # `db/seeds.rb` (0 en las seis). Se crean acá porque los specs no corren el seed.
   before do
     filter = '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)'
-    {
-      described_class::HEADER => ['DOCHEADERINFO', 0],
-      described_class::LINES => ['DOCLINESINFO', 999],
-      described_class::OTHER_CHARGES => ['DOCOTHERCHARGESINFO', 999],
-      described_class::PAYMENT_METHODS => ['DOCPAYMENTMETHODSINFO', 999],
-      described_class::REFERENCES => ['DOCREFERENCEINFO', 999],
-      described_class::OTHERS => ['DOCOTHERSINFO', 999]
-    }.each do |code, (view, page_size)|
-      SlResource.create!(code: code, resource: "view.svc/CL_D_CL_MLT_FEC_SLT_#{view}_B1SLQuery",
-                         query_params: filter, page_size: page_size)
-    end
+    [described_class::HEADER, described_class::LINES, described_class::OTHER_CHARGES,
+     described_class::PAYMENT_METHODS, described_class::REFERENCES, described_class::OTHERS]
+      .zip(%w[DOCHEADERINFO DOCLINESINFO DOCOTHERCHARGESINFO DOCPAYMENTMETHODSINFO
+              DOCREFERENCEINFO DOCOTHERSINFO])
+      .each do |code, view|
+        SlResource.create!(code: code, resource: "view.svc/CL_D_CL_MLT_FEC_SLT_#{view}_B1SLQuery",
+                           query_params: filter, page_size: 0)
+      end
   end
 
   def fetch(doc_entry: 25, doc_type: DocType::FE)
@@ -32,7 +29,7 @@ RSpec.describe Sap::DocumentDetails do
   # Una vista del Service Layer siempre devuelve una colección, aunque el filtro
   # deje una sola fila. Tratarla como objeto daría nil en todos los campos.
   def stub_get(header: [{ 'Clave' => '506…' }], lines: [], others: [])
-    allow(client).to receive(:get) do |path|
+    allow(client).to receive(:get) do |path, **|
       case path
       when /DOCHEADERINFO/ then header
       when /DOCLINESINFO/ then lines
@@ -48,27 +45,26 @@ RSpec.describe Sap::DocumentDetails do
 
       fetch(doc_entry: 25, doc_type: DocType::NC)
 
-      expect(client).to have_received(:get).with(/DocEntry eq 25 and DocType eq '03'/).at_least(:once)
+      expect(client).to have_received(:get).with(/DocEntry eq 25 and DocType eq '03'/, anything).at_least(:once)
     end
 
-    # Sin `$top` el Service Layer devuelve 20 filas y corta: un documento de 25
-    # líneas se emitiría con 20 y los totales no cuadrarían contra Hacienda.
-    it 'aplica el $top que define el catálogo en las listas' do
+    # Sin este header el Service Layer devuelve 20 filas y corta: un documento
+    # de 25 líneas se emitiría con 20 y los totales no cuadrarían contra
+    # Hacienda (`TODOS.md` → SAP, "deuda del acceso a Service Layer").
+    it 'manda Prefer: odata.maxpagesize en las listas, para traerlas completas' do
       stub_get
 
       fetch
 
-      expect(client).to have_received(:get).with(/DOCLINESINFO.*\$top=999/)
+      expect(client).to have_received(:get).with(/DOCLINESINFO/, headers: { 'Prefer' => 'odata.maxpagesize=0' })
     end
 
-    # La cabecera es una sola fila: paginarla no significa nada.
-    it 'no le pone $top a la cabecera' do
-      paths = []
-      allow(client).to receive(:get) { |path| paths << path; path.match?(/DOCHEADERINFO/) ? [{}] : [] }
+    it 'manda el mismo header en la cabecera: paginarla distinto no significa nada' do
+      stub_get
 
       fetch
 
-      expect(paths.grep(/DOCHEADERINFO/).first).not_to include('$top')
+      expect(client).to have_received(:get).with(/DOCHEADERINFO/, headers: { 'Prefer' => 'odata.maxpagesize=0' })
     end
   end
 
@@ -105,7 +101,7 @@ RSpec.describe Sap::DocumentDetails do
       stub_get(others: [{ 'Codigo' => 'X' }])
 
       expect(fetch.others).to eq([])
-      expect(client).not_to have_received(:get).with(/DOCOTHERSINFO/)
+      expect(client).not_to have_received(:get).with(/DOCOTHERSINFO/, anything)
     end
 
     it 'se consulta cuando la compañía lo tiene encendido' do
@@ -129,7 +125,7 @@ RSpec.describe Sap::DocumentDetails do
 
     # `Client#get` devuelve nil cuando el cuerpo viene vacío.
     it 'tolera que SAP devuelva nil en vez de una colección' do
-      allow(client).to receive(:get) { |path| path.match?(/DOCHEADERINFO/) ? [{ 'Clave' => 'A' }] : nil }
+      allow(client).to receive(:get) { |path, **| path.match?(/DOCHEADERINFO/) ? [{ 'Clave' => 'A' }] : nil }
 
       expect(fetch.lines).to eq([])
     end

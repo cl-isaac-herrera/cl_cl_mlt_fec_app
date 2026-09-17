@@ -112,26 +112,21 @@ module Sap
     end
 
     # @return [Array<Documents::Row>]
+    #
+    # El header sale de `query.headers` (`Sap::ResourceQuery#headers`), nunca
+    # hardcodeado: sin él, el Service Layer devuelve **20 filas** y corta — un
+    # documento de 25 líneas se emitiría con 20 y los totales no cuadrarían
+    # contra Hacienda. El `page_size` de las seis filas del catálogo
+    # (`SL_RESOURCES_OWN`) está en 0, que le pide a SAP TODAS las coincidentes
+    # de un tirón.
     def fetch_many(code)
-      response = client.get(path_for(code))
+      query    = Sap::ResourceQuery.new(code, bindings: { DocEntry: doc_entry, DocType: doc_type })
+      response = client.get(query.path, headers: query.headers)
 
       # `Client#get` ya desenvuelve el `{"value": [...]}` de OData. `Array.wrap`
       # cubre los dos bordes que quedan: una respuesta vacía (`nil`) y una vista
       # que devolviera un objeto suelto en vez de una colección.
       Array.wrap(response).map { |row| Documents::Row.new(row) }
-    end
-
-    # El `$top` sale del catálogo y no de una constante de esta clase.
-    #
-    # Sin él, el Service Layer devuelve **20 filas** y corta: un documento de 25
-    # líneas se emitiría con 20 y los totales no cuadrarían contra Hacienda. El
-    # `page_size` en 0 significa "sin paginación" (`SlResource#paginated?`) y ahí
-    # no se agrega nada.
-    def path_for(code)
-      query = Sap::ResourceQuery.new(code, bindings: { DocEntry: doc_entry, DocType: doc_type })
-      query = query.merge('$top' => query.page_size) if query.page_size.to_i.positive?
-
-      query.path
     end
   end
 end

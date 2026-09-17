@@ -76,8 +76,14 @@ module Sap
     # (ver `Documents::PendingQueue::Entry`).
     #
     # @return [Array<Attempt>]
+    #
+    # Sin `$top`/`$skip` propio: trae TODO el historial de una vez, así que
+    # necesita el header `Prefer: odata.maxpagesize` (`Sap::ResourceQuery#headers`)
+    # para que el Service Layer no lo corte en 20 filas (`TODOS.md` → SAP,
+    # "deuda del acceso a Service Layer" — resuelto).
     def list(doc_entry:, doc_type:)
-      rows = Array.wrap(client.get(query_path(doc_entry, doc_type)))
+      query = Sap::ResourceQuery.new(QUERY_CODE, bindings: { DocEntry: doc_entry, DocType: doc_type })
+      rows  = Array.wrap(client.get(query.path, headers: query.headers))
 
       rows.map do |raw|
         row = Documents::Row.new(raw)
@@ -93,10 +99,6 @@ module Sap
     private
 
     attr_reader :client
-
-    def query_path(doc_entry, doc_type)
-      Sap::ResourceQuery.path_for(QUERY_CODE, DocEntry: doc_entry, DocType: doc_type)
-    end
 
     def truncate_details(details)
       return nil if details.nil?

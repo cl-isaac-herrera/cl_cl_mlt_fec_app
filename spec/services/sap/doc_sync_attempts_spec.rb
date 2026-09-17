@@ -94,7 +94,8 @@ RSpec.describe Sap::DocSyncAttempts do
       attempts.list(doc_entry: 25, doc_type: '01')
 
       expect(client).to have_received(:get).with(
-        "U_CL_FEC_DOCSYNCATTMP?$filter=(U_DocEntry eq 25 and U_DocType eq '01')&$orderby=U_CreatedAt desc"
+        "U_CL_FEC_DOCSYNCATTMP?$filter=(U_DocEntry eq 25 and U_DocType eq '01')&$orderby=U_CreatedAt desc",
+        headers: { 'Prefer' => 'odata.maxpagesize=0' }
       )
     end
 

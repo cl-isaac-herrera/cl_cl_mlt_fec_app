@@ -364,10 +364,10 @@ end
 SL_RESOURCES = [
   ['GetSuppliers', 'Obtiene los proveedores de SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_SUPPLIERS_B1SLQuery',
-   '$select=*', 999],
+   '$select=*', 0],
   ['GetTaxes', 'Obtiene un listado de impuestos de SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_TAXCODES_B1SLQuery',
-   '$select=*', 999],
+   '$select=*', 0],
   ['GetUdfs', 'Obtiene la informacion de los UDFS en SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_UDFS_B1SLQuery',
    '$filter=(TableID eq @TableID)', 0],
@@ -376,28 +376,28 @@ SL_RESOURCES = [
    '$select=*', 0],
   ['GetDimAndCenterCost', 'Obtiene la informacion de dimensiones y centros de costo de SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_DIMENSIONS_AND_CNTERCOST_B1SLQuery',
-   '$select=*', 999],
+   '$select=*', 0],
   ['GetAdditionalFreights', 'Obtiene un listado de cargos adicionales de SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_ADDITIONALFREIGHTS_B1SLQuery',
-   '$select=*', 999],
+   '$select=*', 0],
   ['GetDocTypeBase', 'Obtiene los tipos de bases de los documentos de SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_DOCTYPEBASE_B1SLQuery',
-   '$select=*', 999],
+   '$select=*', 0],
   ['GetAccounts', 'Obtiene todas las cuentas de SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_ACCOUNTS_B1SLQuery',
-   '$select=*', 999],
+   '$select=*', 0],
   ['GetWarehouses', 'Obtiene un listado de almacenes de SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_WAREHOUSES_B1SLQuery',
-   '$select=*', 999],
+   '$select=*', 0],
   ['CheckIfExistApInvoice', 'Revisa si ya existe el ApInvoice',
    'CL_D_CL_MLT_FEC_APP_SLT_CHECKIFEXISTAPINVOICE_B1SLQuery',
-   '$filter=(U_FeNumProvRef eq @Clave)', 999],
+   '$filter=(U_FeNumProvRef eq @Clave)', 0],
   ['GetUdfsValues', 'Obtiene los valores de los Udfs',
    'CL_D_CL_MLT_FEC_APP_SLT_UDFSVALUES_B1SLQuery',
-   '$select=*', 999],
+   '$select=*', 0],
   ['GetTaxesForAutomatic', 'Obtiene los impuestos para la creacion automatica',
    'CL_D_CL_MLT_FEC_APP_SLT_TAXCODEBYAMOUNT_B1SLQuery',
-   '$filter=(contains(TaxCode, @TaxCodeVm) and contains(TaxCode,@TaxCodeContains))', 999],
+   '$filter=(contains(TaxCode, @TaxCodeVm) and contains(TaxCode,@TaxCodeContains))', 0],
   ['Drafts', 'Crea un documento borrador en SAP',
    'Drafts',
    nil, 0],
@@ -407,16 +407,16 @@ SL_RESOURCES = [
   ['GetMatchAutomaticOne',
    'Obtiene match automaticos, se utiliza este para el filtrado del case 1 en el flujo',
    'CL_D_CL_MLT_FEC_APP_SLT_MATCHAUTOMATIC_B1SLQuery',
-   '$filter=(CardCode eq @CardCode and XmlCode eq @XmlCode)', 999],
+   '$filter=(CardCode eq @CardCode and XmlCode eq @XmlCode)', 0],
   ['GetMatchAutomaticTwo', 'Obtiene match automaticos con los filtrados del case 1',
    'CL_D_CL_MLT_FEC_APP_SLT_MATCHAUTOMATIC_B1SLQuery',
-   '$filter=(XmlCode eq @XmlCode)', 999],
+   '$filter=(XmlCode eq @XmlCode)', 0],
   ['GetMatchAutomaticUdt', 'Obtiene match automaticos desde UDF',
    'CL_D_CL_MLT_FEC_APP_SLT_MATCHAUTOMATICUDT_B1SLQuery',
-   '$filter=(CardCode eq @CardCode and XmlCode eq @XmlCode)', 999],
+   '$filter=(CardCode eq @CardCode and XmlCode eq @XmlCode)', 0],
   ['CheckIfFileExist', 'Verifica si ya existe el archivo en SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_CHECKIFATTACHMENTEXIST_B1SLQuery',
-   '$filter=(FileName eq @FileName)', 999],
+   '$filter=(FileName eq @FileName)', 0],
   ['GetExchangeRate', 'Obtiene el tipo de cambio',
    'CL_D_CL_MLT_FEC_APP_SLT_EXCHANGERATE_B1SLQuery',
    nil, 0],
@@ -426,16 +426,16 @@ SL_RESOURCES = [
   ['GetMatchAutomaticOthersOne', 'Obtiene match automatico con datos de otro receptor',
    'CL_CL_MLT_FEC_SLT_MATCHAUTOMATICORDER_B1SLQuery',
    '$filter=(CardCode eq @CardCode and XmlCode eq @XmlCode and DocNum eq @DocNum ' \
-   'and TableName eq @TableName)', 2],
+   'and TableName eq @TableName)', 0],
   ['GetMatchAutomaticOthersTwo', 'Obtiene match automatico con datos de otro receptor',
    'CL_CL_MLT_FEC_SLT_MATCHAUTOMATICORDER_B1SLQuery',
-   '$filter=(XmlCode eq @XmlCode and DocNum eq @DocNum and TableName eq @TableName)', 2],
+   '$filter=(XmlCode eq @XmlCode and DocNum eq @DocNum and TableName eq @TableName)', 0],
   ['GetProjects', 'Obtiene la lista de projyectos de SAP',
    'CL_D_CL_MLT_FEC_APP_SLT_PROJECTS_B1SLQuery',
    nil, 0],
   ['CheckIfExistApInvoiceByNumAtCard', 'Revisa si ya existe el ApInvoice por NumAtCard',
    'CL_D_CL_MLT_FEC_APP_SLT_CHECKIFEXISTAPINVOICE_B1SLQuery',
-   '$filter=(NumAtCard eq @Clave)', 999],
+   '$filter=(NumAtCard eq @Clave)', 0],
   ['swUploadAttachment2', 'Carga adjuntos en el servidor remoto mediante service layer',
    'Attachments2',
    nil, 0],
@@ -503,9 +503,15 @@ SL_RESOURCES = [
 # en `docs/sync-documents-flow.md` lista lo que la vista *devuelve*, no
 # necesariamente todo lo que expone para filtrar.
 #
-# `page_size`: la cabecera es una sola fila; el resto son listas y llevan el
-# mismo 999 que usa el catálogo importado para no quedarse en las 20 filas que
-# el Service Layer devuelve por defecto.
+# `page_size` en 0 en las seis: la cabecera es una sola fila y no pagina, y las
+# listas necesitan TODAS sus filas de un tirón — el header
+# `Prefer: odata.maxpagesize` (`Sap::ResourceQuery#headers`) es lo que evita
+# que el Service Layer las corte en 20 (`TODOS.md` → SAP, "deuda del acceso a
+# Service Layer" — resuelto). Antes de ese header estas cinco llevaban `999`,
+# una apuesta a que ningún documento tuviera más líneas que eso; el submódulo
+# TODAVÍA no sigue `odata.nextLink`, así que un número positivo que no
+# alcanzara se quedaría a medias sin ningún aviso — `0` es el único valor
+# honesto mientras eso no exista.
 SL_RESOURCES_OWN = [
   ['qsGetDocumentHeaderInfo',
    'Cabecera del documento a emitir, para el envio a Hacienda',
@@ -514,26 +520,26 @@ SL_RESOURCES_OWN = [
   ['qsGetDocumentLinesInfo',
    'Lineas de detalle del documento a emitir',
    'CL_D_CL_MLT_FEC_SLT_DOCLINESINFO_B1SLQuery',
-   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999],
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 0],
   ['qsGetDocumentOtherChargesInfo',
    'Otros cargos del documento a emitir',
    'CL_D_CL_MLT_FEC_SLT_DOCOTHERCHARGESINFO_B1SLQuery',
-   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999],
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 0],
   ['qsGetDocumentPaymentMethodsInfo',
    'Medios de pago del documento a emitir',
    'CL_D_CL_MLT_FEC_SLT_DOCPAYMENTMETHODSINFO_B1SLQuery',
-   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999],
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 0],
   ['qsGetDocumentReferenceInfo',
    'Informacion de referencia del documento a emitir',
    'CL_D_CL_MLT_FEC_SLT_DOCREFERENCEINFO_B1SLQuery',
-   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999],
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 0],
   # Solo se ejecuta cuando la compañía tiene `use_additional_fields` en true
   # (`docs/sync-documents-flow.md` punto 8). La fila se siembra igual: el
   # catálogo describe lo que se puede consultar, no lo que se consulta siempre.
   ['qsGetDocumentOthersInfo',
    'Bloque Otros del documento a emitir (campos adicionales)',
    'CL_D_CL_MLT_FEC_SLT_DOCOTHERSINFO_B1SLQuery',
-   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 999]
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 0]
 ].freeze
 
 # ── Actualizar en SAP el resultado del envío a Hacienda ──────────────────────
@@ -666,14 +672,19 @@ SL_RESOURCES_STATUS_UPDATES = [
 # comprobante" (`TODOS.md` → Emisión de documentos, hoy bloqueada porque el
 # PDF salía de un Crystal Report sin URL accesible).
 #
-# ⚠️ `page_size: 0` a propósito, y NO un valor alto tipo 999: el Service Layer
-# nunca devuelve más de 20 filas por respuesta si no se manda el header
-# `Prefer: odata.maxpagesize`, y el submódulo (`Clavisco::ServiceLayer::Client`)
-# todavía no lo soporta —tampoco sigue `odata.nextLink`— (`TODOS.md` → SAP,
-# sección "deuda del acceso a Service Layer"). Un `page_size` mayor acá sería
-# mentira: por más que el llamador pida `$top=999`, SAP corta en 20 igual.
-# Quien construya el listado tiene que paginar de a 20 filas o menos por
-# request hasta que el submódulo agregue el header.
+# ⚠️ `page_size: 0` a propósito, y NO un valor alto tipo 999: aunque
+# `Sap::ResourceQuery#headers` ya manda `Prefer: odata.maxpagesize` (resuelto
+# en `TODOS.md` → SAP, "deuda del acceso a Service Layer"), el submódulo
+# (`Clavisco::ServiceLayer::Client`) TODAVÍA no sigue `odata.nextLink`. Un
+# `page_size` positivo pide páginas de ese tamaño; si SAP tuviera más filas
+# coincidentes que esa página, la respuesta se quedaría a medias sin que nadie
+# lo note. `0` es el único valor que pide TODO en una sola respuesta, así que
+# es el único honesto mientras el submódulo no siga `nextLink`.
+#
+# Esto no cambia cómo pagina `Sap::IssuedDocumentsSearch`: sigue armando su
+# propio `$top`/`$skip` por request (`Sap::ResourceQuery#merge`), acotado a
+# `MAX_PAGE_SIZE` para no pasarse de una sola página — el listado sigue sin
+# `Total` hasta que el submódulo siga `nextLink`.
 #
 # ── Ya NO hace falta el `$filter` de Series por instalación ────────────────
 # Antes de la vista, `Invoices` (compartida por FE/ND/TE/FEE dentro de SAP) no

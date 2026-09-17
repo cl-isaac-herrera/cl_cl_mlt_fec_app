@@ -331,28 +331,29 @@ pendiente:
       **Pendiente submódulo:** un `params:` que serialice sin form-encoding (o un
       `query:` que acepte el string crudo), para que el llamador no tenga que armar el path.
 
-- [ ] **El Client no manda `Prefer: odata.maxpagesize` ni sigue `odata.nextLink`.** Sin ese
-      header, el Service Layer corta cualquier colección en **20 filas por respuesta**, sin
-      importar el `$top` que se pida — `$top`/`$skip` acotan el total a paginar, no el tamaño
-      de cada página individual. `Client#get(resource, params:)` y `Node#build_request` no
-      aceptan headers custom, así que hoy no hay forma de pedir más de 20 filas de un tirón, y
-      `Client#handle_response` tampoco arma la página siguiente cuando SAP devuelve
-      `odata.nextLink` en el body.
-      **Ya afecta en producción:** `Sap::DocumentDetails#fetch_many` (líneas, otros cargos,
-      medios de pago, referencia y "otros" del documento a emitir) usa `page_size: 999` del
-      catálogo asumiendo que el `$top` alcanza — un documento con más de 20 líneas se emite HOY
-      con solo 20 y los totales no cuadran contra Hacienda. Mismo riesgo para cualquier consulta
-      del catálogo con `page_size > 20` (`GetSuppliers`, `GetItems`, `GetAccounts`, …) el día
-      que tenga consumidor, y para `getDocuments01`..`10` (listado paginado de documentos,
-      `db/seeds.rb` sección 5) — por eso esas siete se sembraron con `page_size: 0`: es
-      catálogo honesto, no falso "sí pagina".
-      **Pendiente submódulo (`cl-sap-servicelayer-ruby`):** que `Client#get` acepte un header
-      `Prefer: odata.maxpagesize=<N>` (o lo mande siempre, con el `$top` pedido como valor), y
-      que `handle_response`/`execute_request` sigan `odata.nextLink` hasta completar la página
-      pedida. Mientras tanto, cualquier consulta nueva que necesite paginar tiene que asumir que
-      una sola llamada NUNCA trae más de 20 filas, sin importar el `$top` que se le pida — la
-      pantalla de documentos que consuma `getDocuments01`..`10` debe pedir de a 20 filas o menos
-      por request.
+- [x] **El Client no mandaba `Prefer: odata.maxpagesize` ni sigue `odata.nextLink`** —
+      parcialmente resuelto. Sin ese header, el Service Layer corta cualquier colección en
+      **20 filas por respuesta**, sin importar el `$top` que se pida — `$top`/`$skip` acotan el
+      total a paginar, no el tamaño de cada página individual.
+      **Lo que se arregló:** el submódulo (`cl-sap-servicelayer-ruby`) se actualizó al commit
+      `13c6ced` ("Deja que quien llama agregue headers a la peticion"), que agrega `headers:` a
+      `Client#get/post/patch/delete` y a `Node#build_request`. `Sap::ResourceQuery#headers`
+      arma `{ 'Prefer' => "odata.maxpagesize=#{page_size}" }` a partir de `sl_resources.page_size`
+      —nunca hardcodeado— y `db/seeds.rb` siembra **0 en TODAS las filas** del catálogo: `0` le
+      pide a SAP TODAS las coincidentes en una sola respuesta, que es el único valor honesto
+      mientras el submódulo no siga `odata.nextLink` (ver el punto siguiente). Se cableó en los
+      lugares que de verdad podían superar 20 filas: `Sap::DocumentDetails#fetch_many` (el caso
+      que ya afectaba producción — líneas, otros cargos, medios de pago, referencia y "otros" del
+      documento a emitir), `Sap::MailQueue#list` y `Sap::DocSyncAttempts#list` (los dos historiales
+      sin `$top`/`$skip` propio).
+      **Lo que sigue pendiente:** `Client#handle_response` todavía NO arma la página siguiente
+      cuando SAP devuelve `odata.nextLink` en el body. Por eso un `page_size` POSITIVO en el
+      catálogo (en vez de `0`) seguiría siendo una apuesta rota si hay más filas coincidentes que
+      esa página — igual que pasaba antes con `999`. Mientras el submódulo no siga `nextLink`,
+      **`page_size` se siembra en `0`, nunca en un número positivo "grande a ojo"**. `$top`/`$skip`
+      manuales (`Sap::IssuedDocumentsSearch`, `Sap::Branches#list`, `Sap::ActivityCodes#list`)
+      siguen sin cambios: ya acotaban su pedido a ≤20 filas por request, así que nunca dependieron
+      de este header — siguen sin un `Total` real hasta que el submódulo siga `nextLink`.
 
 - [ ] **La validación fuerza el login con un GET de sondeo.** El Client no expone un `login`
       suelto: se autentica solo en el primer request. Funciona y está documentado en la clase,
