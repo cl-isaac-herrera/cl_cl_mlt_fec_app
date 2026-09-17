@@ -1,18 +1,18 @@
 [submodule "vendor/clavisco/structures"]
 	path = vendor/clavisco/structures
-	url = https://github.com/Crisql/cl-core-structures-ruby.git
+	url = https://github.com/ClavisCo/cl-core-structures-ruby.git
 [submodule "vendor/clavisco/common"]
 	path = vendor/clavisco/common
-	# TEMPORAL: apunta al fork mientras se prueba el PR de AzureBlobStorage.
-	# Revertir a https://github.com/Crisql/cl-core-common-ruby.git una vez
-	# que ese PR se mergee upstream.
+	# TEMPORAL: apunta al fork mientras se prueba el PR de AzureBlobStorage +
+	# SmtpMailer. Revertir a https://github.com/ClavisCo/cl-core-common-ruby.git
+	# una vez que ese PR se mergee upstream.
 	url = https://github.com/cl-isaac-herrera/cl-core-common-ruby.git
 [submodule "vendor/clavisco/data_access"]
 	path = vendor/clavisco/data_access
-	url = https://github.com/Crisql/cl-data-access-ruby.git
+	url = https://github.com/ClavisCo/cl-data-access-ruby.git
 [submodule "vendor/clavisco/auth"]
 	path = vendor/clavisco/auth
-	url = https://github.com/Crisql/cl-auth-ruby.git
+	url = https://github.com/ClavisCo/cl-auth-ruby.git
 [submodule "vendor/clavisco/service_layer"]
 	path = vendor/clavisco/service_layer
 	url = https://github.com/ClavisCo/cl-sap-servicelayer-ruby.git

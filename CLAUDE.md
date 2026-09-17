@@ -2437,30 +2437,30 @@ no borrar. Es la razón por la que ese botón todavía no se migró (`TODOS.md` 
 
 ---
 
-## 35. Git — se commitea en `main` y se pushea a `fork`
+## 35. Git — se commitea en `main` y se pushea a `origin`
 
 Durante la migración este repositorio se trabaja **directo sobre `main`**, y el push va al
-remoto **`fork`**.
+remoto **`origin`** — el que antes de la reorganización de repos se llamaba `fork`
+(`cl-isaac-herrera/cl_cl_mlt_fec_app`); es el mismo repositorio, con el nombre de remoto ya
+actualizado a la convención estándar de git.
 
 ```bash
 git checkout main        # si no se está ahí
 git add -A
 git commit -m "..."
-git push fork main
+git push origin main
 ```
 
 > **Regla:** **NO crear ramas de feature.** Cada tanda de trabajo es un commit sobre `main`
-> y un `git push fork main`. Nada de `feat/…`, nada de PRs entre ramas locales.
+> y un `git push origin main`. Nada de `feat/…`, nada de PRs entre ramas locales.
 
-### Los dos remotos no son intercambiables
+### El repo de la organización es otro, y no es un remoto configurado acá
 
-| Remoto | Repositorio | Para qué |
-|---|---|---|
-| `fork` | `cl-isaac-herrera/cl_cl_mlt_fec_app` | **Acá se pushea.** Es el fork de trabajo de la migración. |
-| `origin` | `Crisql/cl_cl_mlt_fec_app` | El repo de la organización. **No se pushea** desde acá. |
-
-`origin/main` va varios commits atrás a propósito: la migración avanza en el fork y la
-integración al repo de la organización es otra conversación, no un `git push` de paso.
+El repo de la organización (`ClavisCo/cl_cl_mlt_fec`) es donde eventualmente se integra este
+trabajo, pero **no** vive como un remoto en este clon — `git remote -v` solo debe mostrar
+`origin`. La integración a `ClavisCo/cl_cl_mlt_fec` es otra conversación (un PR, coordinado
+aparte), no un segundo `git push` de rutina. Si en algún momento hace falta comparar contra
+ese repo, se agrega un remoto de solo lectura puntual; no se pushea ahí.
 
 ### Si aparece una rama de feature, se reintegra
 
@@ -2470,7 +2470,7 @@ Ya pasó: dos secciones del formulario de compañías quedaron en
 ```bash
 git checkout main
 git merge --ff-only feat/companias-seccion-hacienda
-git push fork main
+git push origin main
 ```
 
 `--ff-only` a propósito: si no puede avanzar en línea recta es que `main` se movió por otro
