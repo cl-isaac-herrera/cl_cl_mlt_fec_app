@@ -171,3 +171,38 @@ html .swal2-popup {
   --swal2-deny-button-background-color: #dc2626;              /* red-600, acciones destructivas */
   --swal2-deny-button-color: #fff;
 }
+
+/* ---------------------------------------------------------------------------
+ * Toasts de SweetAlert2 — menos compactos
+ * La receta de §7 (toast: true, solo `title`, sin `text`/`html`) rinde una
+ * cajita que se ajusta al mínimo del contenido: poco padding, sin ancho
+ * mínimo, ícono y texto muy pegados. Se le da más aire sin tocar la receta
+ * en cada uno de los ~30 puntos de llamado — es un ajuste puramente visual,
+ * uniforme para todos.
+ *
+ * Misma razón de especificidad que el bloque de arriba: `html .swal2-popup`
+ * gana la cascada sobre el <style> que SweetAlert2 inyecta en runtime.
+ *
+ * ⚠️ El ancho real del toast lo fija el CONTENEDOR, no el popup: SweetAlert2
+ * pone `body.swal2-toast-shown .swal2-container{width:360px}` y el popup solo
+ * tiene `max-width:100%` de ese contenedor. Un `min-width` en el popup mayor
+ * a esos 360px gana el conflicto min/max-width y el popup se desborda del
+ * contenedor — el ícono (primera columna del grid) queda cortado. El ancho
+ * se agranda acá, en el contenedor; el popup lo sigue automáticamente.
+ * ------------------------------------------------------------------------- */
+html body.swal2-toast-shown .swal2-container {
+  width: 460px;
+}
+
+html .swal2-popup.swal2-toast {
+  padding: 1.3em 1.7em;
+}
+
+html .swal2-popup.swal2-toast .swal2-icon {
+  margin: 0 0.85em 0 0;
+}
+
+html .swal2-popup.swal2-toast h2:where(.swal2-title) {
+  margin: 0.35em 0.75em;
+  font-size: 1.1em;
+}
