@@ -61,15 +61,30 @@ module Hacienda
         errors = []
         declarado_venta = resumen['TotalVenta']
         recomputado = lines.sum { |l| l['MontoTotal'] || BigDecimal(0) }
-        if declarado_venta.present? && (declarado_venta - recomputado).abs > TOLERANCE
+
+        # `TotalVenta` es `minOccurs="1"` en el XSD de REP: un `nil` acá no es
+        # "nada que comparar", es un XML sin el elemento —Hacienda lo rechaza
+        # por esqueleto incompleto. El valor en sí sale tal cual del header de
+        # SAP (`Documents::UnifiedBuilder` no lo recalcula, igual que el
+        # legacy manda `Documento.TotalVenta` sin tocarlo); esta comparación
+        # no lo reemplaza, solo decide si el documento se envía o se frena
+        # antes de llegar a Hacienda — igual que `Validations.cs` L756-784.
+        # Dejar pasar un `nil` en silencio es justamente lo que permitió que
+        # ese defecto llegara a producción sin que esta validación lo atajara.
+        if declarado_venta.blank?
+          errors << error('El total de venta es obligatorio en el Recibo Electrónico de Pago.',
+                           field: 'ResumenFactura.TotalVenta')
+        elsif (declarado_venta - recomputado).abs > TOLERANCE
           errors << error("El total de venta (#{declarado_venta}) no coincide con la suma " \
                            "de los montos totales de las líneas (#{recomputado}).",
                            field: 'ResumenFactura.TotalVenta')
         end
 
         declarado_neta = resumen['TotalVentaNeta']
-        if declarado_neta.present? && declarado_venta.present? &&
-           (declarado_neta - declarado_venta).abs > TOLERANCE
+        if declarado_neta.blank?
+          errors << error('El total de venta neta es obligatorio en el Recibo Electrónico de Pago.',
+                           field: 'ResumenFactura.TotalVentaNeta')
+        elsif declarado_venta.present? && (declarado_neta - declarado_venta).abs > TOLERANCE
           errors << error("El total de venta neta (#{declarado_neta}) debe ser igual al " \
                            "total de venta (#{declarado_venta}) en el Recibo Electrónico " \
                            'de Pago.', field: 'ResumenFactura.TotalVentaNeta')

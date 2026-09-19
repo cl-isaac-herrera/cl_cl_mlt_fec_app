@@ -297,6 +297,13 @@ module Hacienda
       end
     end
 
+    # Sin `TotalDescuentos`: no existe en `ResumenFactura` de REP —ni en el
+    # XSD de Hacienda ni en el `REPModels.ResumenFactura` del legacy que sí
+    # llega a producción (`CLVS_FE.Models/Consumo/REP/REP.cs`)—, así que
+    # `resumen['TotalDescuentos']` (que `Documents::UnifiedBuilder` sí arma,
+    # igual que para los demás tipos) no se lee acá. Mismo criterio que el
+    # resto de este método: la forma del objeto es una sola para todos los
+    # tipos: lo que decide qué se emite es este archivo, no el armado.
     def emit_summary_rep(xml)
       resumen = document['ResumenFactura'] || {}
 

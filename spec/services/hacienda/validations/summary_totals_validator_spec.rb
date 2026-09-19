@@ -159,5 +159,22 @@ RSpec.describe Hacienda::Validations::SummaryTotalsValidator do
 
       expect(fields_for(document, doc_type: DocType::REP)).to eq(['ResumenFactura.TotalVentaNeta'])
     end
+
+    # `TotalVenta`/`TotalVentaNeta` son `minOccurs="1"` en el XSD de REP: un
+    # `nil` acá no es "nada que comparar contra las líneas", es un XML al que
+    # le falta el elemento y que Hacienda rechaza por esqueleto incompleto.
+    # Antes de este cambio el validador solo comparaba "si venía"; un `nil`
+    # pasaba sin ningún error.
+    it 'rechaza un TotalVenta ausente en vez de dejarlo pasar sin comparar' do
+      document = rep_document('TotalVenta' => nil)
+
+      expect(fields_for(document, doc_type: DocType::REP)).to eq(['ResumenFactura.TotalVenta'])
+    end
+
+    it 'rechaza un TotalVentaNeta ausente en vez de dejarlo pasar sin comparar' do
+      document = rep_document('TotalVentaNeta' => nil)
+
+      expect(fields_for(document, doc_type: DocType::REP)).to eq(['ResumenFactura.TotalVentaNeta'])
+    end
   end
 end
