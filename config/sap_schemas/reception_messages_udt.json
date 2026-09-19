@@ -8,7 +8,7 @@
       "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tYES" },
 
     { "Name": "Mensaje", "Description": "FEC · Código del mensaje enviado a Hacienda",
-      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO",
       "ValidValues": [
         { "Value": "05", "Description": "Aceptado" },
         { "Value": "06", "Description": "Aceptado parcialmente" },
@@ -72,7 +72,7 @@
       "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tYES" },
 
     { "Name": "NumeroCedulaReceptor", "Description": "FEC · Cédula del receptor (esta compañía)",
-      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tYES" },
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
 
     { "Name": "NumeroConsecutivoEmisor", "Description": "FEC · Consecutivo del comprobante emisor",
       "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },

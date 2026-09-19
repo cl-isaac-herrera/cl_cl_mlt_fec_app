@@ -171,6 +171,39 @@ del .NET (`spGetSucursalByCompany`, `spCreateSucursal`, `spUpdateSucursal`).
       el caso de una bandeja de verdad compartida entre compañías) o se elimina del todo
       junto con el botón "Ver Compañías" y el panel lateral.
 
+## Recepción de documentos — mensaje receptor (mail parser) — deuda pendiente
+
+- [ ] `DetalleSurtido`/`LineaDetalleSurtido` en `MailReception::ReceivedDocument#surtido_fields`
+      — los nombres de elemento se tomaron por SIMETRÍA con `LineaDetalle` (no hay ningún
+      `emit_surtido` en `Hacienda::XmlBuilder` contra el cual cotejarlos: este producto nunca
+      emitió surtido). **Pendiente:** verificar contra el XSD real de Hacienda (`FacturaElectronica
+      _V4.4.xsd`) la primera vez que llegue un documento de un proveedor con ese bloque, y
+      corregir los nombres si no coinciden.
+- [ ] Solo se recepcionan FE (`01`), ND (`02`) y NC (`03`) — mismo alcance que el mail parser
+      legacy, que detecta el tipo por el elemento raíz y bloquea TE/FEC/FEE/REP con una
+      excepción (`InvoiceHandler.cs:350-361`). `MailReception::IncomingDocument
+      ::SUPPORTED_DOC_TYPES` es la única lista; un documento de otro tipo (o el `MensajeHacienda`
+      de respuesta que a veces viaja en el mismo correo) se ignora en silencio, sin archivar ni
+      registrar nada. Confirmado con el usuario que así debe ser — no es una limitación a
+      levantar, es la regla de negocio.
+- [ ] Solo XSD v4.4 — `MailReception::ReceivedDocument` no distingue versión de esquema (a
+      diferencia del legacy, que tenía un mapeo aparte para v4.3). Si un proveedor todavía
+      manda v4.3, los campos que esa versión no declara como el legacy los mapeaba (surtido,
+      `DatosImpuestoEspecifico`, `MedioPago`/`InformacionReferencia` como lista) simplemente
+      saldrían vacíos — no hay error, pero tampoco el dato.
+- [ ] Un ND/NC sin bloque `Receptor` (válido: CLAUDE.md §39, `RECEPTOR_OPCIONAL`) no se puede
+      enrutar a ninguna compañía — `MailReceptionJob`/`IncomingDocument.parse` matchean
+      exclusivamente por `Receptor/Identificacion/Numero`. Ese documento queda sin procesar
+      (ni archivado ni registrado), y hoy no hay ninguna señal de que existió. **Pendiente:**
+      decidir un segundo criterio de match (¿la bandeja de correo asignada a la compañía,
+      `companies.reception_mailbox_id`, cuando la bandeja es de uso exclusivo de una sola
+      compañía?) para no perder esos documentos en silencio.
+- [ ] Armar y enviar el XML real del mensaje receptor a Hacienda, y crear la factura de
+      compra en SAP cuando se acepta — hoy `Sap::ReceptionMessages` solo REGISTRA la cabecera
+      y las colecciones en las UDTs (con la decisión ya resuelta por tag/default de compañía,
+      `Status = 0 Pending`); `DocEntry`/`DocTypeSAP` quedan siempre vacíos y nada envía nada a
+      Hacienda todavía. Es el resto de la Prioridad 3, `CLAUDE.md` §41.
+
 ## Cutover de login a OIDC — deuda restante
 
 El login propio se eliminó y la sesión (con el token) pasó a la cookie httpOnly de Rails;

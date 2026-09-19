@@ -178,6 +178,80 @@ RSpec.describe MailReceptionJob do
     end
   end
 
+  describe 'registro del mensaje receptor (después de archivar el .eml)' do
+    let(:company) { create(:company, issuer_id_number: '3101999999') }
+    let(:attachment) do
+      MailReception::IncomingDocument::Attachment.new(
+        clave: '506...', receptor_id_number: '3101999999', doc_type: DocType::FE, root: double('root')
+      )
+    end
+
+    before do
+      company
+      allow(MailReception::IncomingDocument).to receive(:attachments_from).and_return([attachment])
+      allow(Documents::EmailArchive).to receive(:store)
+    end
+
+    it 'marca \\Seen y registra en SAP cuando todo sale bien' do
+      client = instance_double(Clavisco::ServiceLayer::Client)
+      allow(Sap::CompanyClient).to receive(:for).with(company).and_return(client)
+      reception_messages = instance_double(Sap::ReceptionMessages, create_from_document: 1)
+      allow(Sap::ReceptionMessages).to receive(:new).with(client: client).and_return(reception_messages)
+
+      imap = FakeImap.new(uids: [1])
+      stub_sessions(mailbox1.id => imap)
+
+      described_class.perform_now
+
+      expect(reception_messages).to have_received(:create_from_document)
+      expect(imap.marked_seen).to eq([1])
+    end
+
+    it 'sin configuración de SAP para la compañía, marca \\Seen (no reintenta un problema de configuración)' do
+      allow(Sap::CompanyClient).to receive(:for).with(company)
+        .and_raise(Sap::CompanyClient::MissingConfiguration, 'sin conexión asignada')
+
+      imap = FakeImap.new(uids: [1])
+      stub_sessions(mailbox1.id => imap)
+
+      described_class.perform_now
+
+      expect(imap.marked_seen).to eq([1])
+    end
+
+    it 'con la sesión de SAP vencida, NO marca \\Seen (se reintenta en la corrida siguiente)' do
+      client = instance_double(Clavisco::ServiceLayer::Client)
+      allow(Sap::CompanyClient).to receive(:for).with(company).and_return(client)
+      reception_messages = instance_double(Sap::ReceptionMessages)
+      allow(Sap::ReceptionMessages).to receive(:new).with(client: client).and_return(reception_messages)
+      allow(reception_messages).to receive(:create_from_document)
+        .and_raise(Clavisco::ServiceLayer::Client::SessionExpiredError, 'sesión vencida')
+
+      imap = FakeImap.new(uids: [1])
+      stub_sessions(mailbox1.id => imap)
+
+      described_class.perform_now
+
+      expect(imap.marked_seen).to eq([])
+    end
+
+    it 'con un rechazo de SAP (dato inválido), marca \\Seen (reintentar el mismo cuerpo no lo arregla)' do
+      client = instance_double(Clavisco::ServiceLayer::Client)
+      allow(Sap::CompanyClient).to receive(:for).with(company).and_return(client)
+      reception_messages = instance_double(Sap::ReceptionMessages)
+      allow(Sap::ReceptionMessages).to receive(:new).with(client: client).and_return(reception_messages)
+      allow(reception_messages).to receive(:create_from_document)
+        .and_raise(Clavisco::ServiceLayer::Client::ServiceLayerError, 'campo inválido')
+
+      imap = FakeImap.new(uids: [1])
+      stub_sessions(mailbox1.id => imap)
+
+      described_class.perform_now
+
+      expect(imap.marked_seen).to eq([1])
+    end
+  end
+
   describe 'valores por defecto' do
     it 'usa los defaults calculados cuando el ajuste está sin configurar' do
       set_limit('MAX_MESSAGES_PER_MAILBOX', nil)

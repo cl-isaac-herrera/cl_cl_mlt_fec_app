@@ -41,6 +41,12 @@ class Company < ApplicationRecord
   # 2 como gastos adicionales del documento.
   FREIGHT_TYPES = [1, 2].freeze
 
+  # Defaults del mensaje receptor para esta compañía (`MailReception::EmailBodyTags`):
+  # se usan cuando un correo de recepción NO trae el tag `[Tag:valor]`
+  # correspondiente en el cuerpo. `default_recept_message` es el catálogo de
+  # `MessageType` (1/2/3), no el código Hacienda de 2 dígitos.
+  DEFAULT_RECEPT_MESSAGES = MessageType::ALL
+
   # Días de anticipación con los que se avisa que el certificado está por vencer.
   # Es el `certExpireCheckAlarm` de los appsettings del .NET, que valía 7 en los
   # tres ambientes: queda como constante y no como setting porque nunca cambió por
@@ -103,6 +109,13 @@ class Company < ApplicationRecord
   # fuera de la lista es un error, no un campo sin llenar.
   validates :email_sender_type, inclusion: { in: EMAIL_SENDER_TYPES }
   validates :freight_type,      inclusion: { in: FREIGHT_TYPES }
+
+  # Los cuatro son opcionales (`allow_nil`): una compañía sin default
+  # simplemente no auto-resuelve el mensaje receptor que le falte el tag
+  # correspondiente (`MailReception::EmailBodyTags` cae al vacío/0 de la UDT).
+  validates :default_recept_message,       inclusion: { in: DEFAULT_RECEPT_MESSAGES }, allow_nil: true
+  validates :default_recept_details,       length: { maximum: 160 }, allow_nil: true
+  validates :default_recept_tax_condition, inclusion: { in: TaxCondition::ALL }, allow_nil: true
 
   before_create :ensure_uuid
 

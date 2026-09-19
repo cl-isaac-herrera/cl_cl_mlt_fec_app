@@ -1070,6 +1070,49 @@ SL_RESOURCES_ACTIVITY_CODES = [
    'U_CL_FEC_ACTIVITYCODE(#Code#)', nil, 0]
 ].freeze
 
+# ── Mensaje receptor de un documento recibido de un proveedor (UDTs) ────────
+# Las siete UDTs de `config/sap_schemas/reception_messages_udt.json` y sus
+# seis hijas (`config/sap_schemas/README.md` §6) — cabecera + líneas +
+# surtido + medios de pago + otros cargos + otros + referencias. Las escribe
+# `Sap::ReceptionMessages`, llamado desde `MailReceptionJob` al identificar
+# un XML de comprobante (FE/ND/NC — únicos tipos que se recepcionan,
+# `MailReception::IncomingDocument::SUPPORTED_DOC_TYPES`) entre los adjuntos
+# de un correo de recepción.
+#
+# Solo `create*`: todavía no hay pantalla que LEA estas UDTs — la decisión
+# manual de aceptar/rechazar (Prioridad 3, CLAUDE.md §41) sigue sin
+# implementar. Agregar `get*`/`update*` cuando esa pantalla exista, no antes.
+#
+# Sin `CompanyId` ni `DocEntry`/`DocType` como llave (a diferencia de
+# `SL_RESOURCES_DOC_SYNC_ATTEMPTS`): la compañía ES la base de SAP, y el
+# documento recibido no tiene `DocEntry` propio hasta crear la factura de
+# compra. La llave entre cabecera e hijas es el `Code` autonumérico que
+# devuelve cada `POST`, que `Sap::ReceptionMessages` pasa a mano en el cuerpo
+# de la hija (`U_MensajeReceptorCode`/`U_MensajeReceptorLineaCode`).
+SL_RESOURCES_RECEPTION_MESSAGES = [
+  ['createReceptionMessage',
+   'Registra la cabecera de un mensaje receptor (UDT)',
+   'U_CL_FEC_RECEPTORMSG', nil, 0],
+  ['createReceptionMessageLine',
+   'Registra una línea de detalle de un mensaje receptor (UDT)',
+   'U_CL_FEC_RECEPTORLIN', nil, 0],
+  ['createReceptionMessageLineDetail',
+   'Registra un detalle de surtido de una línea de mensaje receptor (UDT)',
+   'U_CL_FEC_RECEPTORSURT', nil, 0],
+  ['createReceptionMessagePayment',
+   'Registra un medio de pago de un mensaje receptor (UDT)',
+   'U_CL_FEC_RECEPTORPAGO', nil, 0],
+  ['createReceptionMessageOtherCharge',
+   'Registra un otro cargo de un mensaje receptor (UDT)',
+   'U_CL_FEC_RECEPTORCARG', nil, 0],
+  ['createReceptionMessageOther',
+   'Registra un dato "otros" de un mensaje receptor (UDT)',
+   'U_CL_FEC_RECEPTOROTRO', nil, 0],
+  ['createReceptionMessageReference',
+   'Registra una referencia de un mensaje receptor (UDT)',
+   'U_CL_FEC_RECEPTORREF', nil, 0]
+].freeze
+
 ActiveRecord::Base.transaction do
   # Se resuelve ANTES de tocar la base: si `SERVER_TYPE` está mal, el seed corta
   # sin haber escrito ninguna fila.
@@ -1081,7 +1124,7 @@ ActiveRecord::Base.transaction do
                      SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE +
                      SL_RESOURCES_MAIL_DOCUMENT_INFO + SL_RESOURCES_DOCUMENT_ERROR_DETAILS +
                      SL_RESOURCES_DOCUMENT_XML_URLS + SL_RESOURCES_DOC_SYNC_ATTEMPTS +
-                     SL_RESOURCES_BRANCHES + SL_RESOURCES_ACTIVITY_CODES
+                     SL_RESOURCES_BRANCHES + SL_RESOURCES_ACTIVITY_CODES + SL_RESOURCES_RECEPTION_MESSAGES
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el

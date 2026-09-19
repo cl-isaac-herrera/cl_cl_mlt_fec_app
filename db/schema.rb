@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_19_100000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_19_110000) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
@@ -19,6 +19,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_19_100000) do
     t.integer "connection_id"
     t.datetime "created_at", null: false
     t.string "created_by"
+    t.string "default_recept_details", limit: 160
+    t.integer "default_recept_message"
+    t.string "default_recept_tax_condition", limit: 2
+    t.float "default_recept_tax_factor"
     t.string "default_warehouse", limit: 8
     t.string "default_xml_tax_code", limit: 8
     t.string "economic_activity_code", limit: 6

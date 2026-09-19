@@ -13,16 +13,27 @@
 #   1. Abre el Inbox (usuario/contraseña o XOAUTH2, `MailReception::ImapSession`).
 #   2. Busca los correos NO LEÍDOS (tope blando por bandeja y tope duro por
 #      corrida — ver la sección de límites más abajo).
-#   3. Por cada adjunto que parece un comprobante electrónico (tiene `Clave` Y
-#      la identificación del receptor, `MailReception::IncomingDocument`),
-#      busca la compañía por esa identificación (`Company#issuer_id_number`)
-#      y archiva el .eml COMPLETO del correo en su carpeta
-#      (`Documents::EmailArchive`).
+#   3. Por cada adjunto que es un comprobante FE/ND/NC (tiene `Clave`, la
+#      identificación del receptor, y su elemento raíz es uno de los tres que
+#      este flujo procesa — `MailReception::IncomingDocument`; cualquier otro
+#      tipo, incluida la respuesta de Hacienda que a veces viaja junto al
+#      comprobante, se ignora en silencio), busca la compañía por esa
+#      identificación (`Company#issuer_id_number`), archiva el .eml COMPLETO
+#      del correo en su carpeta (`Documents::EmailArchive`), y registra la
+#      cabecera + colecciones del mensaje receptor en las UDTs de SAP
+#      (`MailReception::ReceivedDocument` parsea el XML,
+#      `MailReception::EmailBodyTags` resuelve Mensaje/DetalleMensaje/
+#      CondicionImpuesto/TaxFactor/CodigoActividadReceptor desde el cuerpo del
+#      correo o los defaults de la compañía, `Sap::ReceptionMessages`
+#      escribe).
 #   4. Marca el correo como leído.
 #
-# Deliberadamente NO hace lo que hacía el legacy (`EmailProcessorLog`,
-# `InboxProcessingTenant`, aceptar/rechazar el documento ante Hacienda): se
-# aborda aparte, en otra tarea.
+# Lo que SIGUE sin implementar: armar y enviar el XML del mensaje receptor a
+# Hacienda, y crear la factura de compra en SAP cuando se acepta — eso deja
+# `DocEntry`/`DocTypeSAP` en la cabecera, hoy siempre vacíos (CLAUDE.md §41,
+# Prioridad 3). Tampoco replica `EmailProcessorLog`/`InboxProcessingTenant`
+# del legacy (auditoría cruda del correo, bandeja compartida entre
+# compañías) — ver `TODOS.md` → Recepción de documentos.
 #
 # ── Sin ejecuciones paralelas ────────────────────────────────────────────────
 # `limits_concurrency` (Solid Queue) asegura que nunca haya dos corridas de
@@ -169,7 +180,7 @@ class MailReceptionJob < ApplicationJob
       return
     end
 
-    outcomes = attachments.map { |attachment| archive(raw, attachment) }
+    outcomes = attachments.map { |attachment| archive(raw, mailbox, attachment) }
     outcomes.each { |outcome| tally[outcome] += 1 }
     # Si CUALQUIER adjunto falló por algo transitorio, el correo entero queda
     # sin marcar: la corrida siguiente reintenta el correo completo, incluidos
@@ -184,7 +195,7 @@ class MailReceptionJob < ApplicationJob
     # puntual se reintenta solo en la corrida siguiente.
   end
 
-  def archive(raw, attachment)
+  def archive(raw, mailbox, attachment)
     company = Company.find_by(issuer_id_number: attachment.receptor_id_number)
     if company.nil?
       Rails.logger.warn(
@@ -195,7 +206,7 @@ class MailReceptionJob < ApplicationJob
     end
 
     Documents::EmailArchive.store(company: company, clave: attachment.clave, eml: raw)
-    :archivado
+    register_reception_message(raw, mailbox, company, attachment)
   rescue Azure::BlobStorage::TransientError => e
     Rails.logger.warn("[MailReception] clave #{attachment.clave}: Azure no disponible — #{e.message}")
     :error_transitorio
@@ -207,6 +218,48 @@ class MailReceptionJob < ApplicationJob
     # en Sentry, no como un correo que se reintenta para siempre.
     Sentry.capture_exception(e)
     Rails.logger.error("[MailReception] clave #{attachment.clave}: #{e.message}")
+    :error_configuracion
+  end
+
+  # Ya con el `.eml` archivado, registra la cabecera + colecciones del
+  # mensaje receptor en las UDTs de SAP (`Sap::ReceptionMessages`). El .eml
+  # ya quedó archivado aunque esto falle —no se deshace—: es la misma
+  # asimetría que ya existe entre Azure y el resto del pipeline, y evita
+  # volver a bajar el correo por IMAP solo para reintentar la parte de SAP.
+  #
+  # `:archivado` cubre los dos desenlaces exitosos posibles (con o sin datos
+  # de mensaje receptor) porque, a diferencia del match de compañía, esto
+  # nunca decide si el correo se reintenta — solo lo que se cuenta en el log
+  # de resumen.
+  def register_reception_message(raw, mailbox, company, attachment)
+    message = ::Mail.read_from_string(raw)
+    body = (message.text_part || message).body.decoded
+
+    document = MailReception::ReceivedDocument.new(attachment.root, doc_type: attachment.doc_type)
+    client = Sap::CompanyClient.for(company)
+    Sap::ReceptionMessages.new(client: client).create_from_document(
+      document: document, company: company, email_body: body, mailbox_email: mailbox.email
+    )
+    :archivado
+  rescue Sap::CompanyClient::MissingConfiguration => e
+    Rails.logger.warn(
+      "[MailReception] clave #{attachment.clave}: sin configuración de SAP para " \
+      "#{company.name.inspect} — #{e.message}"
+    )
+    :error_configuracion
+  rescue Clavisco::ServiceLayer::Client::AuthenticationError,
+         Clavisco::ServiceLayer::Client::SessionExpiredError => e
+    # La sesión del pool se renueva sola en el próximo intento — no es un
+    # rechazo de los datos, así que sí se reintenta.
+    Rails.logger.warn("[MailReception] clave #{attachment.clave}: sesión de SAP no disponible — #{e.message}")
+    :error_transitorio
+  rescue Clavisco::ServiceLayer::Client::ServiceLayerError => e
+    # SAP rechazó el POST (un campo fuera de `ValidValues`, una UDT sin
+    # sincronizar, etc.): reintentar el mismo cuerpo nunca lo arregla solo.
+    Sentry.capture_exception(e)
+    Rails.logger.error(
+      "[MailReception] clave #{attachment.clave}: SAP rechazó el mensaje receptor — #{e.message}"
+    )
     :error_configuracion
   end
 

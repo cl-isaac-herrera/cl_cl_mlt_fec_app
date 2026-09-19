@@ -244,7 +244,13 @@ reintroducir un segundo campo de texto: usar el `Status`/`ValidValues` ya declar
 junto con el catálogo de intentos, igual que hace `doc_sync_attempts_udt.json` — la etapa la
 dice el estado, el texto solo explica el motivo.
 
-**Aún no existe ningún `Sap::*` que escriba o lea estas siete UDTs** ni un builder para el XML
-de mensaje receptor — son solo la estructura declarada. El resto de la Prioridad 3 (armar y
-enviar el mensaje receptor, mapear los campos desde el XML del proveedor) sigue pendiente;
-ver `CLAUDE.md` §41.
+`Sap::ReceptionMessages` escribe las siete UDTs (cabecera + hijas, encadenando el `Code` de
+cada `POST`), a partir de `MailReception::ReceivedDocument` (parsea el XML del comprobante) y
+`MailReception::EmailBodyTags` (resuelve `Mensaje`/`DetalleMensaje`/`CondicionImpuesto`/
+`TaxFactor`/`CodigoActividadReceptor` desde tags `[Tag:valor]` en el cuerpo del correo, con
+fallback a `companies.default_recept_*` y de ahí al vacío/0 de la UDT). Lo llama
+`MailReceptionJob` al identificar un XML de comprobante entre los adjuntos.
+
+**Lo que SIGUE pendiente de la Prioridad 3**: armar y enviar el XML real del mensaje receptor a
+Hacienda, y crear la factura de compra en SAP cuando se acepta (`DocEntry`/`DocTypeSAP` de la
+cabecera quedan siempre vacíos hasta entonces). Ver `CLAUDE.md` §41.

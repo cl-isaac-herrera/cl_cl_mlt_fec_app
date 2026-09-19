@@ -73,6 +73,35 @@ RSpec.describe MailReception::IncomingDocument do
     expect(attachments.first.clave).to eq('50601012300031082733200XXXXXXXXX1200000002')
   end
 
+  it 'expone el doc_type y el nodo raíz del XML para reutilizarlos sin reparsear' do
+    xml = xml_for(clave: '50601012300031082733200XXXXXXXXX1200000003')
+    raw = eml_with([['factura.xml', xml, 'application/xml']])
+
+    attachment = described_class.attachments_from(raw).first
+
+    expect(attachment.doc_type).to eq(DocType::FE)
+    expect(attachment.root.name).to eq('FacturaElectronica')
+  end
+
+  it 'ignora un tipo de documento que este flujo no recepciona (tiquete, factura de compra, etc.)' do
+    xml = <<~XML
+      <TiqueteElectronico xmlns="https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/tiqueteElectronico">
+        <Clave>50601012300031082733200XXXXXXXXX1200000004</Clave>
+        <Receptor><Identificacion><Tipo>02</Tipo><Numero>3101822733</Numero></Identificacion></Receptor>
+      </TiqueteElectronico>
+    XML
+    raw = eml_with([['tiquete.xml', xml, 'application/xml']])
+
+    expect(described_class.attachments_from(raw)).to be_empty
+  end
+
+  it 'ignora la respuesta de Hacienda (MensajeHacienda) cuando viaja junto al comprobante' do
+    xml = '<MensajeHacienda><Clave>50601012300031082733200XXXXXXXXX1200000005</Clave></MensajeHacienda>'
+    raw = eml_with([['respuesta.xml', xml, 'application/xml']])
+
+    expect(described_class.attachments_from(raw)).to be_empty
+  end
+
   it 'encuentra un documento por cada Clave distinta cuando hay varios adjuntos válidos' do
     factura = xml_for(clave: '111')
     nota_credito = xml_for(clave: '222', receptor_id: '3101822733')
