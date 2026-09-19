@@ -254,7 +254,7 @@
       <%# Decide si el correo de recepción electrónica le llega al receptor       %>
       <%# también cuando Hacienda RECHAZA el comprobante. Apagado, el job lo      %>
       <%# marca "Omitido" y no manda nada (`Sap::MailDocumentInfo` le suma        %>
-      <%# `U_CL_FEC_Status eq 6` al $filter).                                     %>
+      <%# `Status eq 6` al $filter).                                              %>
       <%# Oculto en el ALTA por lo mismo que "Bandeja de Correo": la creación     %>
       <%# todavía va al `POST /api/Companies` del .NET, que no conoce la columna  %>
       <%# — el check se vería pero no guardaría nada. Lo muestra `#setupMode()`   %>

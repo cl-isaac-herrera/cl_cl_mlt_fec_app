@@ -826,58 +826,63 @@ SL_RESOURCES_MAIL_QUEUE = [
 ].freeze
 
 # ── Datos del comprobante para el correo de recepción electrónica ───────────
-# Una fila por tipo de documento (mismo universo y mismo mapeo tipo→entidad que
-# `SL_RESOURCES_DOCUMENT_QUERIES`/`SL_RESOURCES_STATUS_UPDATES`: `Invoices`
-# para FE/ND/TE/FEE, `CreditNotes` para NC, `PurchaseInvoices` para FEC,
-# `IncomingPayments` para REP). La consume `Sap::MailDocumentInfo`
-# (`SendElectronicReceiptJob`) para armar el cuerpo del correo: consecutivo,
-# receptor, clave, fecha de emisión, monto, moneda, estado y las URLs de Azure
-# de los XML a adjuntar.
+# UNA sola fila, no una por tipo: apunta a la vista
+# `CL_D_CL_MLT_FEC_SLT_DOCMAILINFO_B1SLQuery` (`SlResourceSeed.qualify` le
+# agrega el prefijo `sml.svc/`/`view.svc/` según el motor) y filtra por
+# `DocType` con un binding DINÁMICO (`@DocType`), no con un literal horneado
+# en el catálogo — a diferencia de `SL_RESOURCES_DOCUMENT_QUERIES`
+# (`getDocuments01`..`10`), que sí necesita una fila por tipo porque el
+# `$filter` alimenta un listado que el usuario elige por tipo desde la
+# pantalla. Acá `Sap::MailDocumentInfo` ya recibe el tipo como parámetro
+# (`doc_type`), así que no hay ninguna razón para hornear un literal por fila:
+# el mismo binding que ya resuelve `@DocEntry` resuelve `@DocType`.
 #
-# ── Por qué es una consulta de COLECCIÓN (`$filter=DocEntry eq @DocEntry`) y
-# no una entidad puntual (`Invoices(#DocumentEntry#)`) ──────────────────────
-# `Sap::MailDocumentInfo` le suma al `$filter` `U_CL_FEC_Status eq 6` cuando
+# La consume `Sap::MailDocumentInfo` (`SendElectronicReceiptJob`) para armar
+# el cuerpo del correo: consecutivo, receptor, clave, fecha de emisión, monto,
+# moneda, estado y las URLs de Azure de los XML a adjuntar. NO la entidad
+# estándar por tipo (`Invoices`/`CreditNotes`/`PurchaseInvoices`/
+# `IncomingPayments`) que siguen usando `SL_RESOURCES_STATUS_UPDATES`/
+# `SL_RESOURCES_DOCUMENT_QUERIES` para las escrituras y el listado.
+#
+# ── Sin `$select`: la vista ya devuelve justo lo que el correo necesita ─────
+# Mismo criterio que `DOCDISPLAYINFO`: la vista se diseñó para este consumidor
+# y solo expone las columnas que hacen falta, así que no hay nada que acotar.
+# La vista además resuelve el monto en la moneda correcta: `DocTotal` ya viene
+# en la moneda que dice `DocCurrency` (antes había que elegir entre `DocTotal`
+# y `DocTotalFc` según la moneda del documento; la vista se encarga).
+#
+# ── La vista RENOMBRA los mismos UDFs que `DOCDISPLAYINFO` ──────────────────
+#   UDF (entidad estándar)      → columna de la vista
+#   U_CL_FEC_Status             → Status
+#   U_CL_FEC_XmlSentUrl         → XmlSentUrl
+#   U_CL_FEC_XmlResponseUrl     → XmlResponseUrl
+#   U_CL_FEC_Clave              → Clave
+#   U_CL_FEC_NumConsecutivo     → NumeroConsecutivo
+#   U_CL_FEC_FechaEmision       → FechaEmision
+# `DocEntry`, `DocType`, `CardName`, `DocCurrency` y `DocTotal` conservan su
+# nombre. `Sap::MailDocumentInfo`/`Documents::ReceiptMailBody`/
+# `SendElectronicReceiptJob` ya están al tanto — cualquier consumidor nuevo
+# tiene que usar el nombre de la VISTA, no el UDF.
+#
+# ── Validar el tipo ya NO es "¿existe la fila?" ─────────────────────────────
+# Con una fila por tipo, un `doc_type` no soportado (un mensaje de receptor,
+# o un código que `DocType` no reconoce) levantaba `UnsupportedDocType` porque
+# `Sap::ResourceQuery` no encontraba la fila (`UnknownResource`). Con una sola
+# fila para los siete tipos, esa señal desaparece: `Sap::MailDocumentInfo`
+# valida el tipo ANTES de tocar SAP (`DocType.valid? && !receiver_message?`).
+#
+# ── Por qué sigue siendo una consulta de COLECCIÓN (`$filter=…`) y no una
+# entidad puntual (`Invoices(#DocumentEntry#)`) ─────────────────────────────
+# `Sap::MailDocumentInfo` le suma al `$filter` `Status eq 6` cuando
 # `company.send_rejected_documents?` es `false` (mismo patrón que
 # `Sap::IssuedDocumentsSearch#extra_filter`, combinando con `Sap::ResourceQuery
 # #merge`) — una entidad puntual no admite esa composición, y un documento
 # Rechazado con la compañía en `false` tiene que devolver CERO filas (la señal
 # que el job usa para marcar `Omitido` en vez de enviar el correo).
 SL_RESOURCES_MAIL_DOCUMENT_INFO = [
-  ['getMailDocumentInfo01', 'Datos del comprobante para el correo de recepción (factura electrónica)',
-   'Invoices',
-   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
-   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
-   'U_CL_FEC_XmlResponseUrl', 0],
-  ['getMailDocumentInfo02', 'Datos del comprobante para el correo de recepción (nota de débito electrónica)',
-   'Invoices',
-   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
-   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
-   'U_CL_FEC_XmlResponseUrl', 0],
-  ['getMailDocumentInfo03', 'Datos del comprobante para el correo de recepción (nota de crédito electrónica)',
-   'CreditNotes',
-   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
-   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
-   'U_CL_FEC_XmlResponseUrl', 0],
-  ['getMailDocumentInfo04', 'Datos del comprobante para el correo de recepción (tiquete electrónico)',
-   'Invoices',
-   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
-   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
-   'U_CL_FEC_XmlResponseUrl', 0],
-  ['getMailDocumentInfo08', 'Datos del comprobante para el correo de recepción (factura electrónica de compra)',
-   'PurchaseInvoices',
-   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
-   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
-   'U_CL_FEC_XmlResponseUrl', 0],
-  ['getMailDocumentInfo09', 'Datos del comprobante para el correo de recepción (factura electrónica de exportación)',
-   'Invoices',
-   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
-   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
-   'U_CL_FEC_XmlResponseUrl', 0],
-  ['getMailDocumentInfo10', 'Datos del comprobante para el correo de recepción (recibo electrónico de pago)',
-   'IncomingPayments',
-   '$filter=DocEntry eq @DocEntry&$select=U_CL_FEC_NumConsecutivo,CardName,U_CL_FEC_Clave,' \
-   'U_CL_FEC_FechaEmision,DocTotal,DocTotalFc,DocCurrency,U_CL_FEC_Status,U_CL_FEC_XmlSentUrl,' \
-   'U_CL_FEC_XmlResponseUrl', 0]
+  ['getMailDocumentInfo', 'Datos del comprobante para el correo de recepción electrónica',
+   'CL_D_CL_MLT_FEC_SLT_DOCMAILINFO_B1SLQuery',
+   '$filter=(DocEntry eq @DocEntry and DocType eq @DocType)', 0]
 ].freeze
 
 # ── Estado y detalle de error ACTUALES de un documento ──────────────────────

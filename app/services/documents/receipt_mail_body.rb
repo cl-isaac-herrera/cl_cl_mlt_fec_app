@@ -78,8 +78,10 @@ module Documents
     # El asunto dice el desenlace y de cuál comprobante, que es lo que se
     # necesita para encontrar el correo después en la bandeja. El remitente ya
     # identifica a la compañía, así que no se repite acá.
+    # `NumeroConsecutivo`, no `U_CL_FEC_NumConsecutivo`: la vista `DOCMAILINFO`
+    # (`Sap::MailDocumentInfo`) renombra ese UDF al exponerlo.
     def subject
-      consecutivo = info.string('U_CL_FEC_NumConsecutivo')
+      consecutivo = info.string('NumeroConsecutivo')
       base        = "Comprobante electrónico #{status[:label].downcase} por Hacienda"
 
       consecutivo.present? ? "#{base} · #{consecutivo}" : base
@@ -126,8 +128,10 @@ module Documents
       company.email_sender_name
     end
 
+    # `Status`, no `U_CL_FEC_Status`: la vista `DOCMAILINFO` (`Sap::MailDocumentInfo`)
+    # renombra ese UDF al exponerlo.
     def accepted?
-      info.integer('U_CL_FEC_Status') == Sap::MailDocumentInfo::ACCEPTED_STATUS
+      info.integer('Status') == Sap::MailDocumentInfo::ACCEPTED_STATUS
     end
 
     def status
@@ -153,24 +157,27 @@ module Documents
     def details
       [
         ['Tipo de documento', DocType.label(doc_type)],
-        ['Consecutivo', info.string('U_CL_FEC_NumConsecutivo')],
+        ['Consecutivo', info.string('NumeroConsecutivo')],
         ['Fecha de emisión', emission_date],
         ['Receptor', info.string('CardName')]
       ].reject { |_, value| value.blank? }
     end
 
+    # `Clave`, no `U_CL_FEC_Clave`: la vista `DOCMAILINFO` (`Sap::MailDocumentInfo`)
+    # renombra ese UDF al exponerlo.
     def clave
-      info.string('U_CL_FEC_Clave')
+      info.string('Clave')
     end
 
-    # `U_CL_FEC_FechaEmision` llega como texto de SAP, en ISO
-    # (`2026-09-06T09:06:00Z`). Se reescribe al formato de `CLAUDE.md` §5
-    # (`yyyy-MM-dd HH:mm:ss`) tomando los dígitos tal cual, SIN convertir de
-    # zona horaria: el sufijo `Z` del UDF no significa que el dato esté en UTC
-    # —lo escribe SAP con la hora local del documento— y convertirlo correría la
-    # hora seis horas, o el día entero en un comprobante de la madrugada.
+    # `FechaEmision` (la vista renombra `U_CL_FEC_FechaEmision` al exponerla)
+    # llega como texto de SAP, en ISO (`2026-09-06T09:06:00Z`). Se reescribe al
+    # formato de `CLAUDE.md` §5 (`yyyy-MM-dd HH:mm:ss`) tomando los dígitos tal
+    # cual, SIN convertir de zona horaria: el sufijo `Z` del UDF no significa
+    # que el dato esté en UTC —lo escribe SAP con la hora local del documento—
+    # y convertirlo correría la hora seis horas, o el día entero en un
+    # comprobante de la madrugada.
     def emission_date
-      raw = info.string('U_CL_FEC_FechaEmision')
+      raw = info.string('FechaEmision')
       return nil if raw.blank?
 
       match = raw.match(/\A(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}:\d{2}))?/)

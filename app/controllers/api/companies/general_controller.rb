@@ -60,7 +60,7 @@ module Api
       # preguntar por ambas en cada consulta.
       # `send_rejected_documents` decide si el correo de recepción electrónica
       # sale también para los comprobantes que Hacienda RECHAZA. Lo lee
-      # `Sap::MailDocumentInfo`: en `false` le suma `U_CL_FEC_Status eq 6` al
+      # `Sap::MailDocumentInfo`: en `false` le suma `Status eq 6` al
       # `$filter`, así que el job marca el documento `Omitido` en vez de mandarle
       # el correo al receptor.
       def general_params

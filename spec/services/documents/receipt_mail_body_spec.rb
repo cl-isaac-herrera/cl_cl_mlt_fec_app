@@ -7,10 +7,10 @@ RSpec.describe Documents::ReceiptMailBody do
   let(:status)  { Sap::MailDocumentInfo::ACCEPTED_STATUS }
   let(:info) do
     Documents::Row.new(
-      'U_CL_FEC_NumConsecutivo' => '00100001010000000001', 'CardName' => 'Distribuidora El Sol S.A.',
-      'U_CL_FEC_Clave' => '50601012600310182273300100001010000000001100000001',
-      'U_CL_FEC_FechaEmision' => '2026-09-06T09:06:00Z', 'DocTotal' => '1284350.75',
-      'DocCurrency' => 'CRC', 'U_CL_FEC_Status' => status
+      'NumeroConsecutivo' => '00100001010000000001', 'CardName' => 'Distribuidora El Sol S.A.',
+      'Clave' => '50601012600310182273300100001010000000001100000001',
+      'FechaEmision' => '2026-09-06T09:06:00Z', 'DocTotal' => '1284350.75',
+      'DocCurrency' => 'CRC', 'Status' => status
     )
   end
 
@@ -33,7 +33,7 @@ RSpec.describe Documents::ReceiptMailBody do
 
     it 'omite el separador si el comprobante no tiene consecutivo' do
       allow(info).to receive(:string).and_call_original
-      allow(info).to receive(:string).with('U_CL_FEC_NumConsecutivo').and_return(nil)
+      allow(info).to receive(:string).with('NumeroConsecutivo').and_return(nil)
 
       expect(rendered.subject).to eq('Comprobante electrónico aceptado por Hacienda')
     end
@@ -84,14 +84,14 @@ RSpec.describe Documents::ReceiptMailBody do
     # y el día entero en un comprobante de la madrugada.
     it 'no convierte de zona horaria' do
       allow(info).to receive(:string).and_call_original
-      allow(info).to receive(:string).with('U_CL_FEC_FechaEmision').and_return('2026-09-06T01:30:00Z')
+      allow(info).to receive(:string).with('FechaEmision').and_return('2026-09-06T01:30:00Z')
 
       expect(rendered.text).to include('2026-09-06 01:30:00')
     end
 
     it 'muestra el valor tal cual si no tiene la forma esperada' do
       allow(info).to receive(:string).and_call_original
-      allow(info).to receive(:string).with('U_CL_FEC_FechaEmision').and_return('el martes')
+      allow(info).to receive(:string).with('FechaEmision').and_return('el martes')
 
       expect(rendered.text).to include('el martes')
     end
@@ -149,7 +149,7 @@ RSpec.describe Documents::ReceiptMailBody do
   end
 
   describe 'datos ausentes' do
-    let(:info) { Documents::Row.new('U_CL_FEC_Status' => status, 'CardName' => 'Solo el receptor') }
+    let(:info) { Documents::Row.new('Status' => status, 'CardName' => 'Solo el receptor') }
 
     it 'omite las filas sin valor en vez de dejarlas vacías' do
       expect(rendered.html).to include('Solo el receptor')

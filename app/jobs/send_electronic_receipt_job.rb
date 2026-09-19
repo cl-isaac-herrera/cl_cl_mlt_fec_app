@@ -167,8 +167,11 @@ class SendElectronicReceiptJob < ApplicationJob
   # uno que se arme acá: así el archivo que recibe quien abre el correo se llama
   # igual que el archivado (`<clave>.xml` y `<clave>_respuesta.xml`), y no hay
   # dos convenciones de nombre que se puedan separar sin que nadie lo note.
+  # `XmlSentUrl`/`XmlResponseUrl`, no `U_CL_FEC_XmlSentUrl`/
+  # `U_CL_FEC_XmlResponseUrl`: la vista `DOCMAILINFO` (`Sap::MailDocumentInfo`)
+  # renombra esos dos UDFs al exponerlos.
   def build_attachments(info)
-    %w[U_CL_FEC_XmlSentUrl U_CL_FEC_XmlResponseUrl].filter_map do |field|
+    %w[XmlSentUrl XmlResponseUrl].filter_map do |field|
       url = info.string(field)
       next if url.blank?
 

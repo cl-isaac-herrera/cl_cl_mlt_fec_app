@@ -19,10 +19,10 @@ RSpec.describe SendElectronicReceiptJob do
   let(:mail_queue) { instance_double(Sap::MailQueue, fetch: mail_row, update_status: nil) }
   let(:document_info) do
     Documents::Row.new(
-      'U_CL_FEC_NumConsecutivo' => '00100001010000000001', 'CardName' => 'Cliente Test',
-      'U_CL_FEC_Clave' => '50601012600310182273300100001010000000001100000001',
-      'U_CL_FEC_FechaEmision' => '2026-09-06T09:06:00Z', 'DocTotal' => '1000.00', 'DocTotalFc' => '1000.00',
-      'DocCurrency' => 'CRC', 'U_CL_FEC_Status' => 6, 'U_CL_FEC_XmlSentUrl' => nil, 'U_CL_FEC_XmlResponseUrl' => nil
+      'NumeroConsecutivo' => '00100001010000000001', 'CardName' => 'Cliente Test',
+      'Clave' => '50601012600310182273300100001010000000001100000001',
+      'FechaEmision' => '2026-09-06T09:06:00Z', 'DocTotal' => '1000.00',
+      'DocCurrency' => 'CRC', 'Status' => 6, 'XmlSentUrl' => nil, 'XmlResponseUrl' => nil
     )
   end
   let(:mail_document_info) { instance_double(Sap::MailDocumentInfo, call: document_info) }
@@ -124,8 +124,8 @@ RSpec.describe SendElectronicReceiptJob do
     it 'adjunta el XML enviado y el de respuesta cuando SAP trae las URLs' do
       document_info_with_urls = Documents::Row.new(
         document_info.to_h.merge(
-          'U_CL_FEC_XmlSentUrl' => 'https://azure.test/clvsfe/310/506.xml',
-          'U_CL_FEC_XmlResponseUrl' => 'https://azure.test/clvsfe/310/506_respuesta.xml'
+          'XmlSentUrl' => 'https://azure.test/clvsfe/310/506.xml',
+          'XmlResponseUrl' => 'https://azure.test/clvsfe/310/506_respuesta.xml'
         )
       )
       allow(mail_document_info).to receive(:call).and_return(document_info_with_urls)
