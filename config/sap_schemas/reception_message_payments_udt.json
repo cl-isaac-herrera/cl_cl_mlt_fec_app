@@ -1,0 +1,19 @@
+{
+  "table_name": "@CL_FEC_RECEPTORPAGO",
+  "IsUDT": true,
+  "table_description": "FEC · Medio de pago receptor",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "MensajeReceptorCode", "Description": "FEC · Code del mensaje receptor (cabecera)",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES" },
+
+    { "Name": "TipoMedioPago", "Description": "FEC · Código del medio de pago",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES" },
+
+    { "Name": "MedioPagoOtros", "Description": "FEC · Detalle de medio de pago Otros",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 100, "Mandatory": "tNO" },
+
+    { "Name": "TotalMedioPago", "Description": "FEC · Monto total del medio de pago",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "table_name": "@CL_FEC_RECEPTORSURT",
+  "IsUDT": true,
+  "table_description": "FEC · Surtido de receptor",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "MensajeReceptorLineaCode", "Description": "FEC · Code de la línea del mensaje",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES" },
+
+    { "Name": "CodigoCABYSSurtido", "Description": "FEC · Código CABYS del ítem surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 13, "Mandatory": "tYES" },
+
+    { "Name": "CodTipoSurtido", "Description": "FEC · Tipo de código comercial del surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "CodCodigoSurtido", "Description": "FEC · Código comercial del surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "CantidadSurtido", "Description": "FEC · Cantidad del ítem surtido",
+      "Type": "db_Float", "SubType": "st_Quantity", "Mandatory": "tYES" },
+
+    { "Name": "UnidadMedidaSurtido", "Description": "FEC · Unidad de medida del surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 15, "Mandatory": "tYES" },
+
+    { "Name": "UnidadMedidaComercialSurtido", "Description": "FEC · Unidad comercial del surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "Detalle", "Description": "FEC · Detalle del ítem surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 254, "Mandatory": "tYES" },
+
+    { "Name": "PrecioUnitarioSurtido", "Description": "FEC · Precio unitario del surtido",
+      "Type": "db_Float", "SubType": "st_Price", "Mandatory": "tYES" },
+
+    { "Name": "MontoTotalSurtido", "Description": "FEC · Monto total del ítem surtido",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "MontoDescuentoSurtido", "Description": "FEC · Monto de descuento del surtido",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "CodigoDescuentoSurtido", "Description": "FEC · Código de descuento del surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "DescuentoSurtidoOtros", "Description": "FEC · Detalle de descuento Otro del surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "SubTotalSurtido", "Description": "FEC · Subtotal del ítem surtido",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "BaseImponibleSurtido", "Description": "FEC · Base imponible del ítem surtido",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "IVACobradoFabricaSurtido", "Description": "FEC · IVA cobrado por fábrica (surtido)",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 1, "Mandatory": "tNO",
+      "ValidValues": [
+        { "Value": "Y", "Description": "Sí" },
+        { "Value": "N", "Description": "No" }
+      ]
+    },
+
+    { "Name": "ImpCodigoImpuestoSurtido", "Description": "FEC · Código de impuesto del surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "ImpCodigoImpuestoOTROSurtido", "Description": "FEC · Impuesto Otro del surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "ImpTarifaIVASurtido", "Description": "FEC · Código de tarifa de IVA del surtido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "ImpTarifaSurtido", "Description": "FEC · Tarifa del impuesto del surtido",
+      "Type": "db_Float", "SubType": "st_Percentage", "Mandatory": "tNO" },
+
+    { "Name": "ImpMontoSurtido", "Description": "FEC · Monto del impuesto del surtido",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "ImpCantidadUnidadMedidaSurtido", "Description": "FEC · Cantidad unidad medida (surtido)",
+      "Type": "db_Float", "SubType": "st_Quantity", "Mandatory": "tNO" },
+
+    { "Name": "ImpPorcentajeSurtido", "Description": "FEC · Porcentaje del impuesto del surtido",
+      "Type": "db_Float", "SubType": "st_Percentage", "Mandatory": "tNO" },
+
+    { "Name": "ImpProporcionSurtido", "Description": "FEC · Proporción del impuesto del surtido",
+      "Type": "db_Float", "SubType": "st_Percentage", "Mandatory": "tNO" },
+
+    { "Name": "ImpVolumenUnidadConsumoSurtido", "Description": "FEC · Volumen consumo (surtido)",
+      "Type": "db_Float", "SubType": "st_Quantity", "Mandatory": "tNO" },
+
+    { "Name": "ImpImpuestoUnidadSurtido", "Description": "FEC · Impuesto por unidad (surtido)",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" }
+  ]
+}

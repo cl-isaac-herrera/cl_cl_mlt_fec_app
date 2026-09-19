@@ -1,0 +1,346 @@
+{
+  "table_name": "@CL_FEC_RECEPTORMSG",
+  "IsUDT": true,
+  "table_description": "FEC · Mensaje receptor",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "Clave", "Description": "FEC · Clave del comprobante de Hacienda",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tYES" },
+
+    { "Name": "Mensaje", "Description": "FEC · Código del mensaje enviado a Hacienda",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES",
+      "ValidValues": [
+        { "Value": "05", "Description": "Aceptado" },
+        { "Value": "06", "Description": "Aceptado parcialmente" },
+        { "Value": "07", "Description": "Rechazado" }
+      ]
+    },
+
+    { "Name": "DetalleMensaje", "Description": "FEC · Detalle del mensaje enviado a Hacienda",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "Status", "Description": "FEC · Estado del procesamiento del mensaje",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES", "DefaultValue": "0",
+      "ValidValues": [
+        { "Value": "0", "Description": "Pending" },
+        { "Value": "2", "Description": "Processing" },
+        { "Value": "3", "Description": "Sent" },
+        { "Value": "4", "Description": "Error" },
+        { "Value": "6", "Description": "Accepted" },
+        { "Value": "7", "Description": "Rejected" },
+        { "Value": "8", "Description": "Reprocess" }
+      ]
+    },
+
+    { "Name": "ErrorMessage", "Description": "FEC · Detalle del último error de proceso",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "Attempts", "Description": "FEC · Cantidad de intentos de envío",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO", "DefaultValue": "0" },
+
+    { "Name": "LastAttempt", "Description": "FEC · Fecha ISO 8601 del último intento",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "LastTransact", "Description": "FEC · Fecha ISO 8601 del último cambio",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tYES" },
+
+    { "Name": "CreationDate", "Description": "FEC · Fecha ISO 8601 de creación",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tYES" },
+
+    { "Name": "ConsecutivoDoc", "Description": "FEC · Consecutivo interno del documento",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "DocType", "Description": "FEC · Tipo de documento recibido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES" },
+
+    { "Name": "DocTypeSAP", "Description": "FEC · ObjType de la factura de compra en SAP",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "DocEntry", "Description": "FEC · DocEntry de la factura de compra en SAP",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "Sucursal", "Description": "FEC · Código de sucursal (BPLId) receptora",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "Terminal", "Description": "FEC · Número de terminal o caja receptora",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "UserId", "Description": "FEC · Usuario que registró la decisión",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "NumeroCedulaEmisor", "Description": "FEC · Cédula del emisor (extraída del XML)",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tYES" },
+
+    { "Name": "NumeroCedulaReceptor", "Description": "FEC · Cédula del receptor (esta compañía)",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tYES" },
+
+    { "Name": "NumeroConsecutivoEmisor", "Description": "FEC · Consecutivo del comprobante emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "NumeroConsecutivoReceptor", "Description": "FEC · Consecutivo del mensaje receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "FechaEmisionDoc", "Description": "FEC · Fecha ISO 8601 de emisión del documento",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "FechaEmisionXML", "Description": "FEC · Fecha de emisión tal como viene del XML",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "TipoIdentificacionEmisor", "Description": "FEC · Tipo de identificación del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "TipoIdentificacionReceptor", "Description": "FEC · Tipo de identificación del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "EmsrIdeTipo", "Description": "FEC · Tipo de identificación del emisor (XML)",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES" },
+
+    { "Name": "EmsrIdeNumero", "Description": "FEC · Número de identificación del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tYES" },
+
+    { "Name": "EmsrNombre", "Description": "FEC · Nombre del emisor según el XML",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tYES" },
+
+    { "Name": "EmsrNombreComercial", "Description": "FEC · Nombre comercial del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "EmsrCorreoElectronico", "Description": "FEC · Correo electrónico del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "EmsrUbProvincia", "Description": "FEC · Código de provincia del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 1, "Mandatory": "tNO" },
+
+    { "Name": "EmsrUbCanton", "Description": "FEC · Código de cantón del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "EmsrUbDistrito", "Description": "FEC · Código de distrito del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "EmsrUbBarrio", "Description": "FEC · Barrio de ubicación del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "EmsrUbOtrasSenas", "Description": "FEC · Otras señas de ubicación del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 250, "Mandatory": "tNO" },
+
+    { "Name": "EmsrOtrasSenasExtranjero", "Description": "FEC · Otras señas extranjeras del emisor",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "EmsrTlfCodigoPais", "Description": "FEC · Código de país teléfono del emisor",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO", "DefaultValue": "506" },
+
+    { "Name": "EmsrTlfNumTelefono", "Description": "FEC · Número de teléfono del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 15, "Mandatory": "tNO" },
+
+    { "Name": "EmsrRegistrofiscal8707", "Description": "FEC · Indicador fiscal 8-7-07 del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 1, "Mandatory": "tNO" },
+
+    { "Name": "CodigoActividadEmisor", "Description": "FEC · Código de actividad del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 6, "Mandatory": "tNO" },
+
+    { "Name": "RcprIdeTipo", "Description": "FEC · Tipo de identificación del receptor (XML)",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "RcprIdeNumero", "Description": "FEC · Número de identificación del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "RcprIdentificacionExtranjero", "Description": "FEC · Identificación extranjera del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "RcprNombre", "Description": "FEC · Nombre del receptor según el XML",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "RcprNombreComercial", "Description": "FEC · Nombre comercial del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "RcprCorreoElectronico", "Description": "FEC · Correo electrónico del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "RcprUbProvincia", "Description": "FEC · Código de provincia del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 1, "Mandatory": "tNO" },
+
+    { "Name": "RcprUbCanton", "Description": "FEC · Código de cantón del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "RcprUbDistrito", "Description": "FEC · Código de distrito del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "RcprUbBarrio", "Description": "FEC · Barrio de ubicación del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "RcprUbOtrasSenas", "Description": "FEC · Otras señas de ubicación del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 250, "Mandatory": "tNO" },
+
+    { "Name": "RcprOtrasSenasExtranjero", "Description": "FEC · Otras señas extranjeras del receptor",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "RcprTlfCodigoPais", "Description": "FEC · Código de país teléfono del receptor",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO", "DefaultValue": "506" },
+
+    { "Name": "RcprTlfNumTelefono", "Description": "FEC · Número de teléfono del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 15, "Mandatory": "tNO" },
+
+    { "Name": "CodigoActividadReceptor", "Description": "FEC · Código de actividad del receptor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 6, "Mandatory": "tNO" },
+
+    { "Name": "TaxesTag", "Description": "FEC · Indica si el XML trae bloque de impuestos",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 1, "Mandatory": "tNO", "DefaultValue": "N",
+      "ValidValues": [
+        { "Value": "Y", "Description": "Sí" },
+        { "Value": "N", "Description": "No" }
+      ]
+    },
+
+    { "Name": "CondicionImpuesto", "Description": "FEC · Condición del impuesto del documento",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "TaxFactor", "Description": "FEC · Factor de impuesto del documento",
+      "Type": "db_Float", "SubType": "st_Rate", "Mandatory": "tNO" },
+
+    { "Name": "MontoTotalImpuesto", "Description": "FEC · Monto total de impuesto del documento",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "MontoTotalImpuestoAcreditar", "Description": "FEC · Monto total de impuesto a acreditar",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "MontoTotalDeGastoAplicable", "Description": "FEC · Monto total de gasto aplicable",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalImpAsumEmisorFabrica", "Description": "FEC · Impuesto asumido por el emisor",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "CodigoMoneda", "Description": "FEC · Código de moneda (ISO 4217)",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 3, "Mandatory": "tYES" },
+
+    { "Name": "TipoCambio", "Description": "FEC · Tipo de cambio del documento",
+      "Type": "db_Float", "SubType": "st_Rate", "Mandatory": "tYES" },
+
+    { "Name": "TotalFactura", "Description": "FEC · Total de la factura del documento",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "TotalMercanciasGravadas", "Description": "FEC · Total de mercancías gravadas",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalMercanciasExentas", "Description": "FEC · Total de mercancías exentas",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalMercExonerada", "Description": "FEC · Total de mercancías exoneradas",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalMercNoSujeta", "Description": "FEC · Total de mercancías no sujetas",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalServGravados", "Description": "FEC · Total de servicios gravados",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalServExentos", "Description": "FEC · Total de servicios exentos",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalServExonerado", "Description": "FEC · Total de servicios exonerados",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalServNoSujeto", "Description": "FEC · Total de servicios no sujetos",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalGravado", "Description": "FEC · Total gravado del resumen",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalExento", "Description": "FEC · Total exento del resumen",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalExonerado", "Description": "FEC · Total exonerado del resumen",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalNoSujeto", "Description": "FEC · Total no sujeto del resumen",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalVenta", "Description": "FEC · Total de venta del resumen",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "TotalDescuentos", "Description": "FEC · Total de descuentos del documento",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalVentaNeta", "Description": "FEC · Total de venta neta del resumen",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "TotalOtrosCargos", "Description": "FEC · Total de otros cargos del documento",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalImpuesto", "Description": "FEC · Total de impuesto del resumen",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "TotalIVADevuelto", "Description": "FEC · Total de IVA devuelto del resumen",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "TotalComprobante", "Description": "FEC · Total del comprobante",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "CondicionVenta", "Description": "FEC · Condición de venta del documento",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "CondicionVentaOtros", "Description": "FEC · Detalle de condición de venta Otros",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 100, "Mandatory": "tNO" },
+
+    { "Name": "PlazoCredito", "Description": "FEC · Plazo de crédito en días",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "InfRefTipoDoc", "Description": "FEC · Tipo de documento de referencia",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "InfRefTipoDocRefOTRO", "Description": "FEC · Detalle de tipo de referencia Otro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "InfRefNumero", "Description": "FEC · Número del documento de referencia",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "InfRefFechaEmision", "Description": "FEC · Fecha ISO 8601 del doc. de referencia",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "InfRefCodigo", "Description": "FEC · Código de la referencia (cabecera)",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "InfCodigoReferenciaOTRO", "Description": "FEC · Detalle de código de referencia Otro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "InfRefRazon", "Description": "FEC · Razón de la referencia (cabecera)",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "ProveedorSistemas", "Description": "FEC · Proveedor de sistemas del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "BandejaReceptor", "Description": "FEC · Bandeja que recibió el documento",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "DocName", "Description": "FEC · Nombre del archivo XML recibido",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 254, "Mandatory": "tNO" },
+
+    { "Name": "XmlSentUrl", "Description": "FEC · Ubicación del XML enviado a Hacienda",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "XmlResponseUrl", "Description": "FEC · Ubicación del XML de respuesta",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "PathReceptPDF", "Description": "FEC · Ubicación del PDF de respuesta",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "HR_envrespcode", "Description": "FEC · Código de respuesta del envío",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "HR_envfecha", "Description": "FEC · Fecha ISO 8601 de la respuesta de envío",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "HR_indestado", "Description": "FEC · Indicador de estado de la respuesta",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "HR_envlocation", "Description": "FEC · URL de consulta devuelta por Hacienda",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 254, "Mandatory": "tNO" },
+
+    { "Name": "HR_envdetails", "Description": "FEC · Detalle textual de la respuesta de envío",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "HR_code", "Description": "FEC · Código de respuesta de la consulta",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "HR_fecha", "Description": "FEC · Fecha ISO 8601 de la consulta a Hacienda",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" }
+  ]
+}

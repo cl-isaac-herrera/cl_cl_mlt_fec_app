@@ -1,0 +1,25 @@
+{
+  "table_name": "@CL_FEC_RECEPTOROTRO",
+  "IsUDT": true,
+  "table_description": "FEC · Otros datos receptor",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "MensajeReceptorCode", "Description": "FEC · Code del mensaje receptor (cabecera)",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "TipoDocumento", "Description": "FEC · Tipo de documento de este dato",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "NumeroDocumento", "Description": "FEC · Número de documento de este dato",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "Compania", "Description": "FEC · Compañía asociada a este dato",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "Codigo", "Description": "FEC · Código del dato",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "Valor", "Description": "FEC · Valor del dato",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" }
+  ]
+}

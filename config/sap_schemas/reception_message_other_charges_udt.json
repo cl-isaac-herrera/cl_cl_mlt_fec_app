@@ -1,0 +1,31 @@
+{
+  "table_name": "@CL_FEC_RECEPTORCARG",
+  "IsUDT": true,
+  "table_description": "FEC · Otros cargos receptor",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "MensajeReceptorCode", "Description": "FEC · Code del mensaje receptor (cabecera)",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES" },
+
+    { "Name": "TipoDocumento", "Description": "FEC · Tipo de documento del cargo",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "TipoIdentidadTercero", "Description": "FEC · Tipo de identidad del tercero",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "NumeroIdentidadTercero", "Description": "FEC · Número de identidad del tercero",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "NombreTercero", "Description": "FEC · Nombre del tercero",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 100, "Mandatory": "tNO" },
+
+    { "Name": "Detalle", "Description": "FEC · Detalle del cargo",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "Porcentaje", "Description": "FEC · Porcentaje del cargo",
+      "Type": "db_Float", "SubType": "st_Percentage", "Mandatory": "tNO" },
+
+    { "Name": "MontoCargo", "Description": "FEC · Monto del cargo",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" }
+  ]
+}

@@ -22,6 +22,13 @@ Los manifiestos de **borrado** van en `delete/` y tienen su propio README.
 | `doc_sync_attempts_udt.json` | `@CL_FEC_DOCSYNCATTMP` | sí | Historial de intentos de sincronización de un documento: con qué estado terminó cada intento y por qué. La escribe y la lee `Sap::DocSyncAttempts`. |
 | `sucursales_udt.json` | `@CL_FEC_SUCURSALES` | sí | Sucursales del emisor ante Hacienda: ubicación, teléfono y correo de cada una. La administra `Sap::Branches` (pantalla `/configurations/branches`) y la lee la emisión para los campos `Emsr*` del comprobante. |
 | `activity_codes_udt.json` | `@CL_FEC_ACTIVITYCODE` | sí | Códigos de actividad económica de la compañía. La administra `Sap::ActivityCodes` desde la sección "Códigos de actividad" del formulario de compañías (`Api::Companies::ActivityCodesController`); sin `destroy`, se inactiva con `Active: N`. |
+| `reception_messages_udt.json` | `@CL_FEC_RECEPTORMSG` | sí | Cabecera del mensaje receptor (05/06/07) de un documento recibido de un proveedor: identificación de emisor/receptor, totales del resumen, referencias de cabecera y el ciclo de envío a Hacienda. Replica `MensajeReceptor` del mail parser legacy (`clvsfemailsconector`). |
+| `reception_message_lines_udt.json` | `@CL_FEC_RECEPTORLIN` | sí | Líneas de detalle del documento del mensaje receptor. Hija de `reception_messages_udt.json` por `MensajeReceptorCode`. Replica `MensajeReceptorLinea`. |
+| `reception_message_line_details_udt.json` | `@CL_FEC_RECEPTORSURT` | sí | Detalle de surtido de una línea del mensaje receptor. Hija de `reception_message_lines_udt.json` por `MensajeReceptorLineaCode`. Replica `DetalleSurtidoReceptor`. |
+| `reception_message_payments_udt.json` | `@CL_FEC_RECEPTORPAGO` | sí | Medios de pago del documento del mensaje receptor. Hija de `reception_messages_udt.json` por `MensajeReceptorCode`. Replica `MedioPagoReceptor`. |
+| `reception_message_other_charges_udt.json` | `@CL_FEC_RECEPTORCARG` | sí | Bloque "Otros Cargos" del documento del mensaje receptor. Hija de `reception_messages_udt.json` por `MensajeReceptorCode`. Replica `OtrosCargosReceptor`. |
+| `reception_message_others_udt.json` | `@CL_FEC_RECEPTOROTRO` | sí | Datos "otros" (código/valor genérico) del documento del mensaje receptor. Hija opcional de `reception_messages_udt.json` por `MensajeReceptorCode`. Replica `OtrosReceptor`. |
+| `reception_message_references_udt.json` | `@CL_FEC_RECEPTORREF` | sí | Bloque `InformacionReferencia` del documento del mensaje receptor. Hija de `reception_messages_udt.json` por `MensajeReceptorCode`. Replica `InformacionReferenciaReceptor`. |
 
 ## Límites de largo — los pone SAP, no son estilo
 
@@ -183,3 +190,61 @@ importan para Hacienda y para ordenar intentos del mismo día—, y así el valo
 entre Rails, el Service Layer y la pantalla, sin que ninguna capa lo reinterprete.
 
 `Size: 25` es el largo de esa cadena: no bajarlo (`Size` solo se puede incrementar, §32).
+
+## 6. Las UDTs del mensaje receptor son varias tablas relacionadas por `*Code`, no una
+
+`reception_messages_udt.json` (cabecera) y sus seis hijas (`reception_message_lines_udt.json`,
+`reception_message_line_details_udt.json`, `reception_message_payments_udt.json`,
+`reception_message_other_charges_udt.json`, `reception_message_others_udt.json`,
+`reception_message_references_udt.json`) replican, tabla por tabla, el modelo
+`MensajeReceptor` + sus colecciones del mail parser legacy
+(`legacy/reception/clvsfemailsconector/FEProcesadorCorreoLib/MensajeReceptor.cs`).
+
+A diferencia de `@CL_FEC_MAILSDETAILS`/`@CL_FEC_DOCSYNCATTMP` (§4), estas filas **no** tienen
+un `DocEntry` de un comprobante propio al momento de crearse — un documento recibido de un
+proveedor no es un objeto de SAP hasta que, ya aceptado, se crea la factura de compra. Por
+eso la relación padre-hijo no usa `DocEntry`+`DocType`: cada tabla hija guarda el **`Code`**
+(la llave autonumérica que SAP asigna a la fila padre) en un campo propio —
+`MensajeReceptorCode` para las cuatro hijas directas de la cabecera,
+`MensajeReceptorLineaCode` para el detalle de surtido, hijo de la línea—. En una UDT
+`bott_NoObjectAutoIncrement` el `Code` es numérico (a diferencia de `bott_NoObject`, donde es
+una llave de negocio alfanumérica), así que el campo de enlace es `db_Numeric`, sin `Size`.
+
+Dos ajustes deliberados frente al legacy, no un descuido de transcripción:
+
+- **No se declaró `CompanyId`.** El legacy era un SaaS multi-tenant (una base para todos los
+  clientes, separados por esa columna); esta versión es una instalación por cliente y cada
+  UDT ya vive dentro de la base de SAP de esa compañía (§31). Declararlo repetiría un dato que
+  la ubicación de la fila ya da.
+- **`XMLSent`/`HR_respuestaxml` del legacy se declararon como `XmlSentUrl`/`XmlResponseUrl`
+  (`db_Memo`, URL, no el XML completo).** Es el mismo patrón que `CL_FEC_XmlSentUrl`/
+  `CL_FEC_XmlResponseUrl` en `marketing_documents.json`/`payments.json`: el XML se archiva en
+  Azure (`Documents::XmlArchive`) y el UDF solo guarda dónde, para no duplicar el contenido.
+
+### `ErrorMessage` consolida DOS campos del legacy — mapeo obligatorio al migrar
+
+`reception_messages_udt.json` declara un solo `ErrorMessage` (`db_Memo`) donde el legacy tenía
+**dos**: `MensajeReceptor.ErrDetails` (detalle del último error de *procesamiento*, el mismo
+rol que `Details` en `doc_sync_attempts_udt.json`) y `MensajeReceptor.XmlResponseMessage`
+(mensaje al *validar* el XML antes de enviarlo). Se unificaron porque, para esta UDT, ambos
+son la misma cosa desde el punto de vista de quien lee el registro: el motivo por el que el
+mensaje receptor no avanzó — falló la validación del XML o falló el envío/procesamiento no
+cambia la acción que toma el usuario (reintentar o corregir el documento).
+
+**Al escribir la lógica que llena esta UDT (`Sap::*` o el servicio que arme/envíe el mensaje
+receptor, todavía sin implementar — ver §41 de `CLAUDE.md`), el mapeo correcto es:**
+
+| Origen legacy | Cuándo se produce | Destino en `@CL_FEC_RECEPTORMSG` |
+|---|---|---|
+| `MensajeReceptor.ErrDetails` | Error al procesar o enviar el mensaje a Hacienda | `ErrorMessage` |
+| `MensajeReceptor.XmlResponseMessage` | Error al validar el XML antes de enviarlo | `ErrorMessage` |
+
+Si en el futuro se necesita distinguir *en qué etapa* falló (validación vs. envío), **no**
+reintroducir un segundo campo de texto: usar el `Status`/`ValidValues` ya declarado (`4 Error`)
+junto con el catálogo de intentos, igual que hace `doc_sync_attempts_udt.json` — la etapa la
+dice el estado, el texto solo explica el motivo.
+
+**Aún no existe ningún `Sap::*` que escriba o lea estas siete UDTs** ni un builder para el XML
+de mensaje receptor — son solo la estructura declarada. El resto de la Prioridad 3 (armar y
+enviar el mensaje receptor, mapear los campos desde el XML del proveedor) sigue pendiente;
+ver `CLAUDE.md` §41.

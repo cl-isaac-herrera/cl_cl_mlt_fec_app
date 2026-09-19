@@ -1,0 +1,31 @@
+{
+  "table_name": "@CL_FEC_RECEPTORREF",
+  "IsUDT": true,
+  "table_description": "FEC · Referencias receptor",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "MensajeReceptorCode", "Description": "FEC · Code del mensaje receptor (cabecera)",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES" },
+
+    { "Name": "InfRefTipoDoc", "Description": "FEC · Tipo de documento de referencia",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "InfRefTipoDocRefOTRO", "Description": "FEC · Detalle de tipo de referencia Otro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "InfRefNumero", "Description": "FEC · Número del documento de referencia",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tYES" },
+
+    { "Name": "InfRefFechaEmision", "Description": "FEC · Fecha ISO 8601 del doc. de referencia",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "InfRefCodigo", "Description": "FEC · Código de la referencia",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tYES" },
+
+    { "Name": "InfCodigoReferenciaOTRO", "Description": "FEC · Detalle de código de referencia Otro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "InfRefRazon", "Description": "FEC · Razón de la referencia",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" }
+  ]
+}

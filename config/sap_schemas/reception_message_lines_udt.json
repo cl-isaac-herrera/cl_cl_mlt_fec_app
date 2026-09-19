@@ -1,0 +1,165 @@
+{
+  "table_name": "@CL_FEC_RECEPTORLIN",
+  "IsUDT": true,
+  "table_description": "FEC · Líneas mensaje receptor",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "MensajeReceptorCode", "Description": "FEC · Code del mensaje receptor (cabecera)",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES" },
+
+    { "Name": "NumeroLinea", "Description": "FEC · Número de línea del detalle",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tYES" },
+
+    { "Name": "Codigo", "Description": "FEC · Código CABYS o interno de la línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "CodTipo", "Description": "FEC · Tipo de código comercial de la línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "CodCodigo", "Description": "FEC · Código comercial de la línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "PartidaArancelaria", "Description": "FEC · Partida arancelaria de la línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 12, "Mandatory": "tNO" },
+
+    { "Name": "Cantidad", "Description": "FEC · Cantidad de la línea",
+      "Type": "db_Float", "SubType": "st_Quantity", "Mandatory": "tYES" },
+
+    { "Name": "UnidadMedida", "Description": "FEC · Unidad de medida de la línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 15, "Mandatory": "tYES" },
+
+    { "Name": "UnidadMedidaComercial", "Description": "FEC · Unidad de medida comercial",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "Detalle", "Description": "FEC · Detalle de la línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 254, "Mandatory": "tYES" },
+
+    { "Name": "PrecioUnitario", "Description": "FEC · Precio unitario de la línea",
+      "Type": "db_Float", "SubType": "st_Price", "Mandatory": "tYES" },
+
+    { "Name": "MontoTotal", "Description": "FEC · Monto total de la línea",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "MontoDescuento", "Description": "FEC · Monto de descuento de la línea",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "NaturalezaDescuento", "Description": "FEC · Naturaleza del descuento",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 80, "Mandatory": "tNO" },
+
+    { "Name": "DCodigoDescuento", "Description": "FEC · Código de descuento de la línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "DCodigoDescuentoOTRO", "Description": "FEC · Detalle de descuento Otro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "SubTotal", "Description": "FEC · Subtotal de la línea",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "BaseImponible", "Description": "FEC · Base imponible de la línea",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "ImpuestoNeto", "Description": "FEC · Impuesto neto de la línea",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "MontoTotalLinea", "Description": "FEC · Monto total de línea con impuestos",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tYES" },
+
+    { "Name": "ImpCodigo", "Description": "FEC · Código de impuesto de la línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "ImpCodigoImpuestoOTRO", "Description": "FEC · Detalle de impuesto Otro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "ImpCodigoTarifa", "Description": "FEC · Código de tarifa del impuesto",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "ImpTarifa", "Description": "FEC · Tarifa del impuesto de la línea",
+      "Type": "db_Float", "SubType": "st_Percentage", "Mandatory": "tNO" },
+
+    { "Name": "ImpFactorIVA", "Description": "FEC · Factor de IVA de la línea",
+      "Type": "db_Float", "SubType": "st_Rate", "Mandatory": "tNO" },
+
+    { "Name": "ImpMonto", "Description": "FEC · Monto del impuesto de la línea",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "ImpMontoExportacion", "Description": "FEC · Monto de exportación del impuesto",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "ImpCantidadUnidadMedida", "Description": "FEC · Cantidad unidad medida impuesto",
+      "Type": "db_Float", "SubType": "st_Quantity", "Mandatory": "tNO" },
+
+    { "Name": "ImpPorcentaje", "Description": "FEC · Porcentaje del impuesto específico",
+      "Type": "db_Float", "SubType": "st_Percentage", "Mandatory": "tNO" },
+
+    { "Name": "ImpProporcion", "Description": "FEC · Proporción del impuesto específico",
+      "Type": "db_Float", "SubType": "st_Percentage", "Mandatory": "tNO" },
+
+    { "Name": "ImpVolumenUnidadConsumo", "Description": "FEC · Volumen unidad consumo impuesto",
+      "Type": "db_Float", "SubType": "st_Quantity", "Mandatory": "tNO" },
+
+    { "Name": "ImpImpuestoUnidad", "Description": "FEC · Impuesto por unidad (específico)",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "IVACobradoFabrica", "Description": "FEC · Indica si el IVA lo cobró la fábrica",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 1, "Mandatory": "tNO",
+      "ValidValues": [
+        { "Value": "Y", "Description": "Sí" },
+        { "Value": "N", "Description": "No" }
+      ]
+    },
+
+    { "Name": "ImpuestoAsumidoEmisorFabrica", "Description": "FEC · Impuesto asumido emisor/fábrica",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "ETipoDocumento", "Description": "FEC · Tipo de doc. de exoneración de línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "ETipoDocumentoOtro", "Description": "FEC · Detalle de tipo de exoneración Otro",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 50, "Mandatory": "tNO" },
+
+    { "Name": "ENumeroDocumento", "Description": "FEC · Número de documento de exoneración",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 40, "Mandatory": "tNO" },
+
+    { "Name": "EFechaEmision", "Description": "FEC · Fecha ISO 8601 de la exoneración",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "ENombreInstitucion", "Description": "FEC · Institución de exoneración (catálogo)",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "ENombreInstitucionOtros", "Description": "FEC · Institución de exoneración Otros",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" },
+
+    { "Name": "ETarifaExonerada", "Description": "FEC · Tarifa exonerada de la línea",
+      "Type": "db_Float", "SubType": "st_Percentage", "Mandatory": "tNO" },
+
+    { "Name": "EMontoExoneracion", "Description": "FEC · Monto exonerado de la línea",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "EMontoImpuestoV42", "Description": "FEC · Monto impuesto exonerado (V4.2)",
+      "Type": "db_Float", "SubType": "st_Sum", "Mandatory": "tNO" },
+
+    { "Name": "EPorcentajeCompraV42", "Description": "FEC · Porcentaje de compra exonerado (V4.2)",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "EArticulo", "Description": "FEC · Artículo de la ley de exoneración",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "EInciso", "Description": "FEC · Inciso de la ley de exoneración",
+      "Type": "db_Numeric", "SubType": "st_None", "Mandatory": "tNO" },
+
+    { "Name": "RegistroMedicamento", "Description": "FEC · Registro sanitario del medicamento",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 30, "Mandatory": "tNO" },
+
+    { "Name": "FormaFarmaceutica", "Description": "FEC · Forma farmacéutica del medicamento",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "NumeroVINoSerie", "Description": "FEC · Número de VIN o serie del vehículo",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
+    { "Name": "TipoTransaccion", "Description": "FEC · Tipo de transacción de la línea",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO" },
+
+    { "Name": "OtrosDatos", "Description": "FEC · Otros datos de la línea",
+      "Type": "db_Memo", "SubType": "st_None", "Mandatory": "tNO" }
+  ]
+}

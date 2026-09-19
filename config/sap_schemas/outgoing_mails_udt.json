@@ -1,7 +1,7 @@
 {
   "table_name": "@CL_FEC_MAILSDETAILS",
   "IsUDT": true,
-  "table_description": "Detalles envío de comprobantes",
+  "table_description": "FEC · Detalles envío correos",
   "table_type": "bott_NoObjectAutoIncrement",
   "columns": [
     { "Name": "DocEntry", "Description": "FEC · DocEntry del comprobante asociado al correo",
