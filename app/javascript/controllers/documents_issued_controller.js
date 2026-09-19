@@ -337,8 +337,12 @@ export default class extends TabulatorController {
       StatusForTable: this.#statusLabel(doc.FEDocumentStatus),
       FechaFactura: this.#formatDate(doc.DocDate),
       // Sin columna propia en la tabla (se sacó a pedido): sigue viajando
-      // cruda para el panel "Consultar Información" (`#openInfoModal`).
-      FechaEmision: doc.U_CL_FEC_FechaEmision,
+      // para el panel "Consultar Información" (`#openInfoModal`).
+      // `FechaEmision`, no `U_CL_FEC_FechaEmision`: la vista renombra este UDF
+      // al exponerlo (igual que `Clave`/`NumeroConsecutivo`, ver `db/seeds.rb`
+      // — el nombre crudo del UDF no existe en la fila y quedaba siempre
+      // `undefined`, mostrando el hint de "no emitido" aunque sí hubiera fecha).
+      FechaEmision: doc.FechaEmision,
       // Las direcciones en Azure de los XML archivados (`Documents::XmlArchive`).
       // NO se usan para bajar el archivo —eso lo resuelve el servidor por
       // `DocEntry`, ver `Api::Documents::XmlFilesController`— sino para saber si

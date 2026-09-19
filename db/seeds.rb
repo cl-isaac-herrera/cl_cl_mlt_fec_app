@@ -660,11 +660,15 @@ SL_RESOURCES_STATUS_UPDATES = [
 #   U_CL_FEC_XmlResponseUrl     → XmlResponseUrl
 #   U_CL_FEC_Clave              → Clave
 #   U_CL_FEC_NumConsecutivo     → NumeroConsecutivo
+#   U_CL_FEC_FechaEmision       → FechaEmision
 #
 # ⚠️ Corregido: esta nota decía antes que `U_CL_FEC_Clave`/
 # `U_CL_FEC_NumConsecutivo` SÍ conservaban su nombre de UDF. Es falso contra la
 # vista real — pedirle esos dos nombres devuelve `nil` sin ningún error, y eso
 # dejaba la columna "N° FE" y la Clave del panel de información siempre vacías.
+# El mismo error se repitió con `U_CL_FEC_FechaEmision` (corregido 2026-09-19,
+# `documents_issued_controller.js#mapDocument`): la fecha de emisión del panel
+# "Información del documento" quedaba siempre vacía por la misma razón.
 #
 # `DocEntry`, `DocDate`, `CardCode`, `CardName`, `DocCurrency` y `DocNum` SÍ
 # conservan su nombre. La vista además expone `PdfUrl`, que no existe en la
