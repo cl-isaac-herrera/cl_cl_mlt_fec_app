@@ -7,13 +7,27 @@
 # este catálogo tiene que existir en la base o el menú queda vacío y todas las
 # acciones se muestran deshabilitadas (CLAUDE.md §26).
 #
-# Idempotente: se puede correr varias veces (`bin/rails db:seed`).
+# Idempotente: se puede correr varias veces (`bin/rails db:seed`) — y CORRE en
+# cada deploy (`bin/docker-entrypoint`), así que "idempotente" acá no es solo
+# "no duplica": tiene que ser tan inofensivo para una base con datos reales
+# como para una recién creada.
 #
-# ⚠️ Los `id` se fijan explícitamente para conservar los del origen. Eso permite
+# Los `id` se fijan explícitamente para conservar los del origen. Eso permite
 # importar después `PermissionByRol` copiando `PermissionId` tal cual, sin mapear
-# por nombre. Como forzar un id sobre una fila existente implica reemplazarla, el
-# seed vacía `permissions` y `role_permissions` antes de insertar; son tablas que
-# hoy solo escribe este archivo. `roles` y `user_roles` no se tocan.
+# por nombre. El upsert es por ese `id` (`find_or_initialize_by(id:)`, igual que
+# `Setting`/`SlResource` más abajo lo hacen por `code`): la fila existente se
+# actualiza en su lugar, nunca se borra.
+#
+# ⚠️ Este archivo NUNCA hace `delete_all` sobre `permissions`, `role_permissions`
+# ni `user_permissions`. Las dos últimas las escribe la aplicación en vivo
+# (`PUT /api/roles/:id/permissions`, `PUT /api/users/:id/permissions`) — la
+# premisa de que "hoy solo las escribe este archivo" dejó de ser cierta apenas
+# esas pantallas existieron, y un `delete_all` en cada corrida se llevaba
+# puestos los permisos de cualquier rol que no fuera Administrador y TODOS los
+# permisos globales asignados directamente a un usuario, sin nada que los
+# reconstruyera después. Ver CLAUDE.md §28 ("Cambiar el catálogo en una base
+# viva es una MIGRACIÓN, no un re-seed") — este archivo ahora cumple esa regla
+# por diseño, no solo de palabra.
 
 # ---------------------------------------------------------------------------
 # 1. Permisos NORMALES — export de la tabla `Permission` del .NET (54 filas).
@@ -237,47 +251,47 @@ DEACTIVATED = %w[
 ADMIN_ROLE_NAME = 'Administrador'
 
 ActiveRecord::Base.transaction do
-  # 1. Catálogo. Se reemplaza completo para poder fijar los Id del origen.
-  #
-  # Hay que vaciar ANTES las dos tablas que referencian `permissions`, o el
-  # `delete_all` choca contra sus llaves foráneas. `user_permissions` es la vía de
-  # concesión directa (permisos globales por usuario): hoy nace vacía, pero apenas
-  # alguien asigne uno, un `db:seed` sin esta línea revienta.
-  #
-  # ⚠️ `unscoped` obligatorio: los tres modelos tienen `SoftDeletable`, y su
-  # `default_scope` hace que un `delete_all` pelado borre SOLO las filas activas.
-  # Las revocadas sobreviven, siguen apuntando a `permissions` y la FK falla — que
-  # es exactamente lo que pasaba apenas alguien revocaba un permiso de un rol.
-  RolePermission.unscoped.delete_all
-  UserPermission.unscoped.delete_all
-  Permission.unscoped.delete_all
-
+  # 1. Catálogo — upsert por Id, la llave natural del origen. `unscoped` para
+  #    encontrar también las filas dadas de baja (`DEACTIVATED`) y reactivarlas
+  #    en vez de duplicarlas.
   rows = CATALOG.map          { |id, name, desc| [id, name, desc, 'normal'] } +
          GLOBAL_CATALOG.map   { |id, name, desc| [id, name, desc, 'global'] } +
          CODE_ONLY.map        { |id, name, desc| [id, name, desc, 'normal'] } +
          CODE_ONLY_GLOBAL.map { |id, name, desc| [id, name, desc, 'global'] }
 
+  created = 0
   rows.each do |id, name, description, type|
-    Permission.create!(id: id, name: name, description: description, type: type,
-                       is_active: !DEACTIVATED.include?(name))
+    permission = Permission.unscoped.find_or_initialize_by(id: id)
+    created += 1 unless permission.persisted?
+
+    permission.name        = name
+    permission.description = description
+    permission.type        = type
+    permission.is_active   = !DEACTIVATED.include?(name)
+    permission.save!
   end
   puts "Permisos: #{Permission.count} activos " \
        "(#{Permission.normal.count} normal / #{Permission.global.count} global; " \
        "#{CODE_ONLY.size + CODE_ONLY_GLOBAL.size} sin Id de origen) " \
-       "+ #{DEACTIVATED.size} dados de baja"
+       "+ #{DEACTIVATED.size} dados de baja (#{created} nuevos)"
 
   # 2. Rol Administrador con el catálogo completo.
   admin = Role.find_or_initialize_by(name: ADMIN_ROLE_NAME)
   admin.is_active = true
   admin.save!
 
-  # Sin `unscoped` a propósito: el default_scope de SoftDeletable deja fuera a los
-  # de `DEACTIVATED`, que es justo lo que se quiere — no tiene sentido concederle
-  # a nadie un permiso dado de baja.
+  # Upsert por (role_id, permission_id) — agrega lo que falte y reactiva lo que
+  # estuviera de baja, sin pasar por un `delete_all` que arrastraría también a
+  # los demás roles. Sin `unscoped` en `Permission.find_each` a propósito: el
+  # default_scope de SoftDeletable deja fuera a los de `DEACTIVATED`, que es
+  # justo lo que se quiere — no tiene sentido concederle a nadie un permiso
+  # dado de baja.
   Permission.find_each do |permission|
-    RolePermission.create!(role_id: admin.id, permission_id: permission.id, is_active: true)
+    rp = RolePermission.unscoped.find_or_initialize_by(role_id: admin.id, permission_id: permission.id)
+    rp.is_active = true
+    rp.save!
   end
-  puts "Permisos del rol #{ADMIN_ROLE_NAME}: #{RolePermission.where(role_id: admin.id).count}"
+  puts "Permisos del rol #{ADMIN_ROLE_NAME}: #{RolePermission.where(role_id: admin.id, is_active: true).count}"
 
   # 3. El rol se asigna en cada compañía que el usuario ya tenga asignada. Sin esta
   #    fila (user_roles) AuthorizationService devuelve [] aunque el rol exista: los
@@ -1163,8 +1177,8 @@ end
 #    lo pone el operador desde Configuraciones → Generales. `code`, `group_code`,
 #    `description` e `is_visible` son metadatos y la interfaz no los edita.
 #
-#    ⚠️ ESTE SEED NO BORRA. Es la diferencia con el de `permissions`, que hace
-#    `delete_all` para poder forzar los Id del origen. Acá los valores son
+#    ⚠️ ESTE SEED NO BORRA — mismo criterio que el de `permissions`, más arriba:
+#    upsert por llave natural, nunca `delete_all`. Acá los valores son
 #    secretos que escribió el operador —credenciales de base de datos, la
 #    contraseña de Crystal—: un `delete_all` los borraría y la instalación
 #    quedaría muda hasta que alguien los volviera a escribir a mano, sin ningún
@@ -1395,3 +1409,16 @@ ActiveRecord::Base.transaction do
   puts "Ajustes: #{total} (#{created} nuevos, #{configured} con valor configurado, " \
        "#{Setting.unscoped.where(is_visible: false).count} ocultos)"
 end
+
+# ---------------------------------------------------------------------------
+# Usuario de sistema — `sys@clavisco.com`.
+#
+# `unscoped`: el índice único de `users.email` no excluye a los inactivos, así
+# que sin esto un usuario dado de baja no se encontraría y el seed intentaría
+# insertar otro igual (mismo criterio que `Setting`, más arriba).
+record = User.unscoped.find_or_initialize_by(email: 'sys@clavisco.com')
+record.name      = 'System'
+record.is_active = true
+record.save!
+
+puts "Usuario de sistema: #{record.email}"

@@ -1837,13 +1837,31 @@ controller, el `#hasPerm` del JS que gatea la UI, y los specs.
 
 ### Cambiar el catálogo en una base viva es una MIGRACIÓN, no un re-seed
 
-`db/seeds.rb` **borra y recrea el catálogo entero** (`Permission.unscoped.delete_all`).
-Eso levanta un ambiente de cero; en una base con datos reales se lleva puestas todas las
-asignaciones de `role_permissions` y `user_permissions`.
+> **Incidente (2026-09-20):** hasta esta fecha, `db/seeds.rb` **borraba y recreaba el
+> catálogo entero** (`Permission.unscoped.delete_all` + `RolePermission.unscoped.delete_all`
+> + `UserPermission.unscoped.delete_all`) en **cada corrida**, y `db:seed` corre en **cada
+> deploy** (`bin/docker-entrypoint`). El seed solo reconstruía los permisos del rol
+> `Administrador` — cualquier otro rol perdía TODOS sus permisos, y todo permiso global
+> concedido directamente a un usuario (`user_permissions`) se perdía sin que nada lo
+> reconstruyera. Se corrigió: el seed ahora hace **upsert por `id`**
+> (`Permission.unscoped.find_or_initialize_by(id:)`) y nunca borra `permissions`,
+> `role_permissions` ni `user_permissions`. El texto de abajo describe el diseño correcto
+> —el que ya está en el código—, no el bug histórico.
 
-> **Regla:** renombrar o dar de baja un permiso se hace en una migración de datos, y
-> además en `seeds.rb`, de modo que **una base migrada y una sembrada de cero terminen
-> idénticas**. Referencia: `20260812130000_apply_permission_catalog_changes.rb`.
+`db/seeds.rb` sigue el mismo criterio que `Setting`/`SlResource` más abajo en el mismo
+archivo: **upsert por la llave natural** (`id` para `Permission`, que es el `Id` del origen
+del .NET — ver el encabezado de la sección 1), **nunca** `delete_all`. Las dos tablas que
+antes se vaciaban a mano (`role_permissions`, `user_permissions`) las escribe la aplicación
+en vivo (`PUT /api/roles/:id/permissions`, `PUT /api/users/:id/permissions`): un `delete_all`
+en un seed que corre en cada deploy se las lleva puestas.
+
+> **Regla:** renombrar o dar de baja un permiso **ya se puede hacer directamente en
+> `seeds.rb`**, porque el upsert es por `id` — el nombre es solo un atributo más de la fila
+> existente, así que cambiarlo no rompe ninguna FK. La migración de datos
+> (`20260812130000_apply_permission_catalog_changes.rb`) sigue siendo necesaria SOLO para
+> una base que ya corrió el seed viejo (destructivo) y cuyo catálogo pudo haber quedado
+> desalineado antes de esta fecha; para cualquier cambio de catálogo nuevo, `seeds.rb` solo
+> alcanza.
 
 - **Baja lógica, nunca `DELETE`.** §2.2 prohíbe el borrado físico, la FK desde
   `role_permissions` lo impediría igual, y borrar en cascada destruiría la asignación real
@@ -3073,3 +3091,45 @@ No hace falta un Artifact nuevo por cada commit. Actualizar cuando el cambio mue
 de alguna prioridad o módulo del inventario (cierra un ítem, cambia su evidencia, o revela
 que algo marcado como hecho en realidad no lo estaba). Si el cambio es puramente interno sin
 relación al inventario (un refactor, un fix de estilo), no amerita tocar el Artifact.
+
+---
+
+## 42. Migraciones y `db:seed` — informar si se corrieron contra `development`
+
+Toda vez que se crea una migración nueva o se agrega/modifica algo que `db/seeds.rb`
+siembra (un campo, una fila de catálogo, un usuario por defecto), **decir explícitamente
+al usuario, al cerrar la respuesta, si se corrieron o no** `bin/rails db:migrate` /
+`bin/rails db:seed` contra la base de `development` y si esta quedó al día.
+
+### Regla
+
+> Después de crear o tocar una migración: reportar si se corrió `db:migrate` y si
+> `db/schema.rb` quedó al día con la versión de la migración nueva.
+> Después de tocar `db/seeds.rb`: reportar si se corrió `db:seed` y qué escribió
+> (filas nuevas, cuántas se reafirmaron).
+> Si NO se corrió alguno de los dos, decirlo igual de explícito — no dejar que el
+> usuario asuma que la base de `development` ya tiene el cambio.
+
+### Por qué
+
+Una migración creada pero no corrida dice todo lo que hace en el código, pero la base de
+`development` sigue sin la columna hasta que alguien ejecuta `db:migrate` — y sin avisarlo,
+el siguiente request/spec falla con un error de columna inexistente que no tiene relación
+aparente con el cambio recién hecho. Lo mismo con `db:seed`: agregar una fila al catálogo
+no la mete en la base sola.
+
+### Formato mínimo del aviso
+
+Una o dos líneas al final de la respuesta, no una sección aparte:
+
+```
+Corrí `db:migrate` — development quedó en la versión 2026_09_20_100000.
+Corrí `db:seed` — creó el usuario sys@clavisco.com (ya existía en corridas siguientes).
+```
+
+o, si no se corrieron:
+
+```
+Dejé la migración creada pero NO la corrí — development todavía no tiene la columna
+`recept_mails`. Correr `bin/rails db:migrate` antes de probarlo.
+```
