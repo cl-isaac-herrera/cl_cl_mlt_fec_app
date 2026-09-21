@@ -31,7 +31,14 @@ class AuthController < ApplicationController
     return render_oidc_not_configured unless oidc_configured?
 
     if params[:state].blank? || params[:state] != session.delete(:oidc_state)
-      return render plain: 'Estado inválido', status: :bad_request
+      # Motivo más frecuente: recargar esta misma URL. El state (y el code) del
+      # proveedor son de un solo uso — se consumen en el primer request — así que
+      # un F5 acá SIEMPRE cae en esta rama. No es un error real: es la URL de
+      # callback usada dos veces.
+      return render_auth_error(
+        'El enlace de inicio de sesión ya se usó o expiró. Volvé a intentarlo.',
+        status: :bad_request
+      )
     end
 
     # El nonce se consume acá pase lo que pase: uno viejo no puede quedar dando
@@ -45,11 +52,11 @@ class AuthController < ApplicationController
     # Sin este guard se intentaba el intercambio igual y reventaba con AttrMissing.
     if params[:error].present?
       Rails.logger.info "[Auth] Login no completado: #{params[:error]} — #{params[:error_description]}"
-      return render plain: 'No se completó el inicio de sesión.', status: :unauthorized
+      return render_auth_error('No se completó el inicio de sesión.', status: :unauthorized)
     end
 
     if params[:code].blank?
-      return render plain: 'Respuesta inválida del proveedor de identidad.', status: :bad_request
+      return render_auth_error('Respuesta inválida del proveedor de identidad.', status: :bad_request)
     end
 
     access_token = oidc_client.exchange_code(params[:code])
@@ -59,15 +66,25 @@ class AuthController < ApplicationController
       # La respuesta no pertenece a este login. No se detalla el motivo al
       # usuario — el detalle va al log del servidor (§1.5).
       Rails.logger.warn '[Auth] id_token rechazado: el nonce no corresponde a este login'
-      return render plain: 'No se pudo validar el inicio de sesión.', status: :unauthorized
+      return render_auth_error('No se pudo validar el inicio de sesión. Volvé a intentarlo.', status: :unauthorized)
     end
+
+    # El id_token NO va en la cookie: junto al access_token de Keycloak supera los
+    # 4 KB del cookie store y Rails corta con CookieOverflow. Se guarda del lado
+    # del servidor y en la cookie queda solo una llave corta.
+    #
+    # Se guarda ANTES de saber si hay cuenta local: la pantalla de "cuenta no
+    # encontrada" también necesita poder cerrar la sesión SSO del proveedor (botón
+    # "Cerrar sesión" → GET /auth/logout), y ese cierre completo exige el
+    # id_token_hint (ver la nota de provider_logout_url más abajo).
+    session[:id_token_key] = store_id_token(access_token.id_token)
 
     user = resolve_user(claims)
     unless user
       # El proveedor autenticó a alguien que no está dado de alta en este producto.
       # No se auto-provisiona: los roles/permisos por compañía los asigna un admin.
       Rails.logger.warn "[Auth] Autenticación correcta pero sin cuenta local para #{claims['email'].inspect}"
-      return render plain: 'No existe una cuenta para este correo.', status: :unauthorized
+      return render 'auth/account_not_found', status: :unauthorized, locals: { email: claims['email'] }
     end
 
     session[:user_id] = user.id
@@ -76,10 +93,6 @@ class AuthController < ApplicationController
     # nombre que usa el estándar para el token del backend heredado).
     session[:access_token] = access_token.access_token.to_s.presence
     session[:user_email]   = user.email
-    # El id_token NO va en la cookie: junto al access_token de Keycloak supera los
-    # 4 KB del cookie store y Rails corta con CookieOverflow. Se guarda del lado
-    # del servidor y en la cookie queda solo una llave corta.
-    session[:id_token_key] = store_id_token(access_token.id_token)
 
     redirect_to root_path
   end
@@ -179,7 +192,14 @@ class AuthController < ApplicationController
   # explícito, igual que las otras ramas de error de este controller.
   def render_oidc_not_configured
     Rails.logger.error '[Auth] OIDC sin configurar: falta OIDC_DOMAIN/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET.'
-    render plain: 'Autenticación no configurada.', status: :service_unavailable
+    render_auth_error('Autenticación no configurada. Contacte a un administrador.', status: :service_unavailable)
+  end
+
+  # Vista compartida por toda rama de error del flujo OIDC (menos "cuenta no
+  # encontrada", que tiene su propia pantalla con botón de cerrar sesión). Antes
+  # cada rama respondía `render plain:` — una página en blanco sin forma de salir.
+  def render_auth_error(message, status:)
+    render 'auth/error', status: status, locals: { message: message }
   end
 
   def oidc_client(redirect_uri: auth_callback_url)

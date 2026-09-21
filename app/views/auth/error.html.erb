@@ -1,0 +1,31 @@
+<% content_for :title, "No se pudo iniciar sesión" %>
+
+<div class="min-h-screen flex items-center justify-center bg-gray-100 p-5">
+  <div class="w-full max-w-md bg-white rounded-2xl shadow-md border border-gray-200 p-8 text-center">
+
+    <%# Logo %>
+    <div class="mb-6">
+      <%= image_tag 'Logo-Clavisco-blue.png', alt: 'Clavisco', class: 'mx-auto w-48' %>
+    </div>
+
+    <div class="mx-auto mb-5 flex items-center justify-center h-14 w-14 rounded-full bg-amber-100">
+      <span class="material-icons text-3xl text-amber-600">error_outline</span>
+    </div>
+
+    <h2 class="text-lg font-semibold text-gray-800 mb-2">No se pudo iniciar sesión</h2>
+
+    <p class="text-sm text-gray-500 mb-8"><%= message %></p>
+
+    <%# <a href> real, con full reload: /login redirige al proveedor OIDC (otro
+        origen), no es una navegación SPA interna. %>
+    <%= link_to '/login', data: { turbo: false },
+          class: 'w-full inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-3 px-4 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2' do %>
+      <span class="material-icons text-base">login</span>
+      Iniciar sesión
+    <% end %>
+
+    <div class="text-center text-gray-400 text-xs mt-6">
+      <p>© <%= Date.current.year %> Clavis Consultores</p>
+    </div>
+  </div>
+</div>

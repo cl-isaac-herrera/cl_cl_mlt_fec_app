@@ -8,10 +8,11 @@
         style: "-webkit-mask-image: radial-gradient(ellipse 75% 75% at center, #000 55%, transparent 100%);
                 mask-image: radial-gradient(ellipse 75% 75% at center, #000 55%, transparent 100%);" %>
 
-  <button type="button"
-          onclick="window.Turbo ? window.Turbo.visit('/home') : (window.location.href = '/home')"
-          class="inline-flex items-center gap-2 px-5 py-2.5 text-blue-600 text-sm font-medium rounded-lg border border-transparent hover:bg-blue-50 transition-colors">
+  <%# <a href> real: el CSP de la app (script-src :self, sin unsafe-inline) bloquea
+      silenciosamente los onclick inline — Turbo intercepta el click igual. %>
+  <%= link_to '/home',
+        class: 'inline-flex items-center gap-2 px-5 py-2.5 text-blue-600 text-sm font-medium rounded-lg border border-transparent hover:bg-blue-50 transition-colors' do %>
     <span class="material-icons text-base">home</span>
     Ir al inicio
-  </button>
+  <% end %>
 </div>

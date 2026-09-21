@@ -103,6 +103,25 @@ RSpec.describe 'AuthController (login OIDC)', type: :request do
       expect(response).to have_http_status(:unauthorized)
     end
 
+    it 'muestra una pantalla con el correo y un botón para cerrar sesión cuando no hay cuenta local' do
+      state = start_login('email' => 'nadie@example.com')
+
+      get '/auth/callback', params: { state: state, code: 'abc123' }
+
+      expect(response.body).to include('No existe una cuenta para este correo')
+      expect(response.body).to include('nadie@example.com')
+      expect(response.body).to include("/auth/logout")
+    end
+
+    it 'guarda el id_token aunque no exista cuenta local, para poder cerrar el SSO desde esa pantalla' do
+      state = start_login('email' => 'nadie@example.com')
+
+      get '/auth/callback', params: { state: state, code: 'abc123' }
+
+      expect(session[:id_token_key]).to be_present
+      expect(Rails.cache.read("oidc:id_token:#{session[:id_token_key]}")).to eq('fake-id-token')
+    end
+
     it 'maneja el rechazo del usuario en la pantalla de consentimiento sin reventar' do
       get '/auth/login'
 
@@ -132,6 +151,17 @@ RSpec.describe 'AuthController (login OIDC)', type: :request do
 
       expect(response).to have_http_status(:bad_request)
       expect(session[:user_id]).to be_nil
+    end
+
+    it 'recargar la página de callback (state ya consumido) muestra una pantalla con botón, no una en blanco' do
+      state = start_login('email' => user.email)
+      get '/auth/callback', params: { state: state, code: 'abc123' } # 1er request: consume el state
+
+      get '/auth/callback', params: { state: state, code: 'abc123' } # F5 del usuario
+
+      expect(response).to have_http_status(:bad_request)
+      expect(response.body).to include('El enlace de inicio de sesión ya se usó o expiró')
+      expect(response.body).to include('/login')
     end
 
     it 'no crea sesión si el nonce del id_token no corresponde a este login (replay)' do
@@ -220,6 +250,17 @@ RSpec.describe 'AuthController (login OIDC)', type: :request do
         get '/auth/logout'
 
         expect(response).to redirect_to(base_logout)
+      end
+
+      it 'agrega el id_token_hint incluso cuando el callback no encontró cuenta local' do
+        get '/auth/login'
+        allow(fake_client).to receive(:decode_id_token)
+          .and_return({ 'email' => 'nadie@example.com', 'nonce' => session[:oidc_nonce] })
+        get '/auth/callback', params: { state: session[:oidc_state], code: 'abc123' }
+
+        get '/auth/logout'
+
+        expect(response).to redirect_to("#{base_logout}&id_token_hint=fake-id-token")
       end
     end
   end
