@@ -14,8 +14,16 @@ module CompanyFilesHelpers
   #
   # @param pin [String] clave con la que se protege el PKCS#12.
   # @param expires_at [Time] vencimiento que va a tener el certificado.
+  # @param legacy [Boolean] cifra con los algoritmos de antes de OpenSSL 3.0
+  #   (`RC2-40-CBC` para el certificado, 3DES para la llave) en vez del
+  #   default moderno. Son los que trae en la práctica más de un certificado
+  #   digital ya emitido —incluidos certificados ATV reales de Hacienda—, y
+  #   solo se pueden abrir con el proveedor "legacy" cargado
+  #   (`config/initializers/openssl_legacy_provider.rb`). Sin ese proveedor,
+  #   ni siquiera se pueden CREAR acá: `OpenSSL::PKCS12.create` con estos NID
+  #   falla con el mismo `PKCS12Error` que fallaría al abrirlos.
   # @return [String] el PKCS#12 en DER.
-  def build_p12(pin:, expires_at:, subject: '/CN=ACME S.A.')
+  def build_p12(pin:, expires_at:, subject: '/CN=ACME S.A.', legacy: false)
     key  = OpenSSL::PKey::RSA.new(2048)
     cert = OpenSSL::X509::Certificate.new
     cert.version    = 2
@@ -27,7 +35,12 @@ module CompanyFilesHelpers
     cert.not_after  = expires_at
     cert.sign(key, OpenSSL::Digest.new('SHA256'))
 
-    OpenSSL::PKCS12.create(pin, 'ACME', key, cert).to_der
+    if legacy
+      OpenSSL::PKCS12.create(pin, 'ACME', key, cert, nil,
+                             'pbeWithSHA1And3-KeyTripleDES-CBC', 'pbeWithSHA1And40BitRC2-CBC').to_der
+    else
+      OpenSSL::PKCS12.create(pin, 'ACME', key, cert).to_der
+    end
   end
 
   # `Rack::Test::UploadedFile` necesita un archivo en disco. El archivo va en una

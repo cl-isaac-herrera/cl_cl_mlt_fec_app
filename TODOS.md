@@ -1622,6 +1622,25 @@ partida arancelaria condicional (mercancía vs. servicio).
       `pkcs12.ca_certs`. Lo llama `Documents::Issuer`, con el firmador que arma
       `Hacienda::CompanySigner.for` (uno por compañía: abrir el `.p12` descifra la llave
       privada y eso no se repite por documento).
+      **Bug real corregido (2026-09-22): `OpenSSL::PKCS12.new` no abría certificados
+      cifrados con los algoritmos de antes de OpenSSL 3.0** (`RC2-40-CBC`/3DES) — el caso
+      de más de un certificado digital ya emitido, **incluido un certificado ATV real de
+      Hacienda**, reproducido durante el desarrollo del alta de compañías: el mismo PIN y
+      el mismo archivo abrían sin problema en el ambiente de pruebas de Hacienda (.NET,
+      que usa el stack de criptografía de Windows) y en el ambiente Rails al EDITAR una
+      compañía con un certificado ya guardado que se había registrado de otra forma, pero
+      fallaban al subir el archivo desde cero — la pista era que el error salía siempre
+      como "Verifique que el PIN sea el correcto…" (`Certificates::ExpirationReader`,
+      `Hacienda::XmlSigner`, `Hacienda::CompanySigner` — los tres abren un `.p12` y los
+      tres rescatan `OpenSSL::OpenSSLError` en general porque OpenSSL no distingue "PIN
+      malo" de "algoritmo no soportado"). Causa raíz: OpenSSL 3.x movió esos algoritmos al
+      proveedor "legacy", que no se carga por defecto. Fix:
+      `config/initializers/openssl_legacy_provider.rb` (`OpenSSL::Provider.load('legacy')`
+      una vez al boot). Regresión cubierta en `certificate_inspections_spec.rb` con
+      `build_p12(..., legacy: true)` (`spec/support/company_files_helpers.rb`). Esto no
+      era un bug del alta de compañías: afectaba (o iba a afectar en cuanto se probara con
+      un certificado real de estas características) también la FIRMA de documentos reales
+      contra Hacienda — el hallazgo importa más allá de la pantalla donde se notó.
 
 - [x] **Generador de XML 4.4 — implementado para FE y TE (2026-09-06).**
       `Hacienda::XmlBuilder` (`app/services/hacienda/xml_builder.rb`) serializa el objeto

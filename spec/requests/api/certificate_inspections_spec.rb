@@ -80,6 +80,23 @@ RSpec.describe 'POST /api/certificate_inspections', type: :request do
 
       expect(response).to have_http_status(:ok)
     end
+
+    # REGRESIÓN. Un PKCS#12 cifrado con los algoritmos de antes de OpenSSL 3.0
+    # (`RC2-40-CBC`/3DES) — el caso de más de un certificado digital ya
+    # emitido, incluidos certificados ATV reales de Hacienda — se rechazaba
+    # con "Verifique que el PIN sea el correcto…" aunque el PIN fuera
+    # perfecto: `OpenSSL::PKCS12.new` lo veía como "algoritmo no soportado"
+    # porque el proveedor "legacy" de OpenSSL 3.x no estaba cargado. Ver
+    # `config/initializers/openssl_legacy_provider.rb`. Si ese initializer se
+    # revierte, este ejemplo es el que se rompe.
+    it 'abre un certificado cifrado con los algoritmos de antes de OpenSSL 3.0 (legacy)' do
+      legacy_bytes = build_p12(pin: pin, expires_at: expires_at, legacy: true)
+
+      inspect_certificate(file: uploaded_file(legacy_bytes))
+
+      expect(response).to have_http_status(:ok)
+      expect(Time.zone.parse(body_data['CertExpireDate'])).to eq(expires_at)
+    end
   end
 
   # El PIN equivocado y el archivo que no es un PKCS#12 son la misma comprobación
