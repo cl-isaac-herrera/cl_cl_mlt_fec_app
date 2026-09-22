@@ -558,14 +558,16 @@ export default class extends Controller {
 
   /**
    * Llena la sección "Datos Generales" con la respuesta de
-   * GET /api/companies/:id. Todo viene de la tabla `companies`: el bloque del
-   * emisor ante Hacienda estuvo un tiempo como UDFs de `OADM` y volvió a la base
-   * de la aplicación, así que ya no hay que ir a SAP para pintar el formulario.
+   * GET /api/companies/:id. El contrato JSON no cambió, pero el servidor SÍ
+   * vuelve a hablar con SAP para armar esta respuesta: la razón social, el
+   * tipo de identificación, la actividad económica y el registro fiscal 8707
+   * viven en la UDT @CL_FEC_ISSUERCONFIG (Sap::CompanyConfig), no en
+   * `companies` — solo la cédula (`EmsrIdeNumero`) sigue siendo columna local.
    *
    * Las claves del emisor conservan el vocabulario del XML de Hacienda
-   * (`EmsrNombre`, `CodigoActividad`) aunque las columnas se llamen en inglés
-   * (`issuer_legal_name`, `economic_activity_code`): la traducción la hace
-   * `serialize_detail` del controller.
+   * (`EmsrNombre`, `CodigoActividad`) aunque del lado del servidor salgan de
+   * la UDT y no de una columna: la traducción la hace `serialize_detail` del
+   * controller.
    *
    * Las secciones de Hacienda (ATV) y de adjuntos salen de la misma respuesta
    * pero las llenan `#fillAtvSection` y `#fillAttachmentsSection`. Las demás

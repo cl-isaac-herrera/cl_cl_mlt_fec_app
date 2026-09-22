@@ -1070,6 +1070,23 @@ proxy .NET:
       **Pendiente:** nada del lado del alta en sí. Lo que falta es migrar "Adicional" y
       "Factura a proveedor" en EDICIÓN (ver más arriba) — la sección "Adicional" del alta ya
       es nativa (este `create`), la de edición todavía no.
+- [x] **El alta SÍ habla con SAP ahora (2026-09-22) — registra la fila de
+      `Sap::CompanyConfig`.** Cuatro campos del bloque del emisor (razón social, tipo de
+      identificación, actividad económica, registro fiscal 8707) se movieron de `companies`
+      a la UDT `@CL_FEC_ISSUERCONFIG` (`CLAUDE.md` §32, caso `company_config_udt`); `create`
+      los escribe con `Sap::CompanyConfig#create` (`Sap::UserClient`, atribuido a quien crea
+      la compañía) DESPUÉS de guardar la fila y los archivos, y revierte TODO —fila y
+      archivos— si esa escritura falla (conexión/base/credenciales incorrectas). Antes del
+      2026-09-22 el alta no tocaba SAP en ningún punto. `show`/`PATCH .../general` también
+      pasan a depender de SAP para ese bloque (422 si falta configuración, 502 si el Service
+      Layer no responde).
+      La cédula (`issuer_id_number`) y el nombre comercial (`name`) se quedan en `companies`
+      — ver la tabla de la nota de §32 sobre por qué esos dos no se movieron.
+      **Pendiente:** las compañías que existían ANTES de este cambio (5 en `development`, al
+      momento de escribir esto) no tienen fila en la UDT — `show` les va a devolver el bloque
+      del emisor en blanco hasta que alguien lo vuelva a cargar a mano desde el formulario, o
+      hasta que se corra un backfill contra su SAP real (no se implementó: solo hay
+      credenciales reales para 1 de las 5 en este ambiente).
 - [x] **Conexión de SAP y Bandeja de Correo pasaron a ser obligatorias en el ALTA
       (2026-09-22).** Sin conexión no hay a qué SAP consultar, y sin bandeja la compañía
       no tiene cómo enviar el correo del comprobante — así que crearla sin ninguna de las

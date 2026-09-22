@@ -3,14 +3,11 @@
 require 'rails_helper'
 
 RSpec.describe Documents::UnifiedBuilder do
-  # La identidad del emisor sale de acá y no de la vista: es una por compañía y no
-  # depende del documento. `name` es además el nombre comercial del XML.
-  let(:company) do
-    Company.new(name: 'ACME S.A.', sap_db: 'SBO_ACME', economic_activity_code: '620100',
-                issuer_legal_name: 'Acme Sociedad Anónima', issuer_id_type: '02',
-                issuer_id_number: '3101123456', tax_registry_8707: '8707-99')
-  end
-
+  # No recibe `company` ni habla con SAP por su cuenta: la vista de cabecera
+  # que arma `details.header` (`Sap::DocumentDetails`) ya trae resuelta la
+  # identidad de `Emsr*`/`Rcpr*` para el rol que corresponda en cada tipo de
+  # documento — sea la compañía o el otro lado (el cliente, o el proveedor en
+  # FEC). Estos specs arman esa vista a mano con `header:`.
   def row(attrs) = Documents::Row.new(attrs)
 
   def build(header: {}, lines: [], other_charges: [], payment_methods: [], references: [], others: [],
@@ -23,7 +20,7 @@ RSpec.describe Documents::UnifiedBuilder do
       others: others.map { |o| row(o) }
     )
 
-    described_class.new(company: company, doc_type: doc_type, details: details).call
+    described_class.new(doc_type: doc_type, details: details).call
   end
 
   describe 'raíz' do
@@ -46,11 +43,12 @@ RSpec.describe Documents::UnifiedBuilder do
       expect(build['Document']['ProveedorSistemas']).to be_nil
     end
 
-    # La del emisor sale de la compañía y la del receptor de la vista, pero tienen
-    # que ser las MISMAS que van en el XML: si el cuerpo del POST y el comprobante
-    # no coinciden, Hacienda rechaza el envío.
+    # Las dos identificaciones salen de la cabecera; tienen que ser las MISMAS
+    # que van en el XML: si el cuerpo del POST y el comprobante no coinciden,
+    # Hacienda rechaza el envío.
     it 'arma el cuerpo del envío a Hacienda con las dos identificaciones' do
-      payload = build(header: { 'FechaEmision' => '2026-08-25', 'RcprIdeNumero' => '112345678',
+      payload = build(header: { 'FechaEmision' => '2026-08-25', 'EmsrIdeNumero' => '3101123456',
+                                'EmsrIdeTipo' => '02', 'RcprIdeNumero' => '112345678',
                                 'RcprIdeTipo' => '01' })
 
       expect(payload['SendDocumentHacienda']).to eq(
@@ -62,23 +60,16 @@ RSpec.describe Documents::UnifiedBuilder do
   end
 
   describe 'códigos de actividad' do
-    # En un comprobante de venta el inscrito ante Hacienda es la compañía, y su
-    # código vive en `companies` desde que la configuración de FE bajó de los
-    # UDFs de OADM. La vista lo devuelve en NULL a propósito.
-    it 'el del emisor sale de la compañía' do
-      expect(build['Document']['CodigoActividadEmisor']).to eq('620100')
-    end
-
-    # Sin respaldo entre las dos fuentes: el dato que el operador administra en
-    # la pantalla de la compañía no lo puede pisar un valor viejo de la vista.
-    it 'el del emisor ignora lo que traiga la vista' do
-      payload = build(header: { 'CodigoActividadEmisor' => '999999' })
+    # Los dos salen SIEMPRE de la cabecera: la vista ya resuelve cuál de los
+    # dos roles es la compañía y le pone la actividad económica que
+    # corresponda al prefijo — esta clase no distingue.
+    it 'el del emisor sale de la cabecera' do
+      payload = build(header: { 'CodigoActividadEmisor' => '620100' })
 
       expect(payload['Document']['CodigoActividadEmisor']).to eq('620100')
     end
 
-    # El del receptor es el del cliente, y ese solo lo conoce SAP.
-    it 'el del receptor sale de la vista' do
+    it 'el del receptor sale de la cabecera' do
       payload = build(header: { 'CodigoActividadReceptor' => '722003' })
 
       expect(payload['Document']['CodigoActividadReceptor']).to eq('722003')
@@ -149,10 +140,12 @@ RSpec.describe Documents::UnifiedBuilder do
   end
 
   describe 'emisor y receptor' do
-    # La identidad no cambia por sucursal: es la misma cédula jurídica emita desde
-    # donde emita, así que sale de `companies` y no del documento.
-    it 'toma la identidad del emisor de la compañía y no de la vista' do
-      payload = build(header: { 'EmsrNombre' => 'De la vista', 'EmsrIdeNumero' => '999999999' })
+    # La identidad del emisor sale siempre de la cabecera, con el prefijo fijo
+    # `Emsr` — para el caso normal (compañía = emisor) la vista ya la trae
+    # resuelta con los datos de la compañía; ver la cabecera de la clase.
+    it 'toma la identidad del emisor de la cabecera' do
+      payload = build(header: { 'EmsrNombre' => 'Acme Sociedad Anónima', 'EmsrIdeTipo' => '02',
+                                'EmsrIdeNumero' => '3101123456', 'EmsrRegistrofiscal8707' => '8707-99' })
 
       expect(payload['Document']['Emisor']).to include(
         'Nombre' => 'Acme Sociedad Anónima',
@@ -161,10 +154,10 @@ RSpec.describe Documents::UnifiedBuilder do
       )
     end
 
-    # No tiene columna propia: el nombre comercial es `companies.name`, el mismo
-    # que usa el selector de compañía y el listado.
-    it 'usa el nombre de la compañía como nombre comercial del emisor' do
-      expect(build['Document']['Emisor']['NombreComercial']).to eq('ACME S.A.')
+    it 'toma el nombre comercial del emisor de la cabecera' do
+      payload = build(header: { 'EmsrNombreComercial' => 'ACME S.A.' })
+
+      expect(payload['Document']['Emisor']['NombreComercial']).to eq('ACME S.A.')
     end
 
     # Estos tres SÍ cambian por sucursal: los trae la cabecera desde la UDT
@@ -255,28 +248,28 @@ RSpec.describe Documents::UnifiedBuilder do
       expect(payload['Document']['Emisor']['OtrasSenasExtranjero']).to eq('Miami, Florida')
     end
 
-    # El respaldo de `companies` le prestaría al proveedor una inscripción que
-    # no tiene. En FEC ese código además es opcional y el obligatorio es el del
-    # receptor.
-    it 'toma el código de actividad del emisor de la vista, no de la compañía' do
+    # En FEC ese código es opcional para el emisor (el obligatorio es el del
+    # receptor), pero sigue saliendo de la cabecera igual que en cualquier tipo.
+    it 'toma el código de actividad del emisor de la cabecera' do
       payload = build(header: proveedor.merge('CodigoActividadEmisor' => '999999'),
                       doc_type: DocType::FEC)
 
       expect(payload['Document']['CodigoActividadEmisor']).to eq('999999')
     end
 
-    it 'lo deja en nil si la vista no lo trae, en vez de prestarle el de la compañía' do
+    it 'lo deja en nil si la cabecera no lo trae' do
       payload = build(header: proveedor, doc_type: DocType::FEC)
 
       expect(payload['Document']['CodigoActividadEmisor']).to be_nil
-      expect(build(doc_type: DocType::FE)['Document']['CodigoActividadEmisor']).to eq('620100')
     end
 
     # El inscrito ante Hacienda es la compañía, que acá es quien compra: la
-    # vista devuelve su bloque en NULL porque ese dato vive en `companies`.
-    it 'toma la identidad del receptor de la compañía y no de la vista' do
-      payload = build(header: proveedor.merge('RcprNombre' => 'lo que traiga la vista',
-                                              'RcprIdeNumero' => '999999999'),
+    # vista resuelve el bloque `Rcpr*` con los datos de la compañía cuando el
+    # tipo es FEC — mismo mecanismo que resuelve `Emsr*` con el proveedor.
+    it 'toma la identidad del receptor de la cabecera' do
+      payload = build(header: proveedor.merge('RcprNombre' => 'Acme Sociedad Anónima',
+                                              'RcprIdeTipo' => '02', 'RcprIdeNumero' => '3101123456',
+                                              'RcprNombreComercial' => 'ACME S.A.'),
                       doc_type: DocType::FEC)
 
       expect(payload['Document']['Receptor']).to include(
@@ -286,8 +279,8 @@ RSpec.describe Documents::UnifiedBuilder do
       )
     end
 
-    it 'toma el código de actividad del receptor de la compañía' do
-      payload = build(header: proveedor.merge('CodigoActividadReceptor' => '999999'),
+    it 'toma el código de actividad del receptor de la cabecera' do
+      payload = build(header: proveedor.merge('CodigoActividadReceptor' => '620100'),
                       doc_type: DocType::FEC)
 
       expect(payload['Document']['CodigoActividadReceptor']).to eq('620100')
@@ -307,7 +300,7 @@ RSpec.describe Documents::UnifiedBuilder do
     # Los dos lados del cuerpo se invierten a la vez: si uno solo se diera
     # vuelta, el POST y el comprobante dejarían de coincidir.
     it 'manda la compañía como receptor en el cuerpo del envío' do
-      payload = build(header: proveedor.merge('RcprIdeNumero' => '999999999', 'RcprIdeTipo' => '01'),
+      payload = build(header: proveedor.merge('RcprIdeNumero' => '3101123456', 'RcprIdeTipo' => '02'),
                       doc_type: DocType::FEC)
 
       expect(payload['SendDocumentHacienda']['receptor'])

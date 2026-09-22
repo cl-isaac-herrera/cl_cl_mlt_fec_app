@@ -1108,6 +1108,18 @@ SL_RESOURCES_ACTIVITY_CODES = [
 # compra. La llave entre cabecera e hijas es el `Code` autonumérico que
 # devuelve cada `POST`, que `Sap::ReceptionMessages` pasa a mano en el cuerpo
 # de la hija (`U_MensajeReceptorCode`/`U_MensajeReceptorLineaCode`).
+SL_RESOURCES_COMPANY_CONFIG = [
+  ['getCompanyConfig',
+   'Configuración del emisor de FE de la compañía (UDT)',
+   'U_CL_FEC_ISSUERCONFIG(1)', nil, 0],
+  ['createCompanyConfig',
+   'Registra la configuración del emisor de FE de la compañía (UDT)',
+   'U_CL_FEC_ISSUERCONFIG', nil, 0],
+  ['updateCompanyConfig',
+   'Actualiza la configuración del emisor de FE de la compañía (UDT)',
+   'U_CL_FEC_ISSUERCONFIG(1)', nil, 0]
+].freeze
+
 SL_RESOURCES_RECEPTION_MESSAGES = [
   ['createReceptionMessage',
    'Registra la cabecera de un mensaje receptor (UDT)',
@@ -1143,7 +1155,8 @@ ActiveRecord::Base.transaction do
                      SL_RESOURCES_DOCUMENT_QUERIES + SL_RESOURCES_MAIL_QUEUE +
                      SL_RESOURCES_MAIL_DOCUMENT_INFO + SL_RESOURCES_DOCUMENT_ERROR_DETAILS +
                      SL_RESOURCES_DOCUMENT_XML_URLS + SL_RESOURCES_DOC_SYNC_ATTEMPTS +
-                     SL_RESOURCES_BRANCHES + SL_RESOURCES_ACTIVITY_CODES + SL_RESOURCES_RECEPTION_MESSAGES
+                     SL_RESOURCES_BRANCHES + SL_RESOURCES_ACTIVITY_CODES + SL_RESOURCES_COMPANY_CONFIG +
+                     SL_RESOURCES_RECEPTION_MESSAGES
   all_sl_resources.each do |code, description, resource, query_params, page_size|
     # `unscoped`: una consulta dada de baja tiene que reactivarse, no duplicarse.
     # El índice único de `code` no excluye a las inactivas, así que sin esto el
@@ -1436,22 +1449,23 @@ puts "Usuario de sistema: #{record.email}"
 # activa (`CLAUDE.md` §23). Esta fila da un punto de partida real para poder
 # entrar y terminar de configurar el resto a mano, en vez de un catálogo mudo.
 #
-# Solo se llenan los campos de la sección "Datos Generales"
-# (`Api::Companies::GeneralController#general_params`). Conexión SAP, ATV y
-# Adjuntos quedan vacíos a propósito: dependen de una conexión, un certificado
-# o una bandeja de correo que la instalación todavía no tiene, y no hay un
-# valor ficticio razonable que poner ahí sin que se confunda con configuración
-# real (`connection_id`/`email_config_id`/`reception_mailbox_id` son
-# `optional: true` — Company#sap_connection_must_exist y las otras dos
-# validaciones solo corren cuando el id SÍ viene).
+# Solo se llenan los campos de "Datos Generales" que siguen siendo columna de
+# `companies` (`Api::Companies::GeneralController#general_params`). El resto
+# del bloque del emisor (razón social, tipo de identificación, actividad
+# económica, registro fiscal 8707) vive en la UDT `@CL_FEC_ISSUERCONFIG`
+# (`Sap::CompanyConfig`) y no se siembra: este seed no habla con SAP, igual
+# criterio que Conexión SAP, ATV y Adjuntos, que quedan vacíos a propósito —
+# dependen de una conexión, un certificado o una bandeja de correo que la
+# instalación todavía no tiene, y no hay un valor ficticio razonable que poner
+# ahí sin que se confunda con configuración real (`connection_id`/
+# `email_config_id`/`reception_mailbox_id` son `optional: true` —
+# Company#sap_connection_must_exist y las otras dos validaciones solo corren
+# cuando el id SÍ viene).
 #
 # `find_or_initialize_by(name:)`: no hay índice único sobre `name`, así que sin
 # esto correr el seed dos veces duplicaría la compañía.
 company = Company.find_or_initialize_by(name: 'Template Company')
-company.issuer_legal_name      = 'Template Company Sociedad Anónima'
-company.issuer_id_type         = '02'
 company.issuer_id_number       = '3101999999'
-company.economic_activity_code = '620100'
 company.sap_db                 = 'SBO_TEMPLATE'
 company.email_sender_type      = 2
 company.freight_type           = 1

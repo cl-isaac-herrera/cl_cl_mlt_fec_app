@@ -60,10 +60,14 @@ module Documents
     # @param company [Company]
     # @param doc_type [String] código de Hacienda del documento.
     # @param info [Documents::Row] lo que trajo `Sap::MailDocumentInfo`.
-    def initialize(company:, doc_type:, info:)
+    # @param client [Clavisco::ServiceLayer::Client] el de la compañía — lo usa
+    #   `#issuer` para leer la razón social de `Sap::CompanyConfig` cuando
+    #   `email_sender_type` es "legal" (ver `#issuer`).
+    def initialize(company:, doc_type:, info:, client:)
       @company  = company
       @doc_type = doc_type
       @info     = info
+      @client   = client
     end
 
     # @return [Rendered]
@@ -73,7 +77,7 @@ module Documents
 
     private
 
-    attr_reader :company, :doc_type, :info
+    attr_reader :company, :doc_type, :info, :client
 
     # El asunto dice el desenlace y de cuál comprobante, que es lo que se
     # necesita para encontrar el correo después en la bandeja. El remitente ya
@@ -125,7 +129,18 @@ module Documents
     # ── Datos del comprobante ────────────────────────────────────────────────
 
     def issuer
-      company.email_sender_name
+      company.email_sender_name(legal_name: legal_name)
+    end
+
+    # Solo se pide a SAP cuando de verdad hace falta: una compañía que se
+    # identifica con el nombre comercial (`email_sender_type` 2) no necesita la
+    # razón social, así que no vale la pena la vuelta al Service Layer —ni el
+    # nuevo punto de falla que implica— para un dato que `email_sender_name` ni
+    # siquiera va a usar.
+    def legal_name
+      return nil unless company.email_sender_type == 1
+
+      @legal_name ||= Sap::CompanyConfig.new(client: client).read&.legal_name
     end
 
     # `Status`, no `U_CL_FEC_Status`: la vista `DOCMAILINFO` (`Sap::MailDocumentInfo`)

@@ -28,10 +28,6 @@ class Company < ApplicationRecord
   encrypts :cert_pin
   encrypts :token_password
 
-  # Tipos de identificación de Hacienda. Texto y no entero: los códigos llevan el
-  # cero adelante y `'01'.to_i` lo perdería.
-  ISSUER_ID_TYPES = %w[01 02 03 04].freeze
-
   # Con qué nombre se envían los correos: 1 legal, 2 comercial. Son las dos
   # opciones del `<select>` del formulario; cualquier otro valor lo deja sin nada
   # seleccionado, que es lo que pasaba con el 0 que traía el default original.
@@ -113,21 +109,24 @@ class Company < ApplicationRecord
   # (`ReceptionMailbox#not_in_use_when_deactivating`).
   validate :reception_mailbox_must_be_available
 
-  # Los largos replican el `Size` que estos campos tenían como UDFs de `OADM`,
-  # que es el límite con el que se venían guardando. La validación mira el texto
-  # original; el `limit:` de la columna es la otra mitad (ver la migración).
+  # `issuer_id_number` es la ÚNICA identidad del emisor que sigue viviendo acá:
+  # `CompanyFiles::Store` la necesita como componente de ruta del certificado, el
+  # logo y el formato de impresión en disco (`CLAUDE.md` §34), y por eso no puede
+  # depender de una vuelta a SAP para poder guardar un archivo. El resto del
+  # bloque del emisor (razón social, tipo de identificación, actividad económica,
+  # registro fiscal 8707) vive en la UDT `@CL_FEC_ISSUERCONFIG`
+  # (`Sap::CompanyConfig`) — ver `docs/PLAN-UDT-CONFIG-EMISOR.md`.
   #
-  # `issuer_id_number` es la excepción: subió de 12 a 20 porque el `Size` del UDF
-  # no alcanzaba para el DIMEX ni para el NITE, y desde que la identificación del
-  # emisor sale de acá (`Documents::UnifiedBuilder#emisor`) el recorte se llevaría
-  # puesto el comprobante. Ver `20260901120000_tighten_company_identity_limits.rb`.
-  validates :issuer_legal_name,      length: { maximum: 100 }, allow_nil: true
-  validates :issuer_id_number,       length: { maximum: 20 },  allow_nil: true
+  # Subió de 12 a 20 porque el `Size` que tenía como UDF no alcanzaba para el
+  # DIMEX ni para el NITE. Ver `20260901120000_tighten_company_identity_limits.rb`.
+  validates :issuer_id_number, length: { maximum: 20 }, allow_nil: true
 
-  # Dos compañías con la misma cédula no son dos compañías: Hacienda identifica al
-  # emisor por este número (`Documents::UnifiedBuilder#emisor`), así que un
-  # duplicado sería la misma compañía facturando por dos lados. `unscope` y NO
-  # `where(is_active: true)` a propósito —a diferencia de `EmailConfig#email—:
+  # Dos compañías con la misma cédula no son dos compañías: Hacienda identifica
+  # al emisor por este número, así que un duplicado sería la misma compañía
+  # facturando por dos lados — y además dejaría a `MailReceptionJob#archive`
+  # sin poder decidir a cuál de las dos pertenece un correo entrante
+  # (`Company.find_by(issuer_id_number: …)` no distingue empates). `unscope` y
+  # NO `where(is_active: true)` a propósito —a diferencia de `EmailConfig#email—:
   # una compañía dada de baja no libera su cédula para que otra la reclame; el
   # duplicado sigue siendo la misma compañía, solo que ya no está activa.
   validates :issuer_id_number,
@@ -136,11 +135,8 @@ class Company < ApplicationRecord
               message:    'ya pertenece a otra compañía registrada (activa o inactiva)'
             },
             allow_nil: true
-  validates :economic_activity_code, length: { maximum: 6 },   allow_nil: true
-  validates :tax_registry_8707,      length: { maximum: 12 },  allow_nil: true
   validates :default_xml_tax_code,   length: { maximum: 8 },   allow_nil: true
   validates :default_warehouse,      length: { maximum: 8 },   allow_nil: true
-  validates :issuer_id_type, inclusion: { in: ISSUER_ID_TYPES }, allow_blank: true
   validates :purchase_invoice_series, numericality: { only_integer: true, greater_than: 0 },
                                       allow_nil: true
 
@@ -207,10 +203,17 @@ class Company < ApplicationRecord
 
   # Con qué nombre se identifica la compañía en el correo de recepción
   # electrónica, según `email_sender_type` (1 legal, 2 comercial). El legal es
-  # opcional (`issuer_legal_name` admite `nil`); si no está cargado, cae al
-  # comercial (`name`, `NOT NULL`) en vez de mandar un correo sin nombre.
-  def email_sender_name
-    email_sender_type == 1 ? issuer_legal_name.presence || name : name
+  # opcional; si no está cargado, cae al comercial (`name`, `NOT NULL`) en vez
+  # de mandar un correo sin nombre.
+  #
+  # `legal_name` viaja como parámetro y no se lee de una columna: la razón
+  # social vive en la UDT `@CL_FEC_ISSUERCONFIG` (`Sap::CompanyConfig`), no en
+  # `companies`, así que quien llama —`Documents::ReceiptMailBody`, que ya tiene
+  # el cliente de SAP de la compañía a mano— es quien la resuelve.
+  #
+  # @param legal_name [String, nil] `Sap::CompanyConfig::Config#legal_name`.
+  def email_sender_name(legal_name: nil)
+    email_sender_type == 1 ? legal_name.presence || name : name
   end
 
   def certificate_alarm(days: CERT_EXPIRATION_ALARM_DAYS)

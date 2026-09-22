@@ -24,30 +24,13 @@ RSpec.describe Company, type: :model do
     end
   end
 
+  # La razón social, el tipo de identificación, la actividad económica y el
+  # registro fiscal 8707 se validan en `Sap::CompanyConfig` (viven en la UDT
+  # `@CL_FEC_ISSUERCONFIG`, no en esta tabla) — ver
+  # `spec/services/sap/company_config_spec.rb`. Acá solo queda la cédula
+  # (`issuer_id_number`), que es la única identidad del emisor que sigue
+  # viviendo en `companies` (`CLAUDE.md` §34).
   describe 'bloque del emisor' do
-    it 'acepta los cuatro tipos de identificación de Hacienda' do
-      Company::ISSUER_ID_TYPES.each do |type|
-        expect(build(:company, issuer_id_type: type)).to be_valid
-      end
-    end
-
-    it 'rechaza un tipo de identificación que Hacienda no define' do
-      company = build(:company, issuer_id_type: '99')
-
-      expect(company).not_to be_valid
-      expect(company.errors.full_messages)
-        .to include('El tipo de identificación del emisor no está incluido en la lista')
-    end
-
-    # El largo replica el `Size` que el campo tenía como UDF de OADM.
-    it 'rechaza una razón social más larga que 100 caracteres' do
-      company = build(:company, issuer_legal_name: 'A' * 101)
-
-      expect(company).not_to be_valid
-      expect(company.errors.full_messages)
-        .to include('La razón social del emisor es demasiado largo (máximo 100 caracteres)')
-    end
-
     # 20 y no los 12 del UDF de OADM: ese `Size` no alcanzaba para el DIMEX ni
     # para el NITE, y desde que la identificación del emisor sale de acá el
     # recorte se llevaría puesto el comprobante.
@@ -64,8 +47,7 @@ RSpec.describe Company, type: :model do
     end
 
     it 'deja el bloque en blanco: una compañía puede estar configurada a medias' do
-      expect(build(:company, issuer_legal_name: nil, issuer_id_type: nil,
-                             issuer_id_number: nil)).to be_valid
+      expect(build(:company, issuer_id_number: nil)).to be_valid
     end
 
     # Dos compañías con la misma cédula serían la misma compañía facturando por
@@ -127,23 +109,26 @@ RSpec.describe Company, type: :model do
     end
   end
 
+  # `legal_name` viaja como parámetro: la razón social vive en la UDT
+  # `@CL_FEC_ISSUERCONFIG` (`Sap::CompanyConfig`), no en `companies` — ver la
+  # cabecera del método.
   describe '#email_sender_name' do
     it 'usa el nombre legal cuando email_sender_type es 1 (legal)' do
-      company = Company.new(name: 'ACME', issuer_legal_name: 'ACME Sociedad Anónima', email_sender_type: 1)
+      company = Company.new(name: 'ACME', email_sender_type: 1)
 
-      expect(company.email_sender_name).to eq('ACME Sociedad Anónima')
+      expect(company.email_sender_name(legal_name: 'ACME Sociedad Anónima')).to eq('ACME Sociedad Anónima')
     end
 
     it 'usa el nombre comercial cuando email_sender_type es 2 (comercial)' do
-      company = Company.new(name: 'ACME', issuer_legal_name: 'ACME Sociedad Anónima', email_sender_type: 2)
+      company = Company.new(name: 'ACME', email_sender_type: 2)
 
-      expect(company.email_sender_name).to eq('ACME')
+      expect(company.email_sender_name(legal_name: 'ACME Sociedad Anónima')).to eq('ACME')
     end
 
     it 'cae al comercial si el legal está en 1 pero no está cargado' do
-      company = Company.new(name: 'ACME', issuer_legal_name: nil, email_sender_type: 1)
+      company = Company.new(name: 'ACME', email_sender_type: 1)
 
-      expect(company.email_sender_name).to eq('ACME')
+      expect(company.email_sender_name(legal_name: nil)).to eq('ACME')
     end
   end
 

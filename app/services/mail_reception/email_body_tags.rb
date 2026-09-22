@@ -33,9 +33,13 @@ module MailReception
 
     # @param body [String] el cuerpo del correo (texto plano).
     # @param company [Company] de dónde salen los defaults cuando falta un tag.
-    def initialize(body, company:)
+    # @param client [Clavisco::ServiceLayer::Client] el de la compañía — lee la
+    #   actividad económica de `Sap::CompanyConfig`, que ya no vive en
+    #   `companies` (ver `#resolve_economic_activity_code`).
+    def initialize(body, company:, client:)
       @tags = extract(body.to_s)
       @company = company
+      @client = client
     end
 
     # @return [Result]
@@ -51,7 +55,7 @@ module MailReception
 
     private
 
-    attr_reader :company
+    attr_reader :company, :client
 
     # Último match gana si el mismo tag aparece más de una vez en el cuerpo —
     # mismo criterio que el `foreach` de `SubstractBodyTags` en el legacy, que
@@ -96,11 +100,11 @@ module MailReception
       company.default_recept_tax_factor
     end
 
-    # Sin default de compañía propio (§ compañía ya tiene `economic_activity_code`
-    # para su propia actividad — se reusa esa columna en vez de agregar una
-    # cuarta redundante).
+    # Sin default propio: se reusa la actividad económica que la compañía ya
+    # declara para sí misma (`Sap::CompanyConfig`, la UDT `@CL_FEC_ISSUERCONFIG`)
+    # en vez de agregar un cuarto default redundante.
     def resolve_economic_activity_code
-      @tags['CodigoActividadReceptor'].presence || company.economic_activity_code
+      @tags['CodigoActividadReceptor'].presence || Sap::CompanyConfig.new(client: client).read&.economic_activity_code
     end
 
     def log_invalid(tag, value)

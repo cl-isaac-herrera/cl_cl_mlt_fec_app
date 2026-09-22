@@ -176,11 +176,7 @@ class SyncIssuedDocumentsJob < ApplicationJob
       client:    client_for(company)
     ).call
 
-    @payload = Documents::UnifiedBuilder.new(
-      company:  company,
-      doc_type: entry.doc_type,
-      details:  details
-    ).call
+    @payload = Documents::UnifiedBuilder.new(doc_type: entry.doc_type, details: details).call
 
     @issuer = Documents::Issuer.new(
       doc_type: entry.doc_type,

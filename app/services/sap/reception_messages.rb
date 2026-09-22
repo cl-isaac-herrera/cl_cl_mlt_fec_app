@@ -63,7 +63,7 @@ module Sap
     #   (`U_BandejaReceptor`).
     # @return [Integer] el `Code` de la cabecera creada.
     def create_from_document(document:, company:, email_body:, mailbox_email:)
-      tags = MailReception::EmailBodyTags.new(email_body, company: company).resolve
+      tags = MailReception::EmailBodyTags.new(email_body, company: company, client: client).resolve
       tax = TaxCondition.apply(
         condition: tags.tax_condition,
         tax_amount: document.header['MontoTotalImpuesto'] || 0,

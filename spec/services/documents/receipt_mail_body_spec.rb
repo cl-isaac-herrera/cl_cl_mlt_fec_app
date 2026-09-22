@@ -14,9 +14,20 @@ RSpec.describe Documents::ReceiptMailBody do
     )
   end
 
-  subject(:rendered) { described_class.new(company: company, doc_type: DocType::FE, info: info).call }
+  let(:client) { instance_double(Clavisco::ServiceLayer::Client) }
 
-  before { allow_any_instance_of(Attachments::LogoStore).to receive(:readable_path).and_return(nil) }
+  subject(:rendered) do
+    described_class.new(company: company, doc_type: DocType::FE, info: info, client: client).call
+  end
+
+  before do
+    allow_any_instance_of(Attachments::LogoStore).to receive(:readable_path).and_return(nil)
+    # `email_sender_type` nace en 1 (legal): `#issuer` pide la razón social a
+    # `Sap::CompanyConfig`. Sin fila en SAP, cae al nombre comercial — mismo
+    # desenlace que antes de que la razón social se moviera a la UDT.
+    allow(Sap::CompanyConfig).to receive(:new).with(client: client)
+                                               .and_return(instance_double(Sap::CompanyConfig, read: nil))
+  end
 
   describe 'asunto' do
     it 'dice el desenlace y el consecutivo' do

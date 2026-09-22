@@ -8,10 +8,22 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
   let(:sap)  { Connection.create!(name: 'SAP QA', sl_url: 'https://sap.test:50000/b1s/v1') }
   let(:acme) do
     Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db: 'SBO_ACME',
-                    issuer_legal_name: 'ACME Sociedad Anónima', issuer_id_type: '02',
-                    issuer_id_number: '3101822733', economic_activity_code: '7020',
-                    tax_registry_8707: '111', email_cc: 'copia@acme.cr',
+                    issuer_id_number: '3101822733', email_cc: 'copia@acme.cr',
                     purchase_invoice_series: 7, default_warehouse: 'PRIN')
+  end
+
+  # El bloque del emisor (`EmsrNombre`, `EmsrIdeTipo`, `CodigoActividad`,
+  # `EmsrRegistroFiscal8707`) vive en la UDT `@CL_FEC_ISSUERCONFIG`
+  # (`Sap::CompanyConfig`): este PATCH lo escribe con `Sap::UserClient` (quien
+  # edita, no la licencia) y lo relee con `Sap::CompanyClient` para la
+  # respuesta.
+  let(:sap_client) { instance_double(Clavisco::ServiceLayer::Client) }
+
+  before do
+    allow(Sap::CompanyClient).to receive(:for).and_return(sap_client)
+    allow(Sap::UserClient).to receive(:for).and_return(sap_client)
+    allow(sap_client).to receive(:get).and_return(nil)
+    allow(sap_client).to receive(:patch)
   end
 
   # Las catorce claves de la sección. Son el contrato entre la lectura
@@ -95,9 +107,22 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
       expect(acme.reload).to have_attributes(
         name: 'ACME Global', is_active: false, send_rejected_documents: true,
         connection_id: otra.id, sap_db: 'SBO_NUEVA',
-        email_sender_type: 2, freight_type: 2, issuer_legal_name: 'ACME Global S.A.',
-        issuer_id_type: '01', issuer_id_number: '123456789',
-        economic_activity_code: '620100', tax_registry_8707: '999'
+        email_sender_type: 2, freight_type: 2, issuer_id_number: '123456789'
+      )
+    end
+
+    # El bloque del emisor ya no es columna de `companies`: se escribe en la
+    # UDT `@CL_FEC_ISSUERCONFIG`, atribuido a quien edita (`Sap::UserClient`).
+    it 'escribe el bloque del emisor en SAP, atribuido a quien edita' do
+      patch_section(EmsrNombre: 'ACME Global S.A.', EmsrIdeTipo: '01',
+                    CodigoActividad: '620100', EmsrRegistroFiscal8707: '999')
+
+      expect(response).to have_http_status(:ok)
+      expect(Sap::UserClient).to have_received(:for).with(acme, user: user)
+      expect(sap_client).to have_received(:patch).with(
+        'U_CL_FEC_ISSUERCONFIG(1)',
+        body: hash_including('U_LegalName' => 'ACME Global S.A.', 'U_IdType' => '01',
+                              'U_EconomicActivityCode' => '620100', 'U_TaxRegistry8707' => '999')
       )
     end
 
@@ -124,17 +149,20 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
     it 'no borra lo que la petición no mencionó' do
       patch_section(Name: 'ACME Global')
 
-      expect(acme.reload).to have_attributes(
-        sap_db: 'SBO_ACME', issuer_id_number: '3101822733', economic_activity_code: '7020'
-      )
+      expect(acme.reload).to have_attributes(sap_db: 'SBO_ACME', issuer_id_number: '3101822733')
+      # El bloque del emisor no vino en el cuerpo: ni siquiera se habla con SAP
+      # para escribir nada — un PATCH que solo trae `Name` no toca la UDT.
+      expect(sap_client).not_to have_received(:patch)
     end
 
     # Vacío y NULL son la misma cosa para el negocio; tener las dos
     # representaciones obliga a preguntar por ambas en cada consulta.
-    it 'guarda un campo de texto vacío como NULL' do
+    it 'guarda un campo de texto vacío como NULL en SAP' do
       patch_section(EmsrRegistroFiscal8707: '   ')
 
-      expect(acme.reload.tax_registry_8707).to be_nil
+      expect(sap_client).to have_received(:patch).with(
+        'U_CL_FEC_ISSUERCONFIG(1)', body: hash_including('U_TaxRegistry8707' => nil)
+      )
     end
 
     it 'acepta desasignar la conexión de SAP' do
@@ -188,11 +216,14 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
       expect(acme.reload.name).to eq('ACME S.A.')
     end
 
+    # `Sap::CompanyConfig` valida el catálogo antes de escribir nada en SAP —
+    # `sap_client.patch` no llega a ejecutarse.
     it 'rechaza un tipo de identificación que Hacienda no define' do
       patch_section(EmsrIdeTipo: '99')
 
       expect(response).to have_http_status(:unprocessable_content)
-      expect(body['Message']).to eq('El tipo de identificación del emisor no está incluido en la lista')
+      expect(body['Message']).to eq('El tipo de identificación no es válido.')
+      expect(sap_client).not_to have_received(:patch)
     end
 
     # Sin la validación del modelo esto reventaba contra la llave foránea y
@@ -204,11 +235,12 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
       expect(body['Message']).to eq('La conexión de SAP no corresponde a una conexión existente')
     end
 
-    it 'rechaza una razón social más larga que el límite de la columna' do
+    it 'rechaza una razón social más larga que el límite de la UDT' do
       patch_section(EmsrNombre: 'A' * 101)
 
       expect(response).to have_http_status(:unprocessable_content)
-      expect(body['Message']).to include('es demasiado largo')
+      expect(body['Message']).to eq('La razón social no puede tener más de 100 caracteres.')
+      expect(sap_client).not_to have_received(:patch)
     end
   end
 

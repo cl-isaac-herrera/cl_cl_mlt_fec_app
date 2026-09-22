@@ -8,7 +8,7 @@
 # las pantallas de documentos.
 #
 # Strings y no enteros: los códigos llevan el cero adelante y `'01'.to_i` lo
-# perdería — el mismo motivo por el que `Company::ISSUER_ID_TYPES` es texto.
+# perdería — el mismo motivo por el que `Sap::CompanyConfig::ID_TYPES` es texto.
 #
 # ── ⚠️ Discrepancia del fuente original, resuelta a favor de Hacienda ────────
 # El `DocTypesString` del .NET trae los comentarios de `02` y `03` cruzados

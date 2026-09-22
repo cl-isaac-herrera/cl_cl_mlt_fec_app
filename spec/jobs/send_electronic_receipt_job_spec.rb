@@ -34,6 +34,12 @@ RSpec.describe SendElectronicReceiptJob do
     allow(Sap::MailDocumentInfo).to receive(:new).and_return(mail_document_info)
     allow(Documents::ReceiptMailer).to receive(:new).and_return(mailer)
     allow(Documents::MailQueue).to receive(:mark)
+    # `email_sender_type` nace en 1 (legal): `Documents::ReceiptMailBody#issuer`
+    # pide la razón social a `Sap::CompanyConfig`, que lee la UDT con el mismo
+    # cliente memoizado por compañía (`client_for`). Sin fila en SAP, cae al
+    # nombre comercial de la compañía — mismo desenlace que antes de que la
+    # razón social se moviera a la UDT.
+    allow(client).to receive(:get).with('U_CL_FEC_ISSUERCONFIG(1)').and_return(nil)
   end
 
   def queue(*entries)

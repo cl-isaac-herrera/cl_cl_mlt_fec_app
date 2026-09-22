@@ -111,7 +111,7 @@ RSpec.describe SyncIssuedDocumentsJob do
       described_class.perform_now
 
       expect(Documents::UnifiedBuilder).to have_received(:new)
-        .with(hash_including(company: company, doc_type: '01'))
+        .with(hash_including(doc_type: '01'))
     end
 
     # Una sesión de SAP por compañía, no una por documento: el pool del Client

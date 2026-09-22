@@ -14,12 +14,20 @@ RSpec.describe 'PATCH /api/companies/:company_id/attachments', type: :request do
 
   let(:acme) do
     Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db: 'SBO_ACME',
-                    issuer_legal_name: 'ACME Sociedad Anónima', issuer_id_type: '02',
-                    issuer_id_number: '3101822733', economic_activity_code: '7020',
+                    issuer_id_number: '3101822733',
                     logo_path: stored_path('viejo-logo.png'),
                     print_format_path: stored_path('viejo-formato.rpt'),
                     cert_path: stored_path('cert.p12'), cert_pin: '1234',
                     token_user: 'atv@hacienda.go.cr', token_password: 'secreto-atv')
+  end
+
+  # `GET /api/companies/:id` (usado en "contrato con la lectura") lee el
+  # bloque del emisor de la UDT `@CL_FEC_ISSUERCONFIG` — ver
+  # `Sap::CompanyConfig`. Esta sección no lo ejercita, pero comparte el
+  # endpoint de lectura, así que necesita el mismo stub.
+  before do
+    allow(Sap::CompanyClient).to receive(:for)
+      .and_return(instance_double(Clavisco::ServiceLayer::Client, get: nil))
   end
 
   # Las dos claves de la sección. Son el contrato entre la lectura

@@ -8,14 +8,22 @@ RSpec.describe 'PATCH /api/companies/:company_id/tax_authority', type: :request 
   let(:sap)  { Connection.create!(name: 'SAP QA', sl_url: 'https://sap.test:50000/b1s/v1') }
   let(:acme) do
     Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db: 'SBO_ACME',
-                    issuer_legal_name: 'ACME Sociedad Anónima', issuer_id_type: '02',
-                    issuer_id_number: '3101822733', economic_activity_code: '7020',
+                    issuer_id_number: '3101822733',
                     email_cc: 'copia@acme.cr', purchase_invoice_series: 7,
                     cert_path: File.join(files_root, '3101822733', 'viejo.p12'),
                     cert_pin: '1234',
                     cert_expires_at: Time.zone.parse('2027-05-01 12:00:00'),
                     token_user: 'cpj-3-101-822733@stag.comprobanteselectronicos.go.cr',
                     token_password: 'secreto-atv')
+  end
+
+  # `GET /api/companies/:id` (usado en "contrato con la lectura") lee el
+  # bloque del emisor de la UDT `@CL_FEC_ISSUERCONFIG` — ver
+  # `Sap::CompanyConfig`. Esta sección no lo ejercita, pero comparte el
+  # endpoint de lectura, así que necesita el mismo stub.
+  before do
+    allow(Sap::CompanyClient).to receive(:for)
+      .and_return(instance_double(Clavisco::ServiceLayer::Client, get: nil))
   end
 
   # Las cinco claves de la sección. Son el contrato entre la lectura

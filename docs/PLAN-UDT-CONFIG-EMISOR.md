@@ -1,8 +1,50 @@
 # Plan de impacto — mover la configuración del emisor de `companies` a una UDT de SAP
 
-> **Estado: PLANIFICADO, sin una línea de código escrita.** Redactado el 2026-09-12.
-> Nada de lo que sigue está aplicado: `companies` conserva las seis columnas y ningún
-> flujo habla con la UDT. Para retomar, ver **§7 Dónde retomar mañana**.
+> **Estado: APLICADO el 2026-09-22, con diseño distinto al planificado.** Redactado el
+> 2026-09-12; el resto de este documento es el análisis ORIGINAL y queda como archivo
+> histórico — varias de sus conclusiones NO son las que se implementaron. Ver `CLAUDE.md`
+> §32 (caso `company_config_udt`) para la explicación completa; resumen de las
+> diferencias:
+>
+> - **Solo 4 de los 6 campos se movieron a SAP**: razón social, tipo de identificación,
+>   actividad económica, registro fiscal 8707 (UDT `@CL_FEC_ISSUERCONFIG`,
+>   `Sap::CompanyConfig`). `name` (nunca tuvo columna en SAP) e **`issuer_id_number`
+>   (la cédula) se quedan en `companies`** — al revés de la recomendación de §1 de "sí,
+>   pero como espejo de solo lectura": se quedó como la ÚNICA fuente, sin ninguna copia en
+>   SAP. El bloqueo de §1 (la cédula como componente de ruta) resultó tener DOS
+>   consumidores más de los que este documento identificó —`MailReceptionJob#archive`
+>   (enrutamiento de correo entrante por `Company.find_by(issuer_id_number:)`) y el
+>   listado/filtro de compañías— y los tres corren SIN saber de antemano con qué compañía
+>   están tratando, así que ninguno puede resolverse consultando el SAP de una compañía
+>   que todavía no identificaron. `CommercialName` (que §2.1 sí incluía en el schema) se
+>   descartó: nadie lo lee, ni la vista de documentos ni el formulario.
+> - **`Documents::UnifiedBuilder` NO llama a `Sap::CompanyConfig`.** La razón por la que
+>   §2.3 preveía una "caché por request" para evitar 5 vueltas al Service Layer por
+>   documento dejó de existir: la vista de cabecera que ya consulta `Sap::DocumentDetails`
+>   resuelve `Emsr*`/`Rcpr*` (identidad, actividad económica, registro fiscal 8707) para
+>   el rol que corresponda según el tipo de documento, en la MISMA consulta. `UnifiedBuilder`
+>   dejó de recibir `company`/`client` — se simplificó, no se le agregó una dependencia
+>   nueva.
+> - **`show` SÍ depende de SAP** (la opción "embebido en Datos Generales" de §5, no la
+>   alternativa de sección independiente que se evaluó durante la implementación):
+>   422 si falta configuración, 502 si el Service Layer no responde — mismo patrón que
+>   `Api::Companies::ActivityCodesController`.
+> - **El alta es todo-o-nada hasta la UDT**: si falla escribir `Sap::CompanyConfig`
+>   después de guardar la compañía y los archivos, se revierte todo (`company.destroy` +
+>   se borran los archivos). No se implementó la alternativa de "compañía creada, config
+>   pendiente".
+> - **No se corrió `rake sap:schema:sync`** contra ningún SAP real, ni el backfill de
+>   datos existentes (paso 4 de §4): solo hay credenciales reales para 1 de las 5
+>   compañías de `development` en este ambiente. Pendiente, anotado en `TODOS.md` →
+>   Compañías → "Crear compañía".
+> - **La unicidad de la cédula entre compañías sigue viviendo en `companies`** (no se
+>   perdió, porque `issuer_id_number` no se movió) — el análisis de §5 original nunca
+>   necesitó abordar esa pérdida porque el diseño final no la produce.
+>
+> Las secciones §1–§7 de abajo son el razonamiento tal como se escribió el 2026-09-12,
+> antes de saber que la vista de documentos ya resolvía la identidad del emisor. Se
+> conservan por el contexto de por qué se descartaron sus recomendaciones, no como guía
+> vigente.
 
 ## 0. Qué se pidió
 

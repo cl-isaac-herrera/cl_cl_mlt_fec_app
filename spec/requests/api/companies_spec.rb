@@ -10,6 +10,21 @@ RSpec.describe 'GET /api/companies', type: :request do
   let(:sap)   { Connection.create!(name: 'SAP Producción', sl_url: 'https://sap.test:50000/b1s/v1') }
   let(:acme)  { Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db: 'SBO_ACME') }
 
+  # El bloque del emisor (`EmsrNombre`, `EmsrIdeTipo`, `CodigoActividad`,
+  # `EmsrRegistroFiscal8707`) vive en la UDT `@CL_FEC_ISSUERCONFIG`
+  # (`Sap::CompanyConfig`), así que `show` y `create` hablan con SAP. Se stubea
+  # acá, a nivel de archivo, porque toca a casi todos los ejemplos de `show` y
+  # de `POST /api/companies` — cada ejemplo que necesite un valor puntual del
+  # emisor sobreescribe `sap_client` con su propio `allow(...).to receive(:get)`.
+  let(:sap_client) { instance_double(Clavisco::ServiceLayer::Client) }
+
+  before do
+    allow(Sap::CompanyClient).to receive(:for).and_return(sap_client)
+    allow(Sap::UserClient).to receive(:for).and_return(sap_client)
+    allow(sap_client).to receive(:get).and_return(nil)
+    allow(sap_client).to receive(:post)
+  end
+
   # Deja al usuario con los permisos indicados sobre `acme` y abre la sesión con
   # esa compañía activa: require_permission! resuelve contra la de la sesión.
   def sign_in_with(*permission_names)
@@ -133,13 +148,25 @@ RSpec.describe 'GET /api/companies', type: :request do
   end
 
   describe 'GET /api/companies/:id' do
+    # Lo que sigue en `companies`. El resto del bloque del emisor (razón
+    # social, tipo de identificación, actividad económica, registro fiscal
+    # 8707) sale de SAP — ver `sap_row` más abajo.
     let(:issuer_attrs) do
       {
-        issuer_legal_name: 'ACME Sociedad Anónima',
-        issuer_id_type: '02', issuer_id_number: '3101822733',
-        economic_activity_code: '7020', tax_registry_8707: '12345',
+        issuer_id_number: '3101822733',
         email_cc: 'uno@acme.cr;dos@acme.cr', purchase_invoice_series: 42,
         default_xml_tax_code: 'IVA13', default_warehouse: 'PRIN'
+      }
+    end
+
+    # Una fila como la devuelve el Service Layer para la UDT
+    # `@CL_FEC_ISSUERCONFIG`.
+    def sap_row(legal_name: 'ACME Sociedad Anónima', id_type: '02', economic_activity_code: '7020',
+                tax_registry_8707: '12345')
+      {
+        'Code' => '1', 'U_LegalName' => legal_name, 'U_IdType' => id_type,
+        'U_EconomicActivityCode' => economic_activity_code, 'U_TaxRegistry8707' => tax_registry_8707,
+        'U_UpdatedAt' => nil, 'U_UpdatedBy' => nil
       }
     end
 
@@ -175,6 +202,7 @@ RSpec.describe 'GET /api/companies', type: :request do
     # se llamen en inglés: la traducción la hace `serialize_detail`.
     it 'expone el bloque del emisor con las claves de Hacienda' do
       acme.update!(issuer_attrs)
+      allow(sap_client).to receive(:get).and_return(sap_row)
       sign_in_with('Configurations_Companies_Update')
 
       get "/api/companies/#{acme.id}"
@@ -190,16 +218,38 @@ RSpec.describe 'GET /api/companies', type: :request do
       )
     end
 
-    # Ya no hay lectura a SAP para armar esta respuesta: los datos del emisor
-    # viven en la tabla. Si volviera a aparecer un `Sap`/`SapMessage`, es que
-    # alguien reintrodujo la dependencia.
-    it 'no habla con SAP ni expone bloques de SAP' do
+    # El bloque del emisor volvió a vivir en SAP (`CLAUDE.md` §32, caso
+    # `company_config_udt`): `show` SÍ habla con SAP, con las credenciales de
+    # LICENCIA de la conexión (`Sap::CompanyClient`, no `Sap::UserClient` —
+    # una lectura no se atribuye a nadie).
+    it 'lee la configuración del emisor con las credenciales de LICENCIA de la conexión' do
       sign_in_with('Configurations_Companies_Update')
 
       get "/api/companies/#{acme.id}"
 
-      expect(body_data).not_to have_key('Sap')
-      expect(body_data).not_to have_key('SapMessage')
+      expect(Sap::CompanyClient).to have_received(:for).with(acme)
+      expect(Sap::UserClient).not_to have_received(:for)
+    end
+
+    it 'responde 422 cuando falta configuración de SAP' do
+      allow(Sap::CompanyClient).to receive(:for)
+        .and_raise(Sap::CompanyClient::MissingConfiguration, 'No tiene conexión de SAP asignada.')
+      sign_in_with('Configurations_Companies_Update')
+
+      get "/api/companies/#{acme.id}"
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('No tiene conexión de SAP asignada.')
+    end
+
+    it 'responde 502 cuando el Service Layer falla' do
+      allow(sap_client).to receive(:get)
+        .and_raise(Clavisco::ServiceLayer::Client::ServiceLayerError.new('SL error'))
+      sign_in_with('Configurations_Companies_Update')
+
+      get "/api/companies/#{acme.id}"
+
+      expect(response).to have_http_status(:bad_gateway)
     end
 
     it 'responde 404 con un id que no existe' do
@@ -345,9 +395,56 @@ RSpec.describe 'GET /api/companies', type: :request do
       expect(response).to have_http_status(:created)
       created = Company.find(body_data['Id'])
       expect(created).to have_attributes(
-        name: 'Beta Industrial', issuer_legal_name: 'Beta Industrial S.A.',
-        issuer_id_number: '3105551234', sap_db: 'SBO_BETA', connection_id: sap.id
+        name: 'Beta Industrial', issuer_id_number: '3105551234',
+        sap_db: 'SBO_BETA', connection_id: sap.id
       )
+    end
+
+    # El bloque del emisor ya no es columna de `companies`: se registra en la
+    # UDT `@CL_FEC_ISSUERCONFIG`, atribuido a quien crea la compañía
+    # (`Sap::UserClient`, no la licencia — mismo criterio que toda escritura de
+    # `Api::Companies::ActivityCodesController`).
+    it 'registra la configuración del emisor en SAP, atribuida a quien crea la compañía' do
+      sign_in_with('Configurations_Companies_Create')
+
+      post '/api/companies', params: general_params
+
+      expect(response).to have_http_status(:created)
+      expect(Sap::UserClient).to have_received(:for).with(instance_of(Company), user: user)
+      expect(sap_client).to have_received(:post).with(
+        'U_CL_FEC_ISSUERCONFIG',
+        body: hash_including('U_LegalName' => 'Beta Industrial S.A.', 'U_IdType' => '02',
+                              'U_EconomicActivityCode' => '620100')
+      )
+    end
+
+    # "Todo o nada": si la UDT no se pudo escribir, ni la fila de `companies` ni
+    # los archivos sobreviven — de lo contrario la compañía quedaría creada acá
+    # pero con `show` sin poder armar la sección del emisor.
+    it 'revierte la fila y los archivos si falla el registro en SAP' do
+      allow(sap_client).to receive(:post)
+        .and_raise(Clavisco::ServiceLayer::Client::ServiceLayerError.new('SL error'))
+      sign_in_with('Configurations_Companies_Create')
+
+      expect do
+        post '/api/companies', params: general_params
+      end.not_to change(Company, :count)
+
+      expect(response).to have_http_status(:bad_gateway)
+      expect(files_for).to be_empty
+    end
+
+    it 'revierte todo cuando falta configuración de SAP para la persona que crea' do
+      allow(Sap::UserClient).to receive(:for)
+        .and_raise(Sap::UserClient::MissingConfiguration, 'no tiene credenciales de SAP configuradas.')
+      sign_in_with('Configurations_Companies_Create')
+
+      expect do
+        post '/api/companies', params: general_params
+      end.not_to change(Company, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(files_for).to be_empty
     end
 
     # Sin esto, quien la crea no tiene `Configurations_Companies_ViewAllApplicationCompanies`

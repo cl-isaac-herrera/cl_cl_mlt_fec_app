@@ -3,16 +3,14 @@
 module Documents
   # Junta las seis consultas de SAP en el objeto único del documento.
   #
-  #   payload = Documents::UnifiedBuilder.new(
-  #     company: company, doc_type: DocType::FE, details: details
-  #   ).call
+  #   payload = Documents::UnifiedBuilder.new(doc_type: DocType::FE, details: details).call
   #
   # Es el punto 10 de `docs/sync-documents-flow.md`. La forma del resultado es la
   # del `objToSend` del .NET: llaves en PascalCase y anidadas como el XML de
   # Hacienda, para que el generador del XML sea una traducción directa y no otra
   # ronda de decisiones.
   #
-  # ── Sirve para FE, TE, ND, NC y FEC, con UNA sola bifurcación ───────────────
+  # ── Sirve para FE, TE, ND, NC y FEC, sin ninguna bifurcación ────────────────
   # El documento dice que este objeto unificado es **solo para factura
   # electrónica** (punto 10, última línea), pero los XSD reales de Hacienda
   # definen un único esquema para FE y TE (`DocumentoFETE` en
@@ -22,9 +20,15 @@ module Documents
   # legacy .NET arma los cinco con el mismo `objToSend`.
   #
   # La forma del objeto es una sola para todos; lo que cambia por tipo es qué se
-  # emite de él (`Hacienda::XmlBuilder`). La ÚNICA bifurcación de este armado es
-  # CUÁL DE LOS DOS ROLES es la compañía, porque la factura de compra los
-  # invierte — ver `#compania_es_el_emisor?`.
+  # emite de él (`Hacienda::XmlBuilder`). La Factura Electrónica de Compra
+  # invierte los roles —la emite el proveedor y la compañía es el receptor—,
+  # pero eso ya NO es una bifurcación de esta clase: la vista de cabecera que
+  # arma `details.header` (`Sap::DocumentDetails`) resuelve la identidad de
+  # `Emsr*`/`Rcpr*` para el rol que corresponda en cada tipo, así que
+  # `identidad_emisor`/`identidad_receptor` siempre leen del mismo lugar. Es la
+  # razón por la que esta clase ya no recibe `company` ni habla con SAP por su
+  # cuenta — antes sí lo hacía, para la identidad del rol que fuera la
+  # compañía; ahora la vista se la da resuelta.
   #
   # `Hacienda::DocumentValidator` cubre los cinco: comparten casi todas las
   # reglas, y las que no están listadas una por una en su cabecera.
@@ -44,11 +48,9 @@ module Documents
   # `[]` y NO se inventa: `DetalleSurtido`, porque no hay vista de surtidos (el
   # mapeo la nombra, pero `docs/sync-documents-flow.md` no la define).
   class UnifiedBuilder
-    # @param company [Company]
     # @param doc_type [String] código de Hacienda (`DocType::FE`, …).
     # @param details [Sap::DocumentDetails::Result]
-    def initialize(company:, doc_type:, details:)
-      @company = company
+    def initialize(doc_type:, details:)
       @doc_type = doc_type
       @details = details
     end
@@ -64,37 +66,9 @@ module Documents
 
     private
 
-    attr_reader :company, :doc_type, :details
+    attr_reader :doc_type, :details
 
     def header = details.header
-
-    # ── Cuál de los dos roles es la compañía ──────────────────────────────────
-    # En todo comprobante de VENTA el emisor es la compañía y el receptor es el
-    # cliente. La Factura Electrónica de Compra invierte los roles: la emite el
-    # proveedor que no puede facturar —un extranjero no domiciliado o un no
-    # contribuyente— y la compañía es el RECEPTOR. Poner ahí la cédula de la
-    # compañía no sería un campo mal llenado: sería declararle a Hacienda que la
-    # compañía se compró a sí misma.
-    #
-    # La inversión está confirmada por tres fuentes independientes: el legacy
-    # mapea `Emisor` ← `Emsr*` también en FEC (`GetData.cs#GetDocToSendFEC`
-    # L1142), `Validations.cs` (L299/L303) exime al emisor de declarar código de
-    # actividad y se lo exige al receptor, y el XSD mueve `OtrasSenasExtranjero`
-    # del receptor al emisor.
-    #
-    # ── Cada rol tiene UNA sola fuente, y este predicado la elige ─────────────
-    # El rol que NO es la compañía sale de la vista; el que sí lo es sale de
-    # `companies`, que es donde el operador lo administra y por eso la vista lo
-    # devuelve en NULL a propósito.
-    #
-    # No hay respaldo de una fuente en la otra ni mapeo entre bloques (el .NET
-    # copiaba `Rcpr*` sobre `Emsr*` justo después de consultar la vista): un
-    # `||` entre las dos le prestaría al proveedor la identidad de la compañía
-    # el día que la vista venga vacía, y ese comprobante —que Hacienda
-    # aceptaría— dice que la compañía se compró a sí misma. Sin respaldo, la
-    # vista vacía corta en `Hacienda::Validations::HeaderValidator` y el
-    # documento queda en `Error` en la cola, que es el desenlace correcto.
-    def compania_es_el_emisor? = doc_type != DocType::FEC
 
     # ── Documento ─────────────────────────────────────────────────────────────
 
@@ -119,28 +93,18 @@ module Documents
       }
     end
 
-    # ── Los dos códigos de actividad, cada uno con la fuente de su rol ────────
-    # Quien tiene la actividad económica inscrita ante Hacienda es la compañía, y
-    # su código sale de `companies`; el del otro rol lo trae la vista. En la
-    # factura de compra eso queda al revés que en el resto, igual que todo lo
-    # demás de esta clase (ver `#compania_es_el_emisor?`).
+    # ── Los dos códigos de actividad ──────────────────────────────────────────
+    # Los dos salen SIEMPRE de la cabecera: la vista resuelve cuál de los dos
+    # roles es la compañía y le pone su actividad económica al prefijo que
+    # corresponda —en la factura de compra eso queda al revés que en el resto,
+    # y es la vista la que ya lo resuelve, no esta clase.
     #
     # El XSD lo confirma por su lado: en `FacturaElectronicaCompra_V4.4.xsd`
     # `CodigoActividadReceptor` es `minOccurs="1"` y el del emisor `minOccurs="0"`;
     # en el de factura es exactamente al revés.
-    def codigo_actividad_emisor
-      return actividad_de_la_compania if compania_es_el_emisor?
+    def codigo_actividad_emisor = header.string('CodigoActividadEmisor')
 
-      header.string('CodigoActividadEmisor')
-    end
-
-    def codigo_actividad_receptor
-      return header.string('CodigoActividadReceptor') if compania_es_el_emisor?
-
-      actividad_de_la_compania
-    end
-
-    def actividad_de_la_compania = company.economic_activity_code.presence
+    def codigo_actividad_receptor = header.string('CodigoActividadReceptor')
 
     # La cédula del proveedor de software ante Hacienda. Es un dato del
     # PRODUCTO y no del documento —la vista lo traía hardcodeado antes de que
@@ -195,18 +159,16 @@ module Documents
       )
     end
 
-    # ── La identidad de cada rol, según cuál de los dos es la compañía ────────
-    # El rol que ES la compañía sale de `companies`; el otro, de la vista, que
-    # deja el bloque del primero en NULL a propósito. Sin respaldo entre las dos
-    # fuentes — el porqué está en `#compania_es_el_emisor?`.
+    # ── La identidad de cada rol ──────────────────────────────────────────────
+    # Los dos salen SIEMPRE de la cabecera, con su prefijo (`Emsr`/`Rcpr`): la
+    # vista de `Sap::DocumentDetails` ya resuelve cuál de los dos roles es la
+    # compañía y le pone la identidad que corresponda al prefijo —la suya
+    # propia, o la del otro lado del documento—, así que esta clase no necesita
+    # saber cuál es cuál. Antes esto se leía de `companies` para el rol que
+    # fuera la compañía; ahora la vista ya lo trae resuelto.
+    def identidad_emisor = identidad_de_la_cabecera('Emsr')
 
-    def identidad_emisor
-      compania_es_el_emisor? ? identidad_de_la_compania : identidad_de_la_cabecera('Emsr')
-    end
-
-    def identidad_receptor
-      compania_es_el_emisor? ? identidad_de_la_cabecera('Rcpr') : identidad_de_la_compania
-    end
+    def identidad_receptor = identidad_de_la_cabecera('Rcpr')
 
     # Las tres llaves que los dos bloques comparten. Lo que cada rol agrega
     # aparte —`Registrofiscal8707` en el emisor, los campos de extranjero en el
@@ -222,28 +184,11 @@ module Documents
       }
     end
 
-    def identidad_de_la_compania
-      {
-        'Nombre' => company.issuer_legal_name.presence,
-        'Identificacion' => {
-          'Tipo' => company.issuer_id_type.presence,
-          'Numero' => company.issuer_id_number.presence
-        },
-        # El nombre comercial NO tiene columna propia: es `companies.name`, que ya
-        # existía y es el que usa el resto de la app. Ver la migración
-        # `20260819130000_add_issuer_fields_to_companies.rb`.
-        'NombreComercial' => company.name.presence
-      }
-    end
-
-    # La columna nació como el UDF `CL_FEC_EmsrRegFiscal8707`: es el registro del
-    # EMISOR. En la factura de compra ese emisor es el proveedor, así que el dato
-    # viene en la cabecera y no de `companies`.
-    def registro_fiscal8707
-      return company.tax_registry_8707.presence if compania_es_el_emisor?
-
-      header.string('EmsrRegistrofiscal8707')
-    end
+    # Solo el EMISOR lo declara (`Registrofiscal8707`, `EmisorType` en los
+    # cuatro esquemas): sale siempre de la cabecera, con el mismo prefijo fijo
+    # `Emsr` — no depende de cuál rol sea la compañía, porque el campo
+    # describe al emisor sea quien sea.
+    def registro_fiscal8707 = header.string('EmsrRegistrofiscal8707')
 
     # Hacienda exige un único correo en `Receptor.CorreoElectronico`, pero SAP
     # puede traer varios separados por `;` (mismo campo que usa

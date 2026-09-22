@@ -9,8 +9,9 @@ module Api
   #
   # El filtro por nombre legal no se migra: el listado filtra por `name` (el
   # comercial) y por `issuer_id_number` (la cédula, columna "Cédula" del
-  # listado). El legal sí es una columna aparte (`issuer_legal_name`): filtrar
-  # por ella es sumarla al scope `search`, no falta el dato.
+  # listado, y la única identidad del emisor que sigue viviendo en esta tabla —
+  # ver `Sap::CompanyConfig`). El legal no es filtrable porque ya no es una
+  # columna de `companies`: filtrar por SAP no es algo que `search` pueda hacer.
   #
   # `GET /api/companies` NO son las compañías del usuario de la sesión — esas son
   # `GET /api/profile/companies`.
@@ -66,10 +67,15 @@ module Api
     # GET /api/companies/:id
     #
     # Los datos de una compañía, para el formulario de edición. La lectura es UNA
-    # sola aunque el guardado esté partido en un endpoint por sección. Todo sale
-    # de la tabla `companies`: el bloque del emisor ante Hacienda estuvo un tiempo
-    # como UDFs de `OADM` y volvió a la base de la aplicación, así que la
-    # respuesta ya no necesita hablar con SAP para armarse.
+    # sola aunque el guardado esté partido en un endpoint por sección.
+    #
+    # ⚠️ El bloque del emisor ante Hacienda (razón social, tipo de
+    # identificación, actividad económica, registro fiscal 8707) vive en la UDT
+    # `@CL_FEC_ISSUERCONFIG` (`Sap::CompanyConfig`) y no en `companies` — volvió
+    # a depender de SAP para armarse, revirtiendo la decisión que documenta
+    # `CLAUDE.md` §32 (caso `company_config_udt`, antes `oadm_company_config`).
+    # Si SAP no responde, `show` responde 422/502 (ver `rescue_from` más abajo)
+    # en vez de un formulario a medias.
     #
     # Los dos secretos de la sección de Hacienda (el PIN del certificado y la
     # contraseña del token) NO viajan: se devuelve solo si hay uno guardado.
@@ -77,7 +83,7 @@ module Api
     # Reemplaza `GET /api/companies/:id` del .NET, que devolvía las 42 columnas de
     # las dos tablas del legado.
     def show
-      render json: ApiResponse.success(serialize_detail(@company)).to_h
+      render json: ApiResponse.success(serialize_detail(@company, read_issuer_config(@company))).to_h
     end
 
     # GET /api/companies/assignable
@@ -130,6 +136,15 @@ module Api
     # pudiendo reabrirla para completar el resto de las secciones (`show` y
     # `general` comparten el alcance de `VisibleCompanies`). Mismo criterio que
     # `Api::UsersController#create` con `CompanyId`.
+    #
+    # ── Todo o nada, hasta la UDT ────────────────────────────────────────────
+    # Después de que la fila y los archivos ya se escribieron, todavía falta
+    # registrar la configuración del emisor en SAP (`Sap::CompanyConfig`). Si
+    # eso falla —conexión, base o credenciales incorrectas—, se revierte TODO:
+    # se destruye la fila recién creada y se descartan los archivos, y el
+    # usuario corrige y reintenta el alta entera. Dejar la compañía a medias
+    # (creada en Rails, sin fila en SAP) la mostraría en el listado con una
+    # sección del emisor que `show` no puede armar.
     def create
       company = Company.new(create_params)
       # Antes de tocar el disco: un `Nombre` en blanco, sin conexión de SAP, sin
@@ -149,6 +164,17 @@ module Api
         return render_error('Adjunte el formato de impresión para poder registrar la compañía.')
       end
 
+      # Se arma temprano, antes de escribir ningún archivo: si a quien crea la
+      # compañía le faltan credenciales de SAP, mejor fallar acá que después de
+      # haber escrito el certificado y los adjuntos en disco. Atribuido a quien
+      # crea la compañía (`Sap::UserClient`), no a la licencia — mismo criterio
+      # que toda escritura de `Api::Companies::ActivityCodesController`.
+      begin
+        client = Sap::UserClient.for(company, user: Current.user)
+      rescue Sap::UserClient::MissingConfiguration => e
+        return render_error(e.message)
+      end
+
       begin
         company.assign_attributes(certificate_attributes(company).merge(attachment_attributes(company)))
       rescue CompanyFiles::Error => e
@@ -165,9 +191,19 @@ module Api
         return render_invalid(company)
       end
 
+      begin
+        write_issuer_config!(company, client)
+      rescue Sap::CompanyConfig::InvalidConfig => e
+        discard_created(company)
+        return render_error(e.message)
+      rescue Clavisco::ServiceLayer::Client::ServiceLayerError => e
+        discard_created(company)
+        return render_service_layer_error(e)
+      end
+
       UsersByCompany.create!(user: Current.user, company: company)
 
-      render json: ApiResponse.success(serialize_detail(company), code: 201,
+      render json: ApiResponse.success(serialize_detail(company, issuer_config_from_request), code: 201,
                                        message: 'Compañía registrada con éxito.').to_h,
              status: :created
     end
@@ -204,8 +240,8 @@ module Api
     # (ATV)" — el único botón del alta manda las cuatro secciones juntas. Lo que
     # esa sección tiene de ARCHIVOS (certificado, logo, formato de impresión) lo
     # resuelven `certificate_attributes` y `attachment_attributes`, porque
-    # necesitan la compañía ya construida (le leen `issuer_id_number` para saber
-    # en qué carpeta escribir, `CLAUDE.md` §34).
+    # necesitan la compañía ya construida y un `client` de SAP para saber en
+    # qué carpeta escribir (`CLAUDE.md` §34, `Sap::CompanyConfig`).
     #
     # A diferencia de un `PATCH` de sección, acá no importa copiar solo lo que
     # vino en la petición: es un alta, así que lo que no venga simplemente nace
@@ -214,11 +250,7 @@ module Api
       {
         name:                    text(:Name),
         sap_db:                  text(:SapDb),
-        issuer_legal_name:       text(:EmsrNombre),
-        issuer_id_type:          text(:EmsrIdeTipo),
         issuer_id_number:        text(:EmsrIdeNumero),
-        economic_activity_code:  text(:CodigoActividad),
-        tax_registry_8707:       text(:EmsrRegistroFiscal8707),
         connection_id:           number(:ConnectionId),
         email_config_id:         number(:EmailConfigId),
         reception_mailbox_id:    number(:ReceptionMailboxId),
@@ -231,6 +263,73 @@ module Api
         cert_pin:                text(:CertPin),
         token_password:          text(:TokenPass)
       }.compact
+    end
+
+    # Los cuatro campos de "Datos Generales" que ya NO son columna de `companies`:
+    # viven en la UDT `@CL_FEC_ISSUERCONFIG`. Sin `.compact`: el alta manda el
+    # bloque completo (`Sap::CompanyConfig#create` no hace PATCH parcial), así
+    # que un campo en blanco se escribe en blanco a propósito.
+    def issuer_config_params
+      {
+        legal_name:              text(:EmsrNombre),
+        id_type:                 text(:EmsrIdeTipo),
+        economic_activity_code:  text(:CodigoActividad),
+        tax_registry_8707:       text(:EmsrRegistroFiscal8707)
+      }
+    end
+
+    # Escribe la fila única de la UDT, atribuida a quien está creando la
+    # compañía (`Sap::UserClient`, no `Sap::CompanyClient`) — mismo criterio que
+    # `Api::Companies::ActivityCodesController` para toda escritura: la
+    # licencia es para procesos de fondo sin una persona detrás. El `client` lo
+    # arma `create` una sola vez, temprano (antes de escribir ningún archivo).
+    def write_issuer_config!(company, client)
+      Sap::CompanyConfig.new(client: client, actor: Current.user&.email).create(issuer_config_params)
+    end
+
+    # El bloque del emisor tal como quedó, sin volver a preguntarle a SAP
+    # inmediatamente después de haberlo escrito: `write_issuer_config!` ya
+    # confirmó que se guardó, así que lo que se acaba de mandar ES el estado
+    # actual.
+    def issuer_config_from_request
+      Sap::CompanyConfig::Config.new(**issuer_config_params, updated_at: nil, updated_by: nil)
+    end
+
+    # La configuración del emisor de una compañía YA EXISTENTE, para `show`.
+    # A diferencia del alta, acá sí hay que preguntarle a SAP: es la única
+    # fuente de este bloque, y puede haber cambiado desde afuera de esta app.
+    #
+    # `nil` cuando la fila todavía no existe en SAP (compañía sin backfill
+    # todavía, o sin conexión asignada) — `serialize_detail` sabe leer un `nil`.
+    def read_issuer_config(company)
+      Sap::CompanyConfig.new(client: Sap::CompanyClient.for(company)).read
+    end
+
+    # Los desenlaces que no son "salió bien" al hablar con SAP, para `show`
+    # (y cualquier acción futura que solo LEA la configuración del emisor).
+    # `create` maneja los suyos aparte, en su propio `begin/rescue`, porque
+    # además tiene que revertir la fila y los archivos ya escritos.
+    #
+    # Mismo criterio que `Api::Companies::ActivityCodesController`: falta de
+    # configuración → 422 (no se llegó a hablar con SAP); el Service Layer
+    # respondió mal → 502 (el problema es el enlace).
+    rescue_from Sap::CompanyClient::MissingConfiguration do |error|
+      render json: ApiResponse.error(error.message).to_h, status: :unprocessable_content
+    end
+
+    rescue_from Clavisco::ServiceLayer::Client::ServiceLayerError do |error|
+      render json: ApiResponse.error(error.sap_message || error.message).to_h, status: :bad_gateway
+    end
+
+    # Deshace un alta que llegó a crear la fila y los archivos pero falló al
+    # registrar la configuración del emisor en SAP (`create`, ver su cabecera).
+    # `company.destroy` es un `DELETE` real —`SoftDeletable` no lo redefine,
+    # solo agrega `soft_delete!`— así que la cédula queda libre para reintentar
+    # el alta: dejarla "dada de baja" la seguiría bloqueando (la unicidad de
+    # `issuer_id_number` no excluye a las inactivas, a propósito).
+    def discard_created(company)
+      discard_written
+      company.destroy
     end
 
     # Lo que aporta el certificado, o un hash vacío si no vino ninguno. Mismo
@@ -318,7 +417,12 @@ module Api
     # el formulario lo muestra, el usuario lo edita, guarda, y no pasa nada — sin
     # error. `company_general_spec.rb`, `company_tax_authority_spec.rb` y
     # `company_attachments_spec.rb` comparan las dos listas de su sección.
-    def serialize_detail(company)
+    #
+    # @param issuer_config [Sap::CompanyConfig::Config, nil] el bloque del
+    #   emisor, ya leído de SAP (`show`) o recién escrito (`create`) — ver
+    #   `read_issuer_config`/`issuer_config_from_request`. `nil` cuando la fila
+    #   todavía no existe en SAP: los cuatro campos salen en blanco.
+    def serialize_detail(company, issuer_config)
       serialize(company).merge(
         # ── Sección "Datos Generales" ────────────────────────────────────────
         ConnectionId:           company.connection_id,
@@ -327,11 +431,11 @@ module Api
         SapDb:                  company.sap_db,
         EmailSenderType:        company.email_sender_type,
         FreightType:            company.freight_type,
-        EmsrNombre:             company.issuer_legal_name,
-        EmsrIdeTipo:            company.issuer_id_type,
+        EmsrNombre:             issuer_config&.legal_name,
+        EmsrIdeTipo:            issuer_config&.id_type,
         EmsrIdeNumero:          company.issuer_id_number,
-        CodigoActividad:        company.economic_activity_code,
-        EmsrRegistroFiscal8707: company.tax_registry_8707,
+        CodigoActividad:        issuer_config&.economic_activity_code,
+        EmsrRegistroFiscal8707: issuer_config&.tax_registry_8707,
 
         # ¿El correo de recepción electrónica sale también para lo que Hacienda
         # RECHAZA? Lo evalúa `Sap::MailDocumentInfo` al armar el `$filter`.

@@ -27,13 +27,22 @@ RSpec.describe Sap::ReceptionMessages do
     allow(client).to receive(:post).with('U_CL_FEC_RECEPTORCARG', any_args).and_return({ 'Code' => 50 })
     allow(client).to receive(:post).with('U_CL_FEC_RECEPTOROTRO', any_args).and_return({ 'Code' => 60 })
     allow(client).to receive(:post).with('U_CL_FEC_RECEPTORREF', any_args).and_return({ 'Code' => 70 })
+
+    # La actividad económica de la compañía vive en `Sap::CompanyConfig` (la
+    # UDT `@CL_FEC_ISSUERCONFIG`), no en `companies` — la usa
+    # `MailReception::EmailBodyTags` como default cuando el correo no trae el
+    # tag `[CodigoActividadReceptor:…]`.
+    allow(Sap::CompanyConfig).to receive(:new).with(client: client).and_return(
+      instance_double(Sap::CompanyConfig,
+                       read: instance_double(Sap::CompanyConfig::Config, economic_activity_code: '620102'))
+    )
   end
 
   let(:company) do
     build_stubbed(
-      :company, economic_activity_code: '620102',
-                default_recept_message: nil, default_recept_details: nil,
-                default_recept_tax_factor: nil, default_recept_tax_condition: nil
+      :company,
+      default_recept_message: nil, default_recept_details: nil,
+      default_recept_tax_factor: nil, default_recept_tax_condition: nil
     )
   end
 

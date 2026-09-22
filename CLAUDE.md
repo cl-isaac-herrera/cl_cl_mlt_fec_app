@@ -2152,24 +2152,36 @@ La estructura (UDTs y UDFs) que este producto necesita en SAP se declara en
 `config/sap_schemas/*.json` y se aplica con las rake tasks del submódulo
 `vendor/clavisco/sap_udfs`. Es la regla de CLAVISCO-PLATFORM-STANDARDS §2.8:
 
-> **Estado:** hay seis schemas declarados — `marketing_documents.json` y `payments.json`
-> (UDFs sobre tablas nativas) y cuatro UDTs propias: `outgoing_mails_udt.json`,
-> `doc_sync_attempts_udt.json`, `sucursales_udt.json` y `activity_codes_udt.json` (códigos
-> de actividad económica de la compañía, administrados por `Sap::ActivityCodes`). La
-> subcarpeta `delete/` está **vacía**: hoy no hay ninguna instalación con estos schemas
-> creados, así que un manifiesto de borrado no documenta nada que haya pasado en ningún
-> lado (ver la regla de más abajo).
+> **Estado:** hay siete schemas declarados — `marketing_documents.json` y `payments.json`
+> (UDFs sobre tablas nativas) y cinco UDTs propias: `outgoing_mails_udt.json`,
+> `doc_sync_attempts_udt.json`, `sucursales_udt.json`, `activity_codes_udt.json` (códigos
+> de actividad económica de la compañía, administrados por `Sap::ActivityCodes`) y
+> `company_config_udt.json` (razón social, tipo de identificación, actividad económica y
+> registro fiscal 8707 del emisor, administrados por `Sap::CompanyConfig`). La subcarpeta
+> `delete/` está **vacía**: hoy no hay ninguna instalación con estos schemas creados, así
+> que un manifiesto de borrado no documenta nada que haya pasado en ningún lado (ver la
+> regla de más abajo).
 >
-> **Hubo un séptimo schema y se revirtió:** `oadm_company_config.json`, diez UDFs de
-> configuración de FE sobre `OADM`. Esos campos volvieron a la tabla `companies` de la base
-> de la aplicación.
+> **Hubo un sexto schema (`oadm_company_config.json`, diez UDFs de configuración de FE
+> sobre `OADM`) que se revirtió y después, en parte, se volvió a traer — con un diseño
+> distinto.** La primera vez (2026-08) esos diez campos volvieron enteros a `companies`.
+> La segunda (`company_config_udt.json`, 2026-09) cuatro de ellos volvieron a SAP, pero
+> **no** como UDF sobre `OADM` sino como UDT propia, y **no** los seis originales:
 >
-> **La lección de ese ida y vuelta:** un UDF solo deduplica cuando SAP **ya usa** ese dato
-> por su cuenta. Diez parámetros de la facturación electrónica de Costa Rica, que nadie más
-> que este producto lee, no eran "la misma información en dos lados": eran la única copia,
-> alojada en el sistema equivocado. El costo era concreto — una vuelta al Service Layer para
-> pintar un formulario, credenciales de SAP obligatorias para abrir la pantalla, y validación
-> imposible del lado del modelo. Antes de declarar un schema, preguntar si SAP lee ese campo.
+> | Campo | Dónde quedó | Por qué |
+> |---|---|---|
+> | Razón social, tipo de identificación, actividad económica, registro fiscal 8707 | UDT `@CL_FEC_ISSUERCONFIG` | La emisión (`Documents::UnifiedBuilder`) YA los lee de la vista de cabecera que arma `Sap::DocumentDetails` (`Emsr*`/`Rcpr*`, resueltos por SAP según el tipo de documento) — no hace falta una segunda consulta. Solo el FORMULARIO de compañías los necesita, y ahí sí vale la pena evitar la columna: es exactamente el mismo dato que la vista ya expone, ahora también editable. |
+> | Cédula (`issuer_id_number`) | Se queda en `companies` | Tres consumidores la necesitan SIN saber de antemano con qué compañía están tratando — `CompanyFiles::Store` (ruta del certificado/logo/formato en disco), `MailReceptionJob#archive` (`Company.find_by(issuer_id_number: …)`, decide a qué compañía pertenece un correo entrante) y el listado/filtro de compañías. Ninguno puede empezar por hablar con el SAP de una compañía que todavía no identificó. |
+> | Nombre comercial (`name`) | Se queda en `companies` | Nunca tuvo columna en SAP en ningún intento; sigue siendo el único dato que el resto de la app ya usa (listado, selector). |
+>
+> **La lección de la primera reversión sigue siendo válida** —un UDF solo deduplica cuando
+> SAP **ya usa** ese dato por su cuenta— pero la aplicación correcta no es "nunca declarar
+> un schema para configuración de FE": es preguntar, campo por campo, **quién más lo lee o
+> lo necesita sin depender de la compañía ya resuelta**. Cuatro de los seis campos
+> resultaron tener un lector real (la vista de documentos); dos no. Antes de declarar un
+> schema, o de sacar un campo de `companies`, revisar los tres consumos que `issuer_id_number`
+> expuso: rutas de archivo, enrutamiento de correo entrante y listados/filtros — son el tipo
+> de consulta que un UDT nunca puede servir bien, porque corren antes de saber la compañía.
 
 > **Nunca crear ni modificar UDTs/UDFs manualmente en SAP ni con código imperativo.**
 > Todo cambio de estructura pasa por un JSON schema + sync.

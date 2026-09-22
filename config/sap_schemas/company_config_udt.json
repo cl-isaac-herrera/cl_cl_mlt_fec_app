@@ -1,0 +1,32 @@
+{
+  "table_name": "@CL_FEC_ISSUERCONFIG",
+  "IsUDT": true,
+  "table_description": "FEC · Configuración del emisor",
+  "table_type": "bott_NoObjectAutoIncrement",
+  "columns": [
+    { "Name": "LegalName", "Description": "FEC · Razón social del emisor ante Hacienda",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 100, "Mandatory": "tNO" },
+
+    { "Name": "IdType", "Description": "FEC · Tipo de identificación del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO",
+      "ValidValues": [
+        { "Value": "01", "Description": "Física" },
+        { "Value": "02", "Description": "Jurídica" },
+        { "Value": "03", "Description": "DIMEX" },
+        { "Value": "04", "Description": "NITE" }
+      ]
+    },
+
+    { "Name": "EconomicActivityCode", "Description": "FEC · Código de actividad económica del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 6, "Mandatory": "tNO" },
+
+    { "Name": "TaxRegistry8707", "Description": "FEC · Registro fiscal del emisor (ley 8707)",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 12, "Mandatory": "tNO" },
+
+    { "Name": "UpdatedAt", "Description": "FEC · Fecha ISO 8601 de la última actualización",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 25, "Mandatory": "tNO" },
+
+    { "Name": "UpdatedBy", "Description": "FEC · Usuario que hizo la última actualización",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 160, "Mandatory": "tNO" }
+  ]
+}

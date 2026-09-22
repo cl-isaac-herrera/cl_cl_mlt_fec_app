@@ -131,7 +131,9 @@ class SendElectronicReceiptJob < ApplicationJob
   end
 
   def send_mail(entry, company, mail_row, info)
-    body = Documents::ReceiptMailBody.new(company: company, doc_type: entry.doc_type, info: info).call
+    body = Documents::ReceiptMailBody.new(
+      company: company, doc_type: entry.doc_type, info: info, client: client_for(company)
+    ).call
 
     Documents::ReceiptMailer.new(
       company: company,

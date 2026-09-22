@@ -30,8 +30,15 @@ module CompanyFiles
   # El .NET armaba la carpeta con el grupo y el `ShortName` de la compañía, dos
   # cosas que esta versión eliminó (`CLAUDE.md` §31 y el campo sin columna). La
   # cédula las reemplaza: identifica a la compañía ante Hacienda y ya está en la
-  # tabla. Los tres archivos comparten esa carpeta y no se pisan entre sí, porque
-  # cada uno valida su propia extensión y cada columna se lee aparte.
+  # tabla — es la ÚNICA parte del bloque del emisor que se quedó en `companies`
+  # cuando el resto (razón social, tipo de identificación, actividad económica,
+  # registro fiscal 8707) se movió a la UDT `@CL_FEC_ISSUERCONFIG`
+  # (`Sap::CompanyConfig`): esta clase necesita la cédula para escribir un
+  # archivo sin que eso dependa de que SAP esté arriba (`docs/PLAN-UDT-CONFIG-EMISOR.md`
+  # §1, y confirmado además por `MailReceptionJob#archive`, que la usa para
+  # enrutar correo entrante — otro consumidor que tampoco puede depender de
+  # SAP). Los tres archivos comparten esa carpeta y no se pisan entre sí, porque cada uno
+  # valida su propia extensión y cada columna se lee aparte.
   #
   # ## Lo que NO hace
   #
