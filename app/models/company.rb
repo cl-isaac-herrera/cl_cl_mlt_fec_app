@@ -77,6 +77,18 @@ class Company < ApplicationRecord
   validates :connection_id,   presence: true, on: :new_company_form
   validates :email_config_id, presence: true, on: :new_company_form
 
+  # Mismo contexto y mismo motivo: el formulario de alta pide "Hacienda (ATV)"
+  # completa (certificado, PIN, usuario y contraseña del token), no solo
+  # "Datos Generales". `cert_path` NO se suma acá — lo deriva el servidor del
+  # archivo subido y todavía no existe en el momento en que se valida esto
+  # (`Api::CompaniesController#create` valida `:new_company_form` ANTES de
+  # escribir ningún archivo, para no dejar uno tirado en disco si el resto de
+  # los datos generales está mal); que se haya adjuntado un certificado lo
+  # exige ese controller directamente sobre `params[:file]`, no el modelo.
+  validates :cert_pin,       presence: true, on: :new_company_form
+  validates :token_user,     presence: true, on: :new_company_form
+  validates :token_password, presence: true, on: :new_company_form
+
   # `belongs_to ... optional: true` no valida nada cuando el id SÍ viene: una
   # conexión inexistente pasaría el modelo y la rechazaría la llave foránea, que
   # también llega como 500. `unscoped` porque una conexión dada de baja sigue
@@ -111,6 +123,19 @@ class Company < ApplicationRecord
   # puesto el comprobante. Ver `20260901120000_tighten_company_identity_limits.rb`.
   validates :issuer_legal_name,      length: { maximum: 100 }, allow_nil: true
   validates :issuer_id_number,       length: { maximum: 20 },  allow_nil: true
+
+  # Dos compañías con la misma cédula no son dos compañías: Hacienda identifica al
+  # emisor por este número (`Documents::UnifiedBuilder#emisor`), así que un
+  # duplicado sería la misma compañía facturando por dos lados. `unscope` y NO
+  # `where(is_active: true)` a propósito —a diferencia de `EmailConfig#email—:
+  # una compañía dada de baja no libera su cédula para que otra la reclame; el
+  # duplicado sigue siendo la misma compañía, solo que ya no está activa.
+  validates :issuer_id_number,
+            uniqueness: {
+              conditions: -> { unscope(where: :is_active) },
+              message:    'ya pertenece a otra compañía registrada (activa o inactiva)'
+            },
+            allow_nil: true
   validates :economic_activity_code, length: { maximum: 6 },   allow_nil: true
   validates :tax_registry_8707,      length: { maximum: 12 },  allow_nil: true
   validates :default_xml_tax_code,   length: { maximum: 8 },   allow_nil: true

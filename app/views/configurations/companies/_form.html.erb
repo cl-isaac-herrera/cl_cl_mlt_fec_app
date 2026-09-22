@@ -1,17 +1,19 @@
 <%# ============================================================ %>
-<%# FORMULARIO COMPARTIDO: Crear / Editar Compañía %>
+<%# FORMULARIO COMPARTIDO: Crear / Editar Compañía                %>
+<%#                                                                %>
+<%# `mode:` decide la presentación de las cuatro secciones que el  %>
+<%# alta deja llenar (Datos Generales, Adicional, ATV, Adjuntos):  %>
+<%# tarjetas planas y siempre abiertas en creación (como           %>
+<%# /configurations/general), acordeón colapsable en edición — el  %>
+<%# contenido de los campos es EL MISMO en los dos casos, capturado %>
+<%# una sola vez con `capture` para no duplicarlo. "Factura a       %>
+<%# Proveedor" y "Códigos de actividad" ni se renderizan en el      %>
+<%# alta: no hay compañía todavía a la que colgarles nada.          %>
 <%# ============================================================ %>
+<% creating = mode == :create %>
 
 <%# ---- SECCIÓN 1: Datos Generales ---- %>
-<details data-testid="section-general"
-         data-company-form-target="sectionGeneral"
-         class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3 group"
-         open>
-  <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
-    <span class="text-sm font-semibold text-gray-700">Datos Generales de la Compañía</span>
-    <span class="material-icons text-gray-400 group-open:rotate-180 transition-transform text-base">expand_more</span>
-  </summary>
-
+<% general_content = capture do %>
   <div class="relative px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
   <div data-company-form-target="loaderGeneral"
        class="hidden absolute inset-0 z-10 flex items-center justify-center bg-white/80 rounded-xl">
@@ -299,17 +301,30 @@
       </span>
     </div>
   </div>
-</details>
+<% end %>
+
+<% if creating %>
+  <div data-testid="section-general"
+       data-company-form-target="sectionGeneral"
+       class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
+    <h2 class="text-sm font-semibold text-gray-700 px-5 pt-5 pb-1">Datos Generales de la Compañía</h2>
+    <%= general_content %>
+  </div>
+<% else %>
+  <details data-testid="section-general"
+           data-company-form-target="sectionGeneral"
+           class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3 group"
+           open>
+    <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
+      <span class="text-sm font-semibold text-gray-700">Datos Generales de la Compañía</span>
+      <span class="material-icons text-gray-400 group-open:rotate-180 transition-transform text-base">expand_more</span>
+    </summary>
+    <%= general_content %>
+  </details>
+<% end %>
 
 <%# ---- SECCIÓN 2: Adicional ---- %>
-<details data-testid="section-additional"
-         data-company-form-target="sectionAdditional"
-         class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
-  <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
-    <span class="text-sm font-semibold text-gray-700">Adicional</span>
-    <span class="material-icons text-gray-400 text-base">expand_more</span>
-  </summary>
-
+<% additional_content = capture do %>
   <div class="relative px-5 pb-5 flex flex-col gap-4">
   <div data-company-form-target="loaderAdditional"
        class="hidden absolute inset-0 z-10 flex items-center justify-center bg-white/80 rounded-xl">
@@ -321,15 +336,6 @@
             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
     </svg>
   </div>
-
-    <%# Información Adicional %>
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Información Adicional</label>
-      <textarea data-company-form-target="additionalInformation"
-                data-testid="field-additional-info"
-                rows="3"
-                class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
-    </div>
 
     <%# EmailCC dinámico %>
     <div class="flex flex-col gap-2">
@@ -362,24 +368,29 @@
       </button>
     </div>
   </div>
-</details>
+<% end %>
+
+<% if creating %>
+  <div data-testid="section-additional"
+       data-company-form-target="sectionAdditional"
+       class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
+    <h2 class="text-sm font-semibold text-gray-700 px-5 pt-5 pb-1">Adicional</h2>
+    <%= additional_content %>
+  </div>
+<% else %>
+  <details data-testid="section-additional"
+           data-company-form-target="sectionAdditional"
+           class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
+    <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
+      <span class="text-sm font-semibold text-gray-700">Adicional</span>
+      <span class="material-icons text-gray-400 text-base">expand_more</span>
+    </summary>
+    <%= additional_content %>
+  </details>
+<% end %>
 
 <%# ---- SECCIÓN 3: Hacienda (ATV) ---- %>
-<details data-testid="section-atv"
-         data-company-form-target="sectionAtv"
-         class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
-  <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
-    <span class="flex items-center gap-2">
-      <span class="text-sm font-semibold text-gray-700">Datos de Conexión de Hacienda (ATV)</span>
-      <%# Aviso de vencimiento del certificado. Nace oculto y lo pinta            %>
-      <%# `#renderCertAlert` según la fecha que devuelve el API: ámbar los días   %>
-      <%# previos, rojo una vez vencido. Va en el <summary> a propósito — se ve   %>
-      <%# con la sección cerrada, que es cuando hace falta que avise.             %>
-      <span data-company-form-target="certAlert" class="hidden"></span>
-    </span>
-    <span class="material-icons text-gray-400 text-base">expand_more</span>
-  </summary>
-
+<% atv_content = capture do %>
   <div class="relative px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
   <div data-company-form-target="loaderAtv"
        class="hidden absolute inset-0 z-10 flex items-center justify-center bg-white/80 rounded-xl">
@@ -396,7 +407,7 @@
     <%# es un secreto), así que el campo siempre arranca vacío. Si la compañía   %>
     <%# ya tiene uno, el JS lo dice en el placeholder: escribir lo reemplaza.    %>
     <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Pin del Certificado</label>
+      <label class="text-xs font-medium text-gray-600">Pin del Certificado <span class="text-red-500">*</span></label>
       <div class="relative flex items-center">
         <input type="password"
                data-company-form-target="certPin"
@@ -414,7 +425,7 @@
 
     <%# CertPath %>
     <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Nombre del Certificado</label>
+      <label class="text-xs font-medium text-gray-600">Nombre del Certificado <span class="text-red-500">*</span></label>
       <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-gray-50">
         <input type="text"
                data-company-form-target="certPath"
@@ -458,7 +469,7 @@
 
     <%# TokenUsr %>
     <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Token de Usuario</label>
+      <label class="text-xs font-medium text-gray-600">Token de Usuario <span class="text-red-500">*</span></label>
       <input type="text"
              data-company-form-target="tokenUsr"
              data-testid="field-token-usr"
@@ -468,7 +479,7 @@
 
     <%# TokenPass — mismo trato que el pin: cifrado, no vuelve al consultar.     %>
     <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Token Password</label>
+      <label class="text-xs font-medium text-gray-600">Token Password <span class="text-red-500">*</span></label>
       <div class="relative flex items-center">
         <input type="password"
                data-company-form-target="tokenPass"
@@ -506,17 +517,39 @@
       </span>
     </div>
   </div>
-</details>
+<% end %>
+
+<% if creating %>
+  <div data-testid="section-atv"
+       data-company-form-target="sectionAtv"
+       class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
+    <h2 class="flex items-center gap-2 text-sm font-semibold text-gray-700 px-5 pt-5 pb-1">
+      Datos de Conexión de Hacienda (ATV)
+      <span data-company-form-target="certAlert" class="hidden"></span>
+    </h2>
+    <%= atv_content %>
+  </div>
+<% else %>
+  <details data-testid="section-atv"
+           data-company-form-target="sectionAtv"
+           class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
+    <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
+      <span class="flex items-center gap-2">
+        <span class="text-sm font-semibold text-gray-700">Datos de Conexión de Hacienda (ATV)</span>
+        <%# Aviso de vencimiento del certificado. Nace oculto y lo pinta            %>
+        <%# `#renderCertAlert` según la fecha que devuelve el API: ámbar los días   %>
+        <%# previos, rojo una vez vencido. Va en el <summary> a propósito — se ve   %>
+        <%# con la sección cerrada, que es cuando hace falta que avise.             %>
+        <span data-company-form-target="certAlert" class="hidden"></span>
+      </span>
+      <span class="material-icons text-gray-400 text-base">expand_more</span>
+    </summary>
+    <%= atv_content %>
+  </details>
+<% end %>
 
 <%# ---- SECCIÓN 4: Adjuntos ---- %>
-<details data-testid="section-attachments"
-         data-company-form-target="sectionAttachments"
-         class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
-  <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
-    <span class="text-sm font-semibold text-gray-700">Adjuntos de la compañía</span>
-    <span class="material-icons text-gray-400 text-base">expand_more</span>
-  </summary>
-
+<% attachments_content = capture do %>
   <div class="relative px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
   <div data-company-form-target="loaderAttachments"
        class="hidden absolute inset-0 z-10 flex items-center justify-center bg-white/80 rounded-xl">
@@ -570,9 +603,11 @@
       </div>
     </div>
 
-    <%# Formato de Impresión (.rpt de Crystal Reports) %>
+    <%# Formato de Impresión (.rpt de Crystal Reports) — obligatorio en el ALTA: %>
+    <%# sin él, la compañía no puede imprimir ningún comprobante. En edición     %>
+    <%# sigue siendo opcional de guardar (la sección se guarda campo por campo). %>
     <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Formato de Impresión</label>
+      <label class="text-xs font-medium text-gray-600">Formato de Impresión <span class="text-red-500">*</span></label>
       <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 bg-gray-50">
         <input type="text"
                data-company-form-target="printFormatName"
@@ -639,7 +674,26 @@
       </span>
     </div>
   </div>
-</details>
+<% end %>
+
+<% if creating %>
+  <div data-testid="section-attachments"
+       data-company-form-target="sectionAttachments"
+       class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
+    <h2 class="text-sm font-semibold text-gray-700 px-5 pt-5 pb-1">Adjuntos de la compañía</h2>
+    <%= attachments_content %>
+  </div>
+<% else %>
+  <details data-testid="section-attachments"
+           data-company-form-target="sectionAttachments"
+           class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
+    <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
+      <span class="text-sm font-semibold text-gray-700">Adjuntos de la compañía</span>
+      <span class="material-icons text-gray-400 text-base">expand_more</span>
+    </summary>
+    <%= attachments_content %>
+  </details>
+<% end %>
 
 <%# ---- SECCIÓN 5: Códigos de actividad (solo edición) ---- %>
 <details data-testid="section-activity-codes"
@@ -701,10 +755,14 @@
   </div>
 </details>
 
-<%# ---- SECCIÓN 6: Factura a Proveedor ---- %>
+<%# ---- SECCIÓN 6: Factura a Proveedor (solo edición) ---- %>
+<%# Oculta en el alta, igual que "Códigos de actividad": necesita SAP, y la      %>
+<%# compañía todavía no existe. `useFactProvTarget` sigue en el DOM en los dos   %>
+<%# modos —`#setupMode()` lo deshabilita en creación en vez de esconderlo— así   %>
+<%# que la sección en sí se oculta con esta clase y no removiendo el <details>.  %>
 <details data-testid="section-sap"
          data-company-form-target="sectionSap"
-         class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
+         class="hidden bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
   <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
     <span class="flex items-center gap-2">
       <span class="text-sm font-semibold text-gray-700">Datos para Factura a Proveedor</span>
@@ -868,19 +926,12 @@
   </div>
 </details>
 
-<%# ---- BOTÓN REGISTRAR (solo crear) ---- %>
-<div data-company-form-target="btnRegisterContainer"
-     class="hidden flex justify-end mt-4">
-  <button type="button"
-          data-action="click->company-form#submitCreate"
-          data-company-form-target="btnRegister"
-          data-testid="btn-register"
-          disabled
-          class="inline-flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-    <span class="material-icons text-base">check</span>
-    Registrar Datos de la Compañía
-  </button>
-</div>
+<%# El botón "Registrar Datos de la Compañía" NO se renderiza acá: vive en          %>
+<%# `_register_button.html.erb`, como HERMANO de este partial —fuera del `<div       %>
+<%# class="p-6">` de `new.html.erb`/`edit.html.erb`— para no heredar ese padding y    %>
+<%# poder quedar pegado a los bordes de `<main>` sin pelear con márgenes negativos.   %>
+<%# Sigue dentro del mismo `data-controller="company-form"`, así que los targets      %>
+<%# de Stimulus resuelven igual. Ver esa vista parcial para el detalle.               %>
 
 <%# ============================================================ %>
 <%# MODALES Y TOAST COMPARTIDOS %>

@@ -61,7 +61,6 @@ export default class extends Controller {
     'btnSaveGeneralContainer', 'btnSaveGeneral', 'btnSaveGeneralWrap',
 
     // Sección 2 - Adicional
-    'additionalInformation',
     'emailCcList',
     'btnAddEmail',
     'btnSaveAdditionalContainer',
@@ -92,6 +91,7 @@ export default class extends Controller {
     'btnSaveActivityCodes',
 
     // Sección 6 - SAP / Factura Proveedor
+    'sectionSap',
     'useFactProv',
     'sendReceptContainer', 'sendReceptAndApInv',
     'sapFieldsGroup',
@@ -111,6 +111,9 @@ export default class extends Controller {
 
     // Botón registrar
     'btnRegisterContainer', 'btnRegister',
+
+    // Overlay bloqueante del alta (CLAUDE.md §15, Tipo A — shared/overlay_loader)
+    'loadingOverlay',
 
     // Panel lateral — confirmación de reset (no hay modales custom)
 
@@ -200,6 +203,7 @@ export default class extends Controller {
       this.btnSaveAtvContainerTarget.classList.remove('hidden');
       this.btnSaveAttachmentsContainerTarget.classList.remove('hidden');
       this.sectionActivityCodesTarget.classList.remove('hidden');
+      this.sectionSapTarget.classList.remove('hidden');
       this.btnSaveSapTarget.classList.remove('hidden');
       this.btnRegisterContainerTarget.classList.add('hidden');
 
@@ -911,18 +915,23 @@ export default class extends Controller {
   }
 
   /** Cambió un campo visible de la sección (token de usuario). */
-  onAtvChange() { this.#refreshAtvSaveState(); }
+  onAtvChange() {
+    this.#refreshAtvSaveState();
+    this.#validateForm();
+  }
 
   // Escribir en un campo de secreto es lo que lo hace viajar en el PATCH: sin
   // esta marca, la clave no se manda y el valor guardado queda como está.
   onCertPinInput() {
     this.#certPinTouched = true;
     this.#refreshAtvSaveState();
+    this.#validateForm();
   }
 
   onTokenPassInput() {
     this.#tokenPassTouched = true;
     this.#refreshAtvSaveState();
+    this.#validateForm();
   }
 
   // ── Rellenar selects ───────────────────────────────────────────────────────
@@ -1165,6 +1174,7 @@ export default class extends Controller {
       this.certPathTarget.value     = '';
       this.certPathTextTarget.value = '';
       this.#refreshAtvSaveState();
+      this.#validateForm();
       return;
     }
 
@@ -1186,6 +1196,7 @@ export default class extends Controller {
     this.certPathTarget.value     = file.name;
     this.certPathTextTarget.value = file.name;
     this.#refreshAtvSaveState();
+    this.#validateForm();
 
     if (!this.certPinTarget.value) {
       Swal.fire({
@@ -1492,6 +1503,7 @@ export default class extends Controller {
       this.#selectedPrintFormatFile    = null;
       this.printFormatNameTarget.value = this.#savedPrintFormatName();
       this.#refreshAttachmentsState();
+      this.#validateForm();
       return;
     }
 
@@ -1511,6 +1523,7 @@ export default class extends Controller {
     this.#selectedPrintFormatFile    = file;
     this.printFormatNameTarget.value = file.name;
     this.#refreshAttachmentsState();
+    this.#validateForm();
   }
 
   async downloadPrintFormat() {
@@ -1654,8 +1667,9 @@ export default class extends Controller {
         <button type="button"
                 data-index="${i}"
                 data-testid="btn-remove-email-${i}"
+                title="Quitar este correo"
                 class="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors">
-          <span class="material-icons text-base">remove</span>
+          <span class="material-icons text-base">delete</span>
         </button>
       `;
       row.querySelector('input').addEventListener('input', e => { this.#emailCcItems[i] = e.target.value; });
@@ -2416,7 +2430,7 @@ export default class extends Controller {
       });
       return;
     }
-    if (!this.#validateGeneralForm()) {
+    if (!this.#validateCreateForm()) {
       Swal.fire({
         toast: true,
         position: 'top-end',
@@ -2441,6 +2455,10 @@ export default class extends Controller {
       return;
     }
 
+    // Overlay bloqueante (CLAUDE.md §15, Tipo A): el alta manda archivos —el
+    // certificado y el formato de impresión, obligatorios— así que la petición
+    // puede tardar. Sin esto no había ninguna señal de que "Registrar" hizo algo.
+    this.loadingOverlayTarget.classList.remove('hidden');
     try {
       const json = await this.#railsFetch('/api/companies', {
         method: 'POST',
@@ -2465,6 +2483,8 @@ export default class extends Controller {
         text: err.message,
         confirmButtonText: 'Aceptar',
       });
+    } finally {
+      this.loadingOverlayTarget.classList.add('hidden');
     }
   }
 
@@ -2529,7 +2549,10 @@ export default class extends Controller {
       CertPath:              this.certPathTarget.value,
       TokenUsr:              this.tokenUsrTarget.value,
       TokenPass:             this.tokenPassTarget.value,
-      AdditionalInformation: this.additionalInformationTarget.value,
+      // "Información Adicional" se eliminó de la vista: no tiene columna (§24)
+      // y no se estaba usando. Mismo trato que `ShortName`/`IsExternal`: el
+      // endpoint .NET todavía lo pide, se manda vacío.
+      AdditionalInformation: '',
       CodigoActividad:       this.codigoActividadTarget.value,
       EmailCC:               this.#emailCcItems.join(';'),
       SAPConnectionId:       parseInt(this.sapConnectionIdTarget.value) || null,
@@ -2637,9 +2660,32 @@ export default class extends Controller {
     );
   }
 
+  /**
+   * Todo lo que hace falta para habilitar "Registrar Datos de la Compañía":
+   * "Datos Generales" completos (`#validateGeneralForm()`) + "Hacienda (ATV)"
+   * completa (certificado, PIN, usuario y contraseña del token) + el formato
+   * de impresión de "Adjuntos". El logo se queda opcional — nadie lo pidió
+   * como requisito.
+   *
+   * Solo se usa para el botón del alta: en edición cada sección se guarda por
+   * su cuenta con su propia regla (`#atvSaveBlockedReason`,
+   * `#attachmentsSaveBlockedReason`), que no cambia — ahí el PIN/token vacíos
+   * son el estado normal de un secreto que no se toca, no un campo incompleto.
+   */
+  #validateCreateForm() {
+    return !!(
+      this.#validateGeneralForm() &&
+      this.#selectedCertFile &&
+      this.certPinTarget.value.trim() &&
+      this.tokenUsrTarget.value.trim() &&
+      this.tokenPassTarget.value.trim() &&
+      this.#selectedPrintFormatFile
+    );
+  }
+
   #validateForm() {
     if (this.hasBtnRegisterTarget) {
-      this.btnRegisterTarget.disabled = !this.#validateGeneralForm();
+      this.btnRegisterTarget.disabled = !this.#validateCreateForm();
     }
     this.#refreshGeneralSaveState();
     // La identificación de la compañía vive en "Datos Generales" pero condiciona

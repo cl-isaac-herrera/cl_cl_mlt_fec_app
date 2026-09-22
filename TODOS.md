@@ -1052,9 +1052,9 @@ proxy .NET:
       limpieza-si-falla que sus controllers de sección (`certificate_attributes`/
       `attachment_attributes` + `discard_written`, mismo patrón que
       `Api::Companies::TaxAuthorityController`/`AttachmentsController`).
-      El formulario de alta sigue viéndose exactamente igual que antes de esta migración —no
-      se ocultó ninguna sección—: la UI ya reservaba ese comportamiento de "todo en un solo
-      botón" para el .NET, y la migración lo conserva. Quedan fuera "Factura a Proveedor"
+      El formulario de alta conservó al principio el mismo look del .NET —secciones
+      colapsables—; el 2026-09-22 (más abajo) pasó a tarjetas planas, siempre abiertas,
+      como `/configurations/general`. Quedan fuera "Factura a Proveedor"
       (`useFactProvTarget.disabled` hasta que la compañía exista — ya estaba así) y "Códigos
       de actividad" (UDT que cuelga de un `company_id` que todavía no hay — ya estaba oculta).
       "Bandeja de Correo", "Bandeja de Recepción" y "Enviar los documentos rechazados por
@@ -1090,6 +1090,62 @@ proxy .NET:
       y/o `GET /api/email_configs/assignable` devuelven la lista vacía — la instalación
       todavía no tiene ninguna conexión y/o ninguna bandeja de emisión creada, así que el
       alta va a estar bloqueada sin importar qué tan bien se llene el resto del formulario.
+- [x] **El alta pasó a tarjetas planas y exige "Hacienda (ATV)" y el formato de impresión
+      completos (2026-09-22).** Dos cambios juntos:
+      1. **Layout:** `_form.html.erb` recibe `mode: :create`/`mode: :edit` desde
+         `new.html.erb`/`edit.html.erb`. Las cuatro secciones que el alta deja llenar
+         (Datos Generales, Adicional, ATV, Adjuntos) capturan su contenido una sola vez
+         (`capture do ... end`) y lo envuelven distinto según el modo: tarjeta plana
+         siempre abierta (`<div>` + `<h2>`, como `/configurations/general`) en creación,
+         `<details>` colapsable en edición — el contenido de los campos es idéntico en
+         los dos casos, no hay una segunda copia que mantener sincronizada. "Factura a
+         Proveedor" pasó a nacer `hidden` igual que "Códigos de actividad" (nuevo target
+         `sectionSap`, destapado en `#setupMode()` solo en edición) — antes se veía
+         entera con el checkbox deshabilitado; ahora no se ve en absoluto durante el alta.
+      2. **Campos obligatorios:** el PIN del certificado, el usuario y la contraseña del
+         token (`cert_pin`/`token_user`/`token_password`, mismo contexto
+         `:new_company_form` que conexión/bandeja) y los dos ARCHIVOS —certificado y
+         formato de impresión— son obligatorios para registrar la compañía. Los dos
+         archivos no son un atributo del modelo hasta que se procesan, así que su
+         ausencia se exige en el controller directamente sobre `params[:file]`/
+         `params[:PrintFormat]`, no como validación de `Company` (ver el comentario de
+         `Api::CompaniesController#create`). El logo se queda opcional.
+         Del lado del cliente, `#validateCreateForm()` (nueva, separada de
+         `#validateGeneralForm()`) es la que gatea "Registrar Datos de la Compañía":
+         cubre Datos Generales + certificado seleccionado + los tres campos de texto de
+         ATV + formato de impresión seleccionado. Las secciones de edición
+         (`#atvSaveBlockedReason`, `#attachmentsSaveBlockedReason`) NO cambiaron — ahí un
+         secreto en blanco sigue significando "no lo toqué", no "campo incompleto".
+- [x] **La cédula del emisor es única entre TODAS las compañías, activas o inactivas
+      (2026-09-22).** `Company` gana una validación general (sin `on:`, corre en cualquier
+      contexto — creación, edición, `db/seeds.rb`, una futura importación):
+      ```ruby
+      validates :issuer_id_number,
+                uniqueness: {
+                  conditions: -> { unscope(where: :is_active) },
+                  message:    'ya pertenece a otra compañía registrada (activa o inactiva)'
+                },
+                allow_nil: true
+      ```
+      Mismo patrón que `User#email` (§28 del `CLAUDE.md`), pero con la conclusión
+      INVERTIDA a propósito: `EmailConfig#email` libera la dirección al dar de baja la
+      bandeja (§38) porque otra bandeja distinta sí puede reclamarla; acá una compañía dada
+      de baja NO libera su cédula, porque el duplicado seguiría siendo la MISMA compañía
+      facturando por dos lados — Hacienda identifica al emisor por este número
+      (`Documents::UnifiedBuilder#emisor`). `Api::CompaniesController#create` corre
+      `company.valid?(:new_company_form)` como guardia temprana, antes de escribir
+      certificado/adjuntos a disco, así que una cédula duplicada nunca deja un archivo
+      huérfano. Specs en `spec/models/company_spec.rb` (activa e inactiva) y
+      `spec/requests/api/companies_spec.rb` (422, sin insertar ni escribir archivos).
+      **Nota de higiene de test DB, sin relación con este cambio:** al investigar
+      colisiones de cédula en el suite se confirmó que `db/test.sqlite3` NO debe sembrarse
+      (`RAILS_ENV=test bundle exec rails db:seed` deja el catálogo completo de
+      `Setting`/`SlResource` y una "Template Company", y eso choca con decenas de specs que
+      arman su propio fixture con los mismos códigos — 202 failures sembrado vs. 11 sin
+      sembrar). El baseline correcto es `db:schema:load` sin `db:seed`. Los 11 failures que
+      quedan (`mail_reception_job_spec.rb`, `documents_spec.rb`, `hacienda_schemas_spec.rb`)
+      dependen de datos sembrados que hoy no existen — son preexistentes, no los introdujo
+      este cambio, y no se tocaron.
 
 ---
 

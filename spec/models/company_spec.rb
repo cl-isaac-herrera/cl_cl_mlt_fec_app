@@ -67,6 +67,48 @@ RSpec.describe Company, type: :model do
       expect(build(:company, issuer_legal_name: nil, issuer_id_type: nil,
                              issuer_id_number: nil)).to be_valid
     end
+
+    # Dos compañías con la misma cédula serían la misma compañía facturando por
+    # dos lados — Hacienda identifica al emisor por este número.
+    describe 'unicidad de la identificación' do
+      it 'rechaza una cédula que ya usa otra compañía activa' do
+        create(:company, issuer_id_number: '3101822733')
+        company = build(:company, issuer_id_number: '3101822733')
+
+        expect(company).not_to be_valid
+        expect(company.errors.full_messages).to include(
+          'El número de identificación del emisor ya pertenece a otra compañía registrada (activa o inactiva)'
+        )
+      end
+
+      # El requisito explícito: dar de baja una compañía NO libera su cédula
+      # para que otra la reclame — a diferencia de `EmailConfig#email`, acá el
+      # duplicado sigue siendo la misma compañía, solo que ya no está activa.
+      it 'rechaza una cédula que ya usa otra compañía INACTIVA' do
+        existing = create(:company, issuer_id_number: '3101822733')
+        existing.soft_delete!
+        company = build(:company, issuer_id_number: '3101822733')
+
+        expect(company).not_to be_valid
+        expect(company.errors.full_messages).to include(
+          'El número de identificación del emisor ya pertenece a otra compañía registrada (activa o inactiva)'
+        )
+      end
+
+      it 'permite guardar una compañía sin cambiar su propia cédula' do
+        company = create(:company, issuer_id_number: '3101822733')
+
+        company.name = 'ACME renombrada'
+
+        expect(company).to be_valid
+      end
+
+      it 'dos compañías sin cédula (nil) no chocan entre sí' do
+        create(:company, issuer_id_number: nil)
+
+        expect(build(:company, issuer_id_number: nil)).to be_valid
+      end
+    end
   end
 
   # `name` no es solo la etiqueta del selector: viaja en el XML como
@@ -114,33 +156,40 @@ RSpec.describe Company, type: :model do
     expect(Company.unscoped.exists?(company.id)).to be(true)
   end
 
-  # `connection_id`/`email_config_id` son obligatorios SOLO en el contexto
-  # `:new_company_form`, que dispara `Api::CompaniesController#create` — no en
-  # el contexto por defecto que usan `db/seeds.rb`, una futura importación o
-  # cualquier otro spec que haga `Company.create!`/`create(:company)`.
+  # `connection_id`/`email_config_id`/`cert_pin`/`token_user`/`token_password`
+  # son obligatorios SOLO en el contexto `:new_company_form`, que dispara
+  # `Api::CompaniesController#create` — no en el contexto por defecto que usan
+  # `db/seeds.rb`, una futura importación o cualquier otro spec que haga
+  # `Company.create!`/`create(:company)`.
   describe 'contexto :new_company_form' do
-    it 'es inválida sin conexión de SAP ni bandeja de correo' do
+    it 'es inválida sin conexión de SAP, bandeja de correo ni credenciales de Hacienda' do
       company = build(:company)
 
       expect(company.valid?(:new_company_form)).to be false
       expect(company.errors.full_messages).to contain_exactly(
         'La conexión de SAP no puede estar en blanco',
-        'La bandeja de correo no puede estar en blanco'
+        'La bandeja de correo no puede estar en blanco',
+        'El pin del certificado no puede estar en blanco',
+        'El token de usuario no puede estar en blanco',
+        'El token password no puede estar en blanco'
       )
     end
 
-    it 'es válida con las dos presentes' do
+    it 'es válida con las cinco presentes' do
       sap   = Connection.create!(name: 'SAP QA', sl_url: 'https://sap.test:50000/b1s/v1')
       inbox = EmailConfig.create!(email: 'facturas@acme.test', host: 'smtp.test', port: 587, password: 'x')
-      company = build(:company, connection_id: sap.id, email_config_id: inbox.id)
+      company = build(:company, connection_id: sap.id, email_config_id: inbox.id,
+                                cert_pin: '1234', token_user: 'atv@hacienda.go.cr',
+                                token_password: 'secreto-atv')
 
       expect(company.valid?(:new_company_form)).to be true
     end
 
     # El contexto por defecto (el que usan `.save`/`.create!` sin argumentos) NO
-    # exige ninguna de las dos: si lo hiciera, `db/seeds.rb` y el resto de los
-    # specs que crean compañías sin conexión ni bandeja dejarían de funcionar.
-    it 'el contexto por defecto NO exige conexión ni bandeja de correo' do
+    # exige ninguna de las cinco: si lo hiciera, `db/seeds.rb` y el resto de los
+    # specs que crean compañías sin conexión, bandeja o credenciales del ATV
+    # dejarían de funcionar.
+    it 'el contexto por defecto no exige ninguna de las cinco' do
       expect(build(:company)).to be_valid
       expect { create(:company) }.not_to raise_error
     end

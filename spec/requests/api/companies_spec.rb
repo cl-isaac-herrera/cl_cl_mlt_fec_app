@@ -246,7 +246,7 @@ RSpec.describe 'GET /api/companies', type: :request do
     before do
       acme.update!(issuer_id_number: '3101822733')
       UsersByCompany.create!(
-        user: user, company: Company.create!(name: 'Beta Industrial', issuer_id_number: '3101999999')
+        user: user, company: Company.create!(name: 'Beta Industrial', issuer_id_number: '3105551234')
       )
       sign_in_with('Configurations_Companies_ListAccess')
     end
@@ -284,22 +284,13 @@ RSpec.describe 'GET /api/companies', type: :request do
     # ya no alcanza para crear una compañía.
     let(:inbox) { EmailConfig.create!(email: 'facturas@beta.cr', host: 'smtp.beta.cr', port: 587, password: 'x') }
 
-    let(:general_params) do
-      {
-        Name: 'Beta Industrial', EmsrNombre: 'Beta Industrial S.A.',
-        EmsrIdeTipo: '02', EmsrIdeNumero: '3101999999', CodigoActividad: '620100',
-        SapDb: 'SBO_BETA', ConnectionId: sap.id, EmailConfigId: inbox.id,
-        EmailSenderType: 1, FreightType: 1, Active: true
-      }
-    end
-
     let(:pin)             { 'clave-del-p12' }
     let(:cert_expires_at) { Time.zone.parse('2029-03-15 10:00:00') }
     let(:p12_bytes)       { build_p12(pin: pin, expires_at: cert_expires_at) }
     let(:logo_bytes)      { "\x89PNG\r\n\x1a\nlogo-de-beta".b }
     let(:format_bytes)    { "CRYSTAL\x1areporte-de-beta".b }
 
-    def cert_upload(filename: '3101999999.p12')
+    def cert_upload(filename: '3105551234.p12')
       uploaded_file(p12_bytes, filename: filename, type: 'application/x-pkcs12')
     end
 
@@ -311,8 +302,25 @@ RSpec.describe 'GET /api/companies', type: :request do
       uploaded_file(format_bytes, filename: filename, type: 'application/x-rpt')
     end
 
-    def files_for(id_number: '3101999999')
+    def files_for(id_number: '3105551234')
       Dir.glob(File.join(files_root, id_number, '*'))
+    end
+
+    # Un payload COMPLETO: "Datos Generales" y "Hacienda (ATV)" —certificado y
+    # formato de impresión incluidos— son obligatorias para registrar la
+    # compañía (un solo botón, sin guardado por sección como en edición). Cada
+    # ejemplo negativo parte de acá y le quita SOLO lo que quiere probar
+    # (`.except`/`.merge`), para que el mensaje de error no se mezcle con otro
+    # campo también faltante.
+    let(:general_params) do
+      {
+        Name: 'Beta Industrial', EmsrNombre: 'Beta Industrial S.A.',
+        EmsrIdeTipo: '02', EmsrIdeNumero: '3105551234', CodigoActividad: '620100',
+        SapDb: 'SBO_BETA', ConnectionId: sap.id, EmailConfigId: inbox.id,
+        EmailSenderType: 1, FreightType: 1, Active: true,
+        CertPin: pin, TokenUsr: 'atv@hacienda.go.cr', TokenPass: 'secreto-atv',
+        file: cert_upload, PrintFormat: format_upload
+      }
     end
 
     it 'exige Configurations_Companies_Create' do
@@ -338,7 +346,7 @@ RSpec.describe 'GET /api/companies', type: :request do
       created = Company.find(body_data['Id'])
       expect(created).to have_attributes(
         name: 'Beta Industrial', issuer_legal_name: 'Beta Industrial S.A.',
-        issuer_id_number: '3101999999', sap_db: 'SBO_BETA', connection_id: sap.id
+        issuer_id_number: '3105551234', sap_db: 'SBO_BETA', connection_id: sap.id
       )
     end
 
@@ -390,6 +398,40 @@ RSpec.describe 'GET /api/companies', type: :request do
       expect(body['Message']).to eq('El nombre no puede estar en blanco')
     end
 
+    # Dos compañías con la misma cédula serían la misma compañía facturando por
+    # dos lados ante Hacienda. Se verifica ANTES de escribir ningún archivo
+    # (`company.valid?(:new_company_form)`, antes de `certificate_attributes`).
+    it 'responde 422 si la cédula ya pertenece a otra compañía activa, sin insertar nada ni dejar archivos' do
+      create(:company, issuer_id_number: '3105551234')
+      sign_in_with('Configurations_Companies_Create')
+
+      expect do
+        post '/api/companies', params: general_params
+      end.not_to change(Company, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq(
+        'El número de identificación del emisor ya pertenece a otra compañía registrada (activa o inactiva)'
+      )
+      expect(files_for).to be_empty
+    end
+
+    # El requisito explícito: dar de baja una compañía no libera su cédula.
+    it 'responde 422 si la cédula ya pertenece a otra compañía INACTIVA, sin insertar nada' do
+      existing = create(:company, issuer_id_number: '3105551234')
+      existing.soft_delete!
+      sign_in_with('Configurations_Companies_Create')
+
+      expect do
+        post '/api/companies', params: general_params
+      end.not_to change(Company, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq(
+        'El número de identificación del emisor ya pertenece a otra compañía registrada (activa o inactiva)'
+      )
+    end
+
     # Sin conexión de SAP no hay a qué SAP consultar; sin bandeja de correo la
     # compañía no tiene cómo enviar el correo del comprobante. Las dos son
     # obligatorias SOLO en el alta (`Company` con el contexto
@@ -417,17 +459,79 @@ RSpec.describe 'GET /api/companies', type: :request do
       expect(body['Message']).to eq('La bandeja de correo no puede estar en blanco')
     end
 
+    # "Hacienda (ATV)" también es obligatoria en el alta: el formulario no
+    # tiene botón "Actualizar" por sección como en edición, así que una
+    # compañía sin credenciales del ATV quedaría a medio configurar desde el
+    # primer momento.
+    it 'responde 422 sin el PIN del certificado, sin insertar nada' do
+      sign_in_with('Configurations_Companies_Create')
+
+      expect do
+        post '/api/companies', params: general_params.except(:CertPin)
+      end.not_to change(Company, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('El pin del certificado no puede estar en blanco')
+    end
+
+    it 'responde 422 sin el token de usuario, sin insertar nada' do
+      sign_in_with('Configurations_Companies_Create')
+
+      expect do
+        post '/api/companies', params: general_params.except(:TokenUsr)
+      end.not_to change(Company, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('El token de usuario no puede estar en blanco')
+    end
+
+    it 'responde 422 sin el token password, sin insertar nada' do
+      sign_in_with('Configurations_Companies_Create')
+
+      expect do
+        post '/api/companies', params: general_params.except(:TokenPass)
+      end.not_to change(Company, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('El token password no puede estar en blanco')
+    end
+
+    # El certificado y el formato de impresión son ARCHIVOS: no son un atributo
+    # del modelo hasta que se procesan, así que su ausencia se exige sobre el
+    # cuerpo de la petición, antes de intentar escribir nada (`create_params`
+    # + `certificate_attributes`/`attachment_attributes` en el controller).
+    it 'responde 422 sin el certificado, sin insertar nada' do
+      sign_in_with('Configurations_Companies_Create')
+
+      expect do
+        post '/api/companies', params: general_params.except(:file)
+      end.not_to change(Company, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('Adjunte el certificado digital para poder registrar la compañía.')
+    end
+
+    it 'responde 422 sin el formato de impresión, sin insertar nada' do
+      sign_in_with('Configurations_Companies_Create')
+
+      expect do
+        post '/api/companies', params: general_params.except(:PrintFormat)
+      end.not_to change(Company, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(body['Message']).to eq('Adjunte el formato de impresión para poder registrar la compañía.')
+      # El certificado sí vino y es válido: si el controller lo escribiera
+      # antes de exigir el formato de impresión, quedaría huérfano en disco.
+      expect(files_for).to be_empty
+    end
+
     # Un solo botón, una sola petición: "Adicional", "Hacienda (ATV)" y
     # "Adjuntos" viajan junto con "Datos Generales" — no hay guardado por
     # sección en el alta, a diferencia de edición.
     it 'acepta EmailCC, el certificado y los dos adjuntos en la misma petición' do
       sign_in_with('Configurations_Companies_Create')
 
-      post '/api/companies', params: general_params.merge(
-        EmailCC: 'uno@beta.cr;dos@beta.cr',
-        CertPin: pin, TokenUsr: 'atv@hacienda.go.cr', TokenPass: 'secreto-atv',
-        file: cert_upload, Logo: logo_upload, PrintFormat: format_upload
-      )
+      post '/api/companies', params: general_params.merge(EmailCC: 'uno@beta.cr;dos@beta.cr', Logo: logo_upload)
 
       expect(response).to have_http_status(:created)
       created = Company.find(body_data['Id'])
@@ -442,8 +546,7 @@ RSpec.describe 'GET /api/companies', type: :request do
     it 'no expone los secretos en la respuesta, solo si quedaron guardados' do
       sign_in_with('Configurations_Companies_Create')
 
-      post '/api/companies', params: general_params.merge(CertPin: pin, TokenPass: 'secreto-atv',
-                                                           file: cert_upload)
+      post '/api/companies', params: general_params
 
       expect(body_data).not_to have_key('CertPin')
       expect(body_data).not_to have_key('TokenPass')
@@ -455,7 +558,7 @@ RSpec.describe 'GET /api/companies', type: :request do
       sign_in_with('Configurations_Companies_Create')
 
       expect do
-        post '/api/companies', params: general_params.merge(CertPin: 'pin-equivocado', file: cert_upload)
+        post '/api/companies', params: general_params.merge(CertPin: 'pin-equivocado')
       end.not_to change(Company, :count)
 
       expect(response).to have_http_status(:unprocessable_content)
@@ -465,8 +568,7 @@ RSpec.describe 'GET /api/companies', type: :request do
     it 'no escribe ningún archivo si los datos generales son inválidos' do
       sign_in_with('Configurations_Companies_Create')
 
-      post '/api/companies', params: general_params.merge(Name: '', CertPin: pin, file: cert_upload,
-                                                           Logo: logo_upload)
+      post '/api/companies', params: general_params.merge(Name: '', Logo: logo_upload)
 
       expect(response).to have_http_status(:unprocessable_content)
       expect(files_for).to be_empty

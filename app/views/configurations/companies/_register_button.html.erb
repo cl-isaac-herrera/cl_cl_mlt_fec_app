@@ -1,0 +1,32 @@
+<%# ============================================================ %>
+<%# BOTÓN REGISTRAR (solo crear) %>
+<%#                                                                    %>
+<%# Vive FUERA del `<div class="p-6">` que envuelve `_form` en          %>
+<%# `new.html.erb`/`edit.html.erb`, a propósito: así no hereda ese      %>
+<%# padding y puede quedar pegado a los bordes de `<main>` (el layout   %>
+<%# `protected`, que ya tiene su propio `p-6`) cancelando un SOLO       %>
+<%# nivel de padding, no dos. `sticky` lo mantiene visible sin tener    %>
+<%# que bajar hasta el final del formulario para registrar la          %>
+<%# compañía. `position: fixed` no serviría acá — el sidebar es un      %>
+<%# HERMANO flex de `<main>`, no un ancestro, así que un `fixed` con    %>
+<%# `left: 0` quedaría por encima del menú en vez de respetarlo.        %>
+<%#                                                                    %>
+<%# El espacio de scroll que necesita para no tapar el final de         %>
+<%# "Adjuntos" lo aporta el `pb-24` del wrapper en `new.html.erb`, no   %>
+<%# un div espaciador acá — un `sticky` no reserva su propio alto en    %>
+<%# el total del contenido, así que sin ese margen de sobra el scroll   %>
+<%# se termina justo cuando la barra empieza a cubrir lo que tiene      %>
+<%# detrás.                                                             %>
+<%# ============================================================ %>
+<div data-company-form-target="btnRegisterContainer"
+     class="hidden sticky bottom-0 z-10 -mx-6 -mb-6 bg-white border-t border-gray-200 px-6 py-4 flex justify-end shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
+  <button type="button"
+          data-action="click->company-form#submitCreate"
+          data-company-form-target="btnRegister"
+          data-testid="btn-register"
+          disabled
+          class="inline-flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+    <span class="material-icons text-base">check</span>
+    Registrar Datos de la Compañía
+  </button>
+</div>

@@ -3,7 +3,12 @@
 
 <div data-controller="company-form"
      data-company-form-company-id-value="<%= params[:id] %>"
-     data-testid="company-form-page"
-     class="p-6">
-  <%= render 'form' %>
+     data-testid="company-form-page">
+  <div class="p-6">
+    <%= render 'form', mode: :edit %>
+  </div>
+  <%# El botón "Registrar" vive acá también —oculto en edición vía             %>
+  <%# `#setupMode()`— para que el target de Stimulus exista en los dos modos.  %>
+  <%# Ver `_register_button.html.erb`.                                        %>
+  <%= render 'register_button' %>
 </div>

@@ -4,6 +4,24 @@
 <div data-controller="company-form"
      data-company-form-company-id-value="0"
      data-testid="company-form-page"
-     class="p-6">
-  <%= render 'form' %>
+     class="relative">
+  <%# Overlay bloqueante mientras se registra la compañía (CLAUDE.md §15, Tipo A).  %>
+  <%# `position: 'absolute'` en vez del `fixed` por defecto: cubre solo esta vista  %>
+  <%# —el `relative` de arriba es su límite— y no el sidebar, que es un HERMANO     %>
+  <%# flex de `<main>` y queda fuera de este contenedor.                            %>
+  <%= render 'shared/overlay_loader',
+        ctrl:     'company-form',
+        position: 'absolute',
+        message:  'Registrando compañía...' %>
+
+  <%# `pb-24` (96px) de sobra: es el margen de scroll que necesita el botón        %>
+  <%# "Registrar" (`_register_button`, fuera de este div a propósito) para no      %>
+  <%# tapar el final de "Adjuntos" al hacer scroll hasta el fondo — un `sticky`     %>
+  <%# no reserva su propio alto en el total del contenido, así que sin este        %>
+  <%# margen el scroll se termina justo cuando la barra empieza a cubrir lo que    %>
+  <%# tiene detrás. 96px es holgado frente a los ~64px que mide la barra.          %>
+  <div class="p-6 pb-24">
+    <%= render 'form', mode: :create %>
+  </div>
+  <%= render 'register_button' %>
 </div>

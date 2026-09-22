@@ -109,6 +109,13 @@ module Api
     # certificado) y "Adjuntos" (logo y formato de impresión). El cuerpo es
     # multipart por el certificado y los adjuntos.
     #
+    # "Datos Generales" y "Hacienda (ATV)" completas —incluido el certificado y
+    # el formato de impresión— son obligatorias para poder registrar la
+    # compañía: el formulario nace sin las secciones "Factura a Proveedor" ni
+    # "Códigos de actividad" (ver más abajo), así que no tiene sentido dejar una
+    # compañía a medio configurar en Hacienda o sin cómo imprimir sus
+    # comprobantes.
+    #
     # Quedan fuera "Factura a Proveedor" (el formulario la mantiene deshabilitada
     # hasta que la compañía exista — necesita SAP) y "Códigos de actividad" (UDT
     # que cuelga de un `company_id` que todavía no hay); las dos siguen ocultas
@@ -125,12 +132,22 @@ module Api
     # `Api::UsersController#create` con `CompanyId`.
     def create
       company = Company.new(create_params)
-      # Antes de tocar el disco: un `Nombre` en blanco, sin conexión de SAP o sin
-      # bandeja de correo no ameritan escribir el certificado o los adjuntos para
-      # después borrarlos. `:new_company_form` es el único contexto que exige la
-      # conexión y la bandeja — ver el comentario de esas dos validaciones en
-      # `Company`.
+      # Antes de tocar el disco: un `Nombre` en blanco, sin conexión de SAP, sin
+      # bandeja de correo o sin credenciales de Hacienda no ameritan escribir el
+      # certificado o los adjuntos para después borrarlos. `:new_company_form` es
+      # el único contexto que exige estas cinco — ver el comentario de esas
+      # validaciones en `Company`.
       return render_invalid(company) unless company.valid?(:new_company_form)
+
+      # El certificado y el formato de impresión son ARCHIVOS: no son un
+      # atributo de `company` todavía en este punto (lo derivan
+      # `certificate_attributes`/`attachment_attributes` más abajo, después de
+      # escribirlos en disco), así que su presencia se exige acá, sobre el
+      # cuerpo de la petición, y no como validación del modelo.
+      return render_error('Adjunte el certificado digital para poder registrar la compañía.') if params[:file].blank?
+      if params[:PrintFormat].blank?
+        return render_error('Adjunte el formato de impresión para poder registrar la compañía.')
+      end
 
       begin
         company.assign_attributes(certificate_attributes(company).merge(attachment_attributes(company)))

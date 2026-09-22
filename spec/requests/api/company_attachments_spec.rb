@@ -97,14 +97,14 @@ RSpec.describe 'PATCH /api/companies/:company_id/attachments', type: :request do
     # El alcance es el mismo de la lectura: sin "ver todas", una compañía ajena no
     # existe para este usuario, y por eso es 404 y no 403.
     it 'responde 404 con una compañía fuera de su alcance' do
-      ajena = Company.create!(name: 'Ajena S.A.', issuer_id_number: '3101999999',
-                              logo_path: stored_path('ajeno.png', id_number: '3101999999'))
+      ajena = Company.create!(name: 'Ajena S.A.', issuer_id_number: '3102000001',
+                              logo_path: stored_path('ajeno.png', id_number: '3102000001'))
       sign_in_with('Configurations_Companies_Update')
 
       patch "/api/companies/#{ajena.id}/attachments", params: { Logo: logo_upload }
 
       expect(response).to have_http_status(:not_found)
-      expect(ajena.reload.logo_path).to eq(stored_path('ajeno.png', id_number: '3101999999'))
+      expect(ajena.reload.logo_path).to eq(stored_path('ajeno.png', id_number: '3102000001'))
     end
   end
 

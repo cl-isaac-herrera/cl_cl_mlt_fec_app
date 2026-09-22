@@ -1,6 +1,6 @@
 <%#
   Overlay loader estándar.
-  Locals: ctrl (requerido), target, msg_target, message, z_class
+  Locals: ctrl (requerido), target, msg_target, message, z_class, position
 %>
 <%
   ctrl       = local_assigns.fetch(:ctrl)
@@ -8,9 +8,15 @@
   msg_target = local_assigns.fetch(:msg_target, 'loadingMessage')
   message    = local_assigns.fetch(:message,    'Cargando...')
   z_class    = local_assigns.fetch(:z_class,    'z-50')
+  # 'fixed' (default) cubre TODO el viewport, menú incluido — es lo que quiere la
+  # gran mayoría de los casos (cambiar de compañía, procesar un documento). Para
+  # un overlay que bloquee SOLO el área de contenido —sin tapar el sidebar—, pasar
+  # `position: 'absolute'` y envolver este render en un contenedor con
+  # `position: relative` que abarque nada más esa área.
+  position   = local_assigns.fetch(:position,   'fixed')
 %>
 <div data-<%= ctrl %>-target="<%= target %>"
-     class="hidden fixed inset-0 <%= z_class %> flex items-center justify-center bg-black/40">
+     class="hidden <%= position %> inset-0 <%= z_class %> flex items-center justify-center bg-black/40">
   <div class="bg-white rounded-xl shadow-xl px-6 py-5 flex items-center gap-3">
 
     <%# Spinner SVG estándar %>
