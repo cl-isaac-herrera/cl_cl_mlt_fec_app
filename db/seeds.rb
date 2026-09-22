@@ -275,18 +275,23 @@ ActiveRecord::Base.transaction do
        "#{CODE_ONLY.size + CODE_ONLY_GLOBAL.size} sin Id de origen) " \
        "+ #{DEACTIVATED.size} dados de baja (#{created} nuevos)"
 
-  # 2. Rol Administrador con el catálogo completo.
+  # 2. Rol Administrador con el catálogo completo — pero SOLO los permisos
+  #    `normal`. El diseño es "normal se concede por rol, global se concede
+  #    DIRECTO al usuario" (`UserPermission#permission_must_be_global`); un
+  #    `global` metido en `role_permissions` no lo rechaza esa tabla (la
+  #    validación vive del lado de `UserPermission`), así que este loop es la
+  #    única barrera y hay que ponerla acá, filtrando el `find_each`.
   admin = Role.find_or_initialize_by(name: ADMIN_ROLE_NAME)
   admin.is_active = true
   admin.save!
 
   # Upsert por (role_id, permission_id) — agrega lo que falte y reactiva lo que
   # estuviera de baja, sin pasar por un `delete_all` que arrastraría también a
-  # los demás roles. Sin `unscoped` en `Permission.find_each` a propósito: el
-  # default_scope de SoftDeletable deja fuera a los de `DEACTIVATED`, que es
-  # justo lo que se quiere — no tiene sentido concederle a nadie un permiso
-  # dado de baja.
-  Permission.find_each do |permission|
+  # los demás roles. Sin `unscoped` en `Permission.normal.find_each` a
+  # propósito: el default_scope de SoftDeletable deja fuera a los de
+  # `DEACTIVATED`, que es justo lo que se quiere — no tiene sentido concederle
+  # a nadie un permiso dado de baja.
+  Permission.normal.find_each do |permission|
     rp = RolePermission.unscoped.find_or_initialize_by(role_id: admin.id, permission_id: permission.id)
     rp.is_active = true
     rp.save!
@@ -1422,3 +1427,67 @@ record.is_active = true
 record.save!
 
 puts "Usuario de sistema: #{record.email}"
+
+# ---------------------------------------------------------------------------
+# Compañía de plantilla — "Template Company".
+#
+# Una instalación recién creada no tiene ninguna compañía: el selector del
+# toolbar queda vacío y, con él, cualquier pantalla que dependa de una compañía
+# activa (`CLAUDE.md` §23). Esta fila da un punto de partida real para poder
+# entrar y terminar de configurar el resto a mano, en vez de un catálogo mudo.
+#
+# Solo se llenan los campos de la sección "Datos Generales"
+# (`Api::Companies::GeneralController#general_params`). Conexión SAP, ATV y
+# Adjuntos quedan vacíos a propósito: dependen de una conexión, un certificado
+# o una bandeja de correo que la instalación todavía no tiene, y no hay un
+# valor ficticio razonable que poner ahí sin que se confunda con configuración
+# real (`connection_id`/`email_config_id`/`reception_mailbox_id` son
+# `optional: true` — Company#sap_connection_must_exist y las otras dos
+# validaciones solo corren cuando el id SÍ viene).
+#
+# `find_or_initialize_by(name:)`: no hay índice único sobre `name`, así que sin
+# esto correr el seed dos veces duplicaría la compañía.
+company = Company.find_or_initialize_by(name: 'Template Company')
+company.issuer_legal_name      = 'Template Company Sociedad Anónima'
+company.issuer_id_type         = '02'
+company.issuer_id_number       = '3101999999'
+company.economic_activity_code = '620100'
+company.sap_db                 = 'SBO_TEMPLATE'
+company.email_sender_type      = 2
+company.freight_type           = 1
+company.is_active              = true
+company.save!
+
+puts "Compañía de plantilla: #{company.name} (##{company.id})"
+
+# El usuario de sistema necesita la compañía ASIGNADA (`users_by_companies`)
+# para poder seleccionarla: el selector nunca lista todas las compañías de la
+# instalación, solo las que el usuario tiene asignadas (`Company.assigned_to`).
+company_assignment = UsersByCompany.find_or_initialize_by(user_id: record.id, company_id: company.id)
+company_assignment.is_active = true
+company_assignment.save!
+
+# Rol Administrador en esa compañía. No se reutiliza el loop de la sección de
+# permisos (más arriba en el archivo): corre antes de que este usuario y esta
+# compañía existan, así que acá se hace explícito con el mismo upsert.
+admin_role = Role.find_by!(name: ADMIN_ROLE_NAME)
+sys_admin_role = UserRole.find_or_initialize_by(user_id: record.id, company_id: company.id, role_id: admin_role.id)
+sys_admin_role.is_active = true
+sys_admin_role.save!
+
+puts "Rol #{ADMIN_ROLE_NAME} asignado a #{record.email} en #{company.name}"
+
+# Los permisos GLOBALES no se conceden por rol (más arriba, `RolePermission`
+# solo toma `Permission.normal`): se conceden DIRECTO al usuario
+# (`UserPermission#permission_must_be_global`). Sin esto, el usuario de sistema
+# queda con el rol Administrador pero sin nada de lo que es `global`
+# (Configuraciones generales, Logs, Conexiones, asistente de configuración,
+# recursos de Service Layer…).
+Permission.global.find_each do |permission|
+  up = UserPermission.unscoped.find_or_initialize_by(user_id: record.id, permission_id: permission.id)
+  up.is_active = true
+  up.save!
+end
+
+puts "Permisos globales de #{record.email}: " \
+     "#{UserPermission.where(user_id: record.id, is_active: true).count}"
