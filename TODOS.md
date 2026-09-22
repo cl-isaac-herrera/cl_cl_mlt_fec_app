@@ -965,24 +965,33 @@ controller en `app/controllers/api/companies/`. Faltan las tres restantes:
       con lo que haya en pantalla, que desde esta migración es siempre vacío (el valor
       guardado no vuelve del servidor). Si esos endpoints revivieran antes de migrarse,
       guardar cualquiera de esas secciones borraría el PIN y el token password del lado del
-      .NET. Era el caso de "Adjuntos" hasta que se migró.
-- [ ] **El alta (`POST`) sigue en el .NET.** Ver más abajo.
-- [ ] **Campo `Nombre` no se envía en el alta.** `#buildCompanyFormData` no lo manda: el
-      endpoint .NET no tiene dónde ponerlo. Se resuelve al migrar el `POST`.
+      .NET. Era el caso de "Adjuntos" hasta que se migró. **`#buildCompanyFormData` y
+      `#sendEditRequest` ya NO los usa el alta** (ver "Crear compañía" más abajo) — sobreviven
+      únicamente para estas dos secciones en edición.
+- [x] **El alta (`POST`) migró a Rails.** Ver "Crear compañía" más abajo.
+- [x] **Campo `Nombre` no se enviaba en el alta.** Resuelto: `submitCreate()` ahora manda
+      `#buildCreatePayload()`, que arranca de `#generalPayload()` (el mismo cuerpo de
+      `PATCH .../general`) y sí incluye `Name`.
 
 ### Campos eliminados de la vista que aún viajan al API (§24)
 
 - [ ] Campo `ShortName` — eliminado de la vista en
-      `configurations/companies/_form.html.erb`. Aún se envía en el fetch de
-      `company_form_controller.js` con valor por defecto `""`.
-      **Pendiente API:** quitarlo del body cuando `POST|PATCH /api/Companies` deje de
-      requerirlo. No tiene columna en la base nueva.
+      `configurations/companies/_form.html.erb`. **Ya no se envía en el alta** (migrada a
+      `POST /api/companies`, que no lo pide), pero `#buildCompanyFormData` lo sigue mandando
+      con valor por defecto `""` para las dos secciones que aún usan `#sendEditRequest`
+      ("Adicional", "Factura a proveedor").
+      **Pendiente API:** quitarlo del body cuando esas dos secciones migren. No tiene columna
+      en la base nueva.
 - [ ] Campo `IsExternal` — eliminado de la vista (este producto llega a SAP solo por
-      Service Layer, §29). Aún se envía con valor por defecto `false`.
-      **Pendiente API:** quitarlo del body.
-- [ ] Parámetro `groupId` de la query string — el campo "Grupo" se eliminó (§31). Se
-      manda `0` fijo en `#sendEditRequest` y en el registro.
-      **Pendiente API:** quitarlo de la URL. Ver también → Grupos de compañías.
+      Service Layer, §29). Mismo caso que `ShortName`: fuera del alta, sigue en
+      `#buildCompanyFormData` con valor por defecto `false` para "Adicional"/"Factura a
+      proveedor".
+      **Pendiente API:** quitarlo del body cuando esas dos secciones migren.
+- [ ] Parámetro `groupId` de la query string — el campo "Grupo" se eliminó (§31). El alta
+      (`POST /api/companies`) ya no lo manda. Sigue fijo en `0` solo en `#sendEditRequest`,
+      para las dos secciones sin migrar.
+      **Pendiente API:** quitarlo de la URL cuando esas dos secciones migren. Ver también →
+      Grupos de compañías.
 
 ### Secciones del formulario que todavía no cargan
 
@@ -1025,15 +1034,62 @@ proxy .NET:
       `20260905120000_move_environment_config_to_settings.rb`.
       **Sigue sin usarse:** ningún flujo real lee todavía estos ajustes — hace falta el
       cliente HTTP que hable con Hacienda (token/envío/consulta), que es donde entran.
-      **`EnvironmentId: 0`** sigue en `company_form_controller.js:1913`: va al endpoint
-      **.NET legado** de `/configurations/companies/new` y no a la tabla que se eliminó;
-      queda intacto hasta que ese formulario también migre (ver "Crear compañía", abajo).
+      **`EnvironmentId: 0`** sigue en `#buildCompanyFormData` (`company_form_controller.js`):
+      ya no lo usa el alta (migrada, ver "Crear compañía" abajo), pero sigue viajando al
+      endpoint **.NET legado** para "Adicional"/"Factura a proveedor" (`#sendEditRequest`).
+      Se cae solo cuando esas dos secciones migren — la tabla `environments` a la que
+      apuntaba ya no existe.
 
 ### Crear compañía
 
-- [ ] **`/configurations/companies/new` sigue contra el .NET.** Con la configuración de FE
-      de vuelta en `companies`, el alta es un `POST` a Rails y nada más: ya no hay que crear
-      estructura en SAP para dar de alta una compañía.
+- [x] **`/configurations/companies/new` migró a `POST /api/companies` (2026-09-22).**
+      A diferencia de edición —un botón "Actualizar" (y un `PATCH`) por sección—, el alta
+      tiene un único botón ("Registrar Datos de la Compañía"), así que `Api::CompaniesController#create`
+      recibe TODO lo que el formulario deja llenar en creación en una sola petición multipart:
+      "Datos Generales" (los mismos catorce campos que `PATCH .../general`), "Adicional"
+      (`EmailCC`) y "Hacienda (ATV)" (credenciales y certificado) y "Adjuntos" (logo y formato
+      de impresión) — certificado y adjuntos con el mismo orden validar-antes-de-escribir y
+      limpieza-si-falla que sus controllers de sección (`certificate_attributes`/
+      `attachment_attributes` + `discard_written`, mismo patrón que
+      `Api::Companies::TaxAuthorityController`/`AttachmentsController`).
+      El formulario de alta sigue viéndose exactamente igual que antes de esta migración —no
+      se ocultó ninguna sección—: la UI ya reservaba ese comportamiento de "todo en un solo
+      botón" para el .NET, y la migración lo conserva. Quedan fuera "Factura a Proveedor"
+      (`useFactProvTarget.disabled` hasta que la compañía exista — ya estaba así) y "Códigos
+      de actividad" (UDT que cuelga de un `company_id` que todavía no hay — ya estaba oculta).
+      "Bandeja de Correo", "Bandeja de Recepción" y "Enviar los documentos rechazados por
+      Hacienda" (2026-09-22, mismo día) se agregaron al formulario de alta: `create_params`
+      ya los aceptaba desde el principio (comparte el whitelist con `general_params`), y lo
+      único que los mantenía ocultos era que `#setupMode()` solo los destapaba en edición —
+      una decisión heredada del .NET, que no conocía esas tres columnas en su alta. Ahora se
+      muestran en los dos modos; `#loadInitialData()` carga los dos selects (`GET
+      /api/email_configs/assignable`, `GET /api/reception_mailboxes/assignable`) también en
+      creación.
+      Quien crea la compañía queda asignado a ella (`UsersByCompany`) para no perderla de
+      vista si no tiene `Configurations_Companies_ViewAllApplicationCompanies`.
+      **Pendiente:** nada del lado del alta en sí. Lo que falta es migrar "Adicional" y
+      "Factura a proveedor" en EDICIÓN (ver más arriba) — la sección "Adicional" del alta ya
+      es nativa (este `create`), la de edición todavía no.
+- [x] **Conexión de SAP y Bandeja de Correo pasaron a ser obligatorias en el ALTA
+      (2026-09-22).** Sin conexión no hay a qué SAP consultar, y sin bandeja la compañía
+      no tiene cómo enviar el correo del comprobante — así que crearla sin ninguna de las
+      dos dejaba una compañía inservible desde el primer momento. `Company` suma
+      `validates :connection_id, presence: true, on: :new_company_form` y lo mismo para
+      `email_config_id`: el contexto `:new_company_form` es a propósito distinto de
+      `:create`, para que SOLO `Api::CompaniesController#create`
+      (`company.valid?(:new_company_form)`) lo exija — `db/seeds.rb`, una futura
+      importación y el resto de los specs que hacen `Company.create!`/`create(:company)`
+      siguen sin necesitar ninguna de las dos. Una compañía ya creada tampoco queda
+      atrapada: las dos se pueden volver a dejar en blanco desde "Datos Generales" en
+      edición sin que nada lo impida.
+      Del lado del cliente, `#validateGeneralForm()` exige `emailConfigId` solo cuando
+      `!this.#isEditing` (`sapConnectionId` ya era obligatorio en los dos modos desde
+      antes de esta migración). Al cargar `/configurations/companies/new`,
+      `#warnMissingCreateCatalogs()` muestra un MODAL (no un toast: tiene que verse antes
+      de que alguien empiece a llenar el formulario) si `GET /api/connections/assignable`
+      y/o `GET /api/email_configs/assignable` devuelven la lista vacía — la instalación
+      todavía no tiene ninguna conexión y/o ninguna bandeja de emisión creada, así que el
+      alta va a estar bloqueada sin importar qué tan bien se llene el resto del formulario.
 
 ---
 

@@ -178,14 +178,20 @@
     <%# Es de dónde SALEN los correos de esta compañía (`companies.email_config_id`, %>
     <%# el SMTP que usa `Documents::ReceiptMailer`). No confundir con "Nombre para  %>
     <%# el Envío de Correos", que es con qué nombre se firman.                      %>
-    <%# Opcional a propósito: una compañía sin bandeja simplemente no envía          %>
-    <%# todavía; el catálogo se administra en /configurations/email-senders.        %>
-    <%# Oculto en el ALTA: la creación todavía va al `POST /api/Companies` del      %>
-    <%# .NET, que no conoce `email_config_id` — el campo se perdería en silencio.   %>
-    <%# Lo muestra `#setupMode()` solo en edición. Ver TODOS.md → Compañías.        %>
+    <%# Obligatoria en el ALTA —sin ella la compañía no tiene cómo enviar el       %>
+    <%# correo del comprobante, `Documents::ReceiptMailer`— pero sigue OPCIONAL    %>
+    <%# en edición: una compañía ya creada se puede seguir editando sin una,       %>
+    <%# hasta que alguien se la asigne. `#validateGeneralForm()` (JS) y            %>
+    <%# `Company` con el contexto `:new_company_form` (servidor) son los dos       %>
+    <%# lugares que exigen la presencia SOLO al crear.                             %>
+    <%# El catálogo se administra en /configurations/email-senders.                %>
+    <%# Se muestra en los dos modos: el alta nativa (`POST /api/companies`) acepta  %>
+    <%# el mismo campo que `PATCH .../general` (TODOS.md → Compañías). Nace         %>
+    <%# `hidden` en el markup y `#setupMode()` lo destapa siempre — así el select    %>
+    <%# no aparece un instante sin opciones cargadas.                               %>
     <div data-company-form-target="emailConfigField" class="hidden flex-col gap-1">
       <label class="text-xs font-medium text-gray-600 flex items-center gap-1">
-        Bandeja de Correo
+        Bandeja de Correo <span class="text-red-500">*</span>
         <%# El hint vive en el tooltip del ícono, no como texto bajo el campo.    %>
         <%# `#refreshEmailConfigHint()` le reescribe el `data-tooltip` y, cuando  %>
         <%# no hay bandeja, le cambia el ícono a `warning`: ese caso no es una    %>
@@ -207,8 +213,7 @@
     <%# de los proveedores (`companies.reception_mailbox_id`, `MailReceptionJob`). %>
     <%# El catálogo se administra en /configurations/mail-parser; acá solo se     %>
     <%# asigna, con el mismo patrón que "Bandeja de Correo".                      %>
-    <%# Opcional y oculto en el ALTA por el mismo motivo que esa: la creación     %>
-    <%# todavía va al `POST /api/Companies` del .NET, que no conoce la columna.   %>
+    <%# Opcional; se muestra en los dos modos por el mismo motivo que esa.        %>
     <div data-company-form-target="receptionMailboxField" class="hidden flex-col gap-1">
       <label class="text-xs font-medium text-gray-600 flex items-center gap-1">
         Bandeja de Recepción
@@ -255,10 +260,7 @@
       <%# también cuando Hacienda RECHAZA el comprobante. Apagado, el job lo      %>
       <%# marca "Omitido" y no manda nada (`Sap::MailDocumentInfo` le suma        %>
       <%# `Status eq 6` al $filter).                                              %>
-      <%# Oculto en el ALTA por lo mismo que "Bandeja de Correo": la creación     %>
-      <%# todavía va al `POST /api/Companies` del .NET, que no conoce la columna  %>
-      <%# — el check se vería pero no guardaría nada. Lo muestra `#setupMode()`   %>
-      <%# solo en edición. Ver TODOS.md → Compañías.                              %>
+      <%# Se muestra en los dos modos por lo mismo que "Bandeja de Correo".       %>
       <div data-company-form-target="sendRejectedDocumentsField" class="hidden items-center gap-1">
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox"

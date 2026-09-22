@@ -18,7 +18,11 @@ Rails.application.routes.draw do
     # GET /api/profile/companies.
     # `show` alimenta el formulario de edición y devuelve dos bloques: las
     # columnas de `companies` y los UDFs de `OADM` leídos desde SAP.
-    resources :companies, only: %i[index show] do
+    # `create` es el alta (`/configurations/companies/new`): un INSERT en
+    # `companies` y nada más — no hay que crear estructura en SAP para dar de
+    # alta una compañía (`TODOS.md` → Compañías → "Crear compañía"). Reemplaza
+    # `POST /api/Companies` del .NET.
+    resources :companies, only: %i[index show create] do
       get :assignable, on: :collection
 
       # UN endpoint por sección del formulario. Cada botón "Actualizar" es

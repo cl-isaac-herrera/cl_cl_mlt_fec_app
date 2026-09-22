@@ -63,6 +63,20 @@ class Company < ApplicationRecord
   # rechaza — y el rechazo llega mucho después de que alguien lo escribió.
   validates :name, presence: true, length: { maximum: 80 }
 
+  # Contexto propio y NO `on: :create`: si fuera `:create`, cualquier alta —
+  # `db/seeds.rb`, una futura importación, cualquier spec que haga
+  # `Company.create!`/`create(:company)`— quedaría exigiendo una conexión y una
+  # bandeja que la mayoría de esos casos no tiene por qué tener. Este contexto
+  # solo lo dispara `Api::CompaniesController#create`
+  # (`company.valid?(:new_company_form)`), que es la ÚNICA alta que de verdad
+  # necesita las dos cosas: sin conexión no hay a qué SAP consultar, y sin
+  # bandeja la compañía no tiene cómo enviar el correo con el comprobante
+  # (`Documents::ReceiptMailer`). Una vez creada, las dos se pueden volver a
+  # dejar en blanco desde "Datos Generales" sin que nada lo impida — son
+  # requisitos del ALTA, no invariantes del modelo.
+  validates :connection_id,   presence: true, on: :new_company_form
+  validates :email_config_id, presence: true, on: :new_company_form
+
   # `belongs_to ... optional: true` no valida nada cuando el id SÍ viene: una
   # conexión inexistente pasaría el modelo y la rechazaría la llave foránea, que
   # también llega como 500. `unscoped` porque una conexión dada de baja sigue

@@ -1652,6 +1652,7 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 |---|---|
 | `GET /api/Companies/GetCompanies?ComercialName=&...` | `GET /api/companies` |
 | `GET /api/Companies/GetCertExpireDateAlarm?companyId=N` | `GET /api/certificate_alarm` ⚠️ sin companyId (sale de la sesión) |
+| `POST /api/Companies?companyId=0&groupId=0&feToken=…` (el form entero, multipart) | `POST /api/companies` — mismo criterio: un único botón, una sola petición multipart con "Datos Generales" + "Adicional" (`EmailCC`) + "Hacienda (ATV)" + "Adjuntos" (certificado/logo/formato incluidos). Sin `groupId`/`feToken`/campos muertos (`ShortName`, `IsExternal`) |
 | `PATCH /api/Companies?groupId=N&action=N` (el form entero) | `PATCH /api/companies/:id/general`, `PATCH /api/companies/:id/tax_authority`, `PATCH /api/companies/:id/attachments` — uno por sección |
 | `POST /api/Companies/CheckCertExpireDate?CertPin=…` | `POST /api/certificate_inspections` ⚠️ el PIN pasa de la query string al cuerpo |
 | `GET /api/companies/:id/certificate` (archivo del disco .NET) | `GET /api/companies/:id/certificate` — mismo path, ahora nativo (`Certificates::Store`) |

@@ -203,24 +203,6 @@ export default class extends Controller {
       this.btnSaveSapTarget.classList.remove('hidden');
       this.btnRegisterContainerTarget.classList.add('hidden');
 
-      // "Bandeja de Correo" solo en edición: el alta todavía va al
-      // `POST /api/Companies` del .NET, que no conoce `email_config_id`, así que
-      // en el alta el select se vería pero no guardaría nada (TODOS.md →
-      // Compañías). `flex` y no `block`: el contenedor es `flex-col gap-1` como
-      // los demás campos de la grilla.
-      this.emailConfigFieldTarget.classList.remove('hidden');
-      this.emailConfigFieldTarget.classList.add('flex');
-
-      // "Bandeja de Recepción", por lo mismo: el alta todavía va al .NET.
-      this.receptionMailboxFieldTarget.classList.remove('hidden');
-      this.receptionMailboxFieldTarget.classList.add('flex');
-
-      // "Enviar los documentos rechazados por Hacienda", por lo mismo: el alta
-      // del .NET no conoce `send_rejected_documents`, así que en creación el
-      // check se marcaría y el guardado lo descartaría sin error.
-      this.sendRejectedDocumentsFieldTarget.classList.remove('hidden');
-      this.sendRejectedDocumentsFieldTarget.classList.add('flex');
-
       if (this.#hasPerm('Configurations_Connections_Create')) {
         this.btnAddConnectionTarget.classList.remove('hidden');
       }
@@ -237,6 +219,23 @@ export default class extends Controller {
       this.btnRegisterContainerTarget.classList.remove('hidden');
       this.btnRegisterContainerTarget.classList.add('flex');
     }
+
+    // "Bandeja de Correo", "Bandeja de Recepción" y "Enviar los documentos
+    // rechazados por Hacienda" se muestran en los DOS modos: el alta nativa
+    // manda "Datos Generales" (donde viven estos tres campos) junto con
+    // "Adicional", "Hacienda (ATV)" y "Adjuntos" en una sola petición
+    // (`submitCreate()` → `Api::CompaniesController#create`, que acepta los
+    // mismos catorce campos que `PATCH .../general`). No hay ninguna
+    // limitación del backend que los siga obligando a esconderse en creación
+    // — la limitación era del .NET (TODOS.md → Compañías). `flex` y no
+    // `block`: el contenedor es `flex-col gap-1` como los demás campos de la
+    // grilla.
+    this.emailConfigFieldTarget.classList.remove('hidden');
+    this.emailConfigFieldTarget.classList.add('flex');
+    this.receptionMailboxFieldTarget.classList.remove('hidden');
+    this.receptionMailboxFieldTarget.classList.add('flex');
+    this.sendRejectedDocumentsFieldTarget.classList.remove('hidden');
+    this.sendRejectedDocumentsFieldTarget.classList.add('flex');
 
     // Los tres botones de la barra de los campos de "Adjuntos" (descargar logo,
     // descargar formato, restablecer) nacen deshabilitados y los habilita
@@ -348,12 +347,20 @@ export default class extends Controller {
       // El .NET pedía además `GET /api/Group/GetGroups` para el select "Cuenta".
       // No se migró: no hay grupos en esta versión (CLAUDE.md §31), así que el
       // campo se eliminó junto con la consulta que lo alimentaba (§24).
-      // Las bandejas de correo NO se piden acá: el campo está oculto en el alta
-      // (ver `#setupMode`), así que sería una consulta para un select que nadie
-      // ve.
-      const sapResp = await this.#railsFetch('/api/connections/assignable');
+      //
+      // Las tres consultas van en paralelo: los tres selects de "Datos
+      // Generales" están visibles en el alta (ver `#setupMode`).
+      const [sapResp, inboxesResp, receptionResp] = await Promise.all([
+        this.#railsFetch('/api/connections/assignable'),
+        this.#railsFetch('/api/email_configs/assignable'),
+        this.#railsFetch('/api/reception_mailboxes/assignable'),
+      ]);
 
       if (sapResp.Data) this.#fillSapConnectionsSelect(sapResp.Data);
+      if (inboxesResp.Data) this.#fillEmailConfigsSelect(inboxesResp.Data);
+      if (receptionResp.Data) this.#fillReceptionMailboxesSelect(receptionResp.Data);
+
+      await this.#warnMissingCreateCatalogs(sapResp.Data, inboxesResp.Data);
 
       this.#validateForm();
     } catch (err) {
@@ -364,6 +371,38 @@ export default class extends Controller {
         confirmButtonText: 'Aceptar',
       });
     }
+  }
+
+  /**
+   * Avisa con un MODAL —no un toast: tiene que verlo antes de ponerse a llenar
+   * el formulario, no que se le pierda a los 3 segundos— cuando falta el
+   * catálogo de conexiones de SAP y/o de bandejas de emisión. Sin cualquiera de
+   * las dos el alta se rechaza (`#validateGeneralForm()` acá, y
+   * `Company`/`Api::CompaniesController#create` con el contexto
+   * `:new_company_form` del lado del servidor), así que conviene decirlo ANTES
+   * de que alguien llene el resto del formulario y se encuentre con el botón
+   * "Registrar" deshabilitado sin saber por qué.
+   *
+   * @param {?Array} connections  `Data` de `GET /api/connections/assignable`.
+   * @param {?Array} emailConfigs `Data` de `GET /api/email_configs/assignable`.
+   */
+  async #warnMissingCreateCatalogs(connections, emailConfigs) {
+    const missing = [];
+    if (!connections?.length)  missing.push('una conexión de SAP (Configuraciones → Conexiones)');
+    if (!emailConfigs?.length) missing.push('una bandeja de emisión (Configuraciones → Bandejas de emisión)');
+    if (!missing.length) return;
+
+    await Swal.fire({
+      icon: 'warning',
+      title: 'Faltan datos para poder registrar la compañía',
+      // "Configure eso" y no "Créela(s)": con uno o los dos faltantes a la vez,
+      // el pronombre neutro evita tener que concordar género/número contra una
+      // lista que puede traer uno o dos elementos.
+      text: `Para registrar una compañía hace falta al menos ${missing.join(' y ')}. `
+          + 'Configure eso primero desde el menú: sin eso, este formulario no va a dejar '
+          + 'completar el alta.',
+      confirmButtonText: 'Entendido',
+    });
   }
 
   /**
@@ -2334,6 +2373,20 @@ export default class extends Controller {
 
   // ── Crear compañía ─────────────────────────────────────────────────────────
 
+  /**
+   * `POST /api/companies` — el alta nativa. A diferencia de edición, acá NO hay
+   * un botón "Actualizar" por sección: hay un único "Registrar Datos de la
+   * Compañía" que manda TODO lo que el formulario deja llenar en el alta en una
+   * sola petición multipart — "Datos Generales", "Adicional" (`EmailCC`),
+   * "Hacienda (ATV)" (credenciales y certificado) y "Adjuntos" (logo y formato
+   * de impresión). Quedan fuera "Factura a Proveedor" (deshabilitada hasta que
+   * la compañía exista, `useFactProvTarget.disabled`) y "Códigos de actividad"
+   * (UDT que cuelga de un id que todavía no hay).
+   *
+   * Reemplaza el `POST /api/Companies` del .NET (TODOS.md → Compañías → "Crear
+   * compañía"), que mandaba lo mismo —las 42 columnas de las dos tablas del
+   * legado— en una sola petición multipart.
+   */
   async submitCreate() {
     const identification = this.identificationTarget.value;
     const certPath       = this.certPathTarget.value;
@@ -2388,38 +2441,24 @@ export default class extends Controller {
       return;
     }
 
-    const companyId = parseInt(this.#selectedCompany?.companyId) || 0;
-    // `groupId` va en 0: el campo se eliminó porque no hay grupos (§31), pero el
-    // endpoint .NET todavía lo exige. Ver TODOS.md → Compañías.
-    const groupId   = 0;
-
     try {
-      const response = await fetch(
-        `/api/Companies?companyId=${companyId}&groupId=${groupId}&feToken=${encodeURIComponent(Storage.get('Session')?.access_token || '')}`,
-        {
-          method:  'POST',
-          headers: this.#authHeaders({ 'Request-With-Files': 'true', 'API': 'ApiAppUrl' }),
-          body:    this.#buildCompanyFormData(),
-        }
-      );
-
-      const json = await response.json();
-
-      if (!response.ok) throw new Error(json.Message);
-      
-      if (json.Error) throw new Error(json.Message);
+      const json = await this.#railsFetch('/api/companies', {
+        method: 'POST',
+        body:   this.#buildCreatePayload(),
+      });
 
       Swal.fire({
         toast: true,
         position: 'top-end',
         icon: 'success',
-        title: 'Compañía registrada exitosamente.',
+        title: json.Message || 'Compañía registrada con éxito.',
         showConfirmButton: false,
         timer: 3000,
         timerProgressBar: true
       });
       setTimeout(() => { Turbo.visit('/configurations/companies'); }, 1200);
     } catch (err) {
+      // Error de escritura → modal, no toast (CLAUDE.md §9).
       await Swal.fire({
         icon: 'error',
         title: 'Error al registrar compañía',
@@ -2427,6 +2466,48 @@ export default class extends Controller {
         confirmButtonText: 'Aceptar',
       });
     }
+  }
+
+  /**
+   * El cuerpo del alta — multipart, porque el certificado y los adjuntos viajan
+   * en la misma petición que el resto. Son los mismos catorce campos que
+   * `#generalPayload()` arma para `PATCH .../general` (la traducción de claves
+   * es la misma), más `EmailCC` y las credenciales/archivos de "Hacienda (ATV)"
+   * y "Adjuntos".
+   *
+   * Los tres campos que `#setupMode()` mantiene ocultos en el alta (Bandeja de
+   * Correo, Bandeja de Recepción, Enviar rechazados) no se leen acá — sus
+   * targets están vacíos/sin marcar y `Api::CompaniesController#create` los
+   * deja en su default de columna si no vienen.
+   */
+  #buildCreatePayload() {
+    const fd = new FormData();
+
+    // "Datos Generales" — mismas claves que `#generalPayload()`, pero como
+    // partes de FormData: un `null` (select vacío) no se manda, para que el
+    // servidor lo trate como "sin valor" y no como el texto literal "null".
+    Object.entries(this.#generalPayload()).forEach(([key, value]) => {
+      if (value === null || value === undefined) return;
+      fd.append(key, value);
+    });
+
+    // "Adicional" — el único campo con columna real (`email_cc`);
+    // `additionalInformation` no tiene dónde guardarse (§24).
+    fd.append('EmailCC', this.#emailCcItems.filter(Boolean).join(';'));
+
+    // "Hacienda (ATV)" — credenciales y certificado. Los tres campos de texto
+    // solo se mandan si tienen contenido: es un alta, así que no hace falta la
+    // regla de "vacío = conservar" que sí aplica en edición.
+    if (this.tokenUsrTarget.value.trim()) fd.append('TokenUsr', this.tokenUsrTarget.value.trim());
+    if (this.certPinTarget.value)         fd.append('CertPin', this.certPinTarget.value);
+    if (this.tokenPassTarget.value)       fd.append('TokenPass', this.tokenPassTarget.value);
+    if (this.#selectedCertFile)           fd.append('file', this.#selectedCertFile);
+
+    // "Adjuntos"
+    if (this.#selectedLogoFile)        fd.append('Logo', this.#selectedLogoFile);
+    if (this.#selectedPrintFormatFile) fd.append('PrintFormat', this.#selectedPrintFormatFile);
+
+    return fd;
   }
 
   // ── Helpers de petición ────────────────────────────────────────────────────
@@ -2544,7 +2625,15 @@ export default class extends Controller {
       id.length >= rules.min && id.length <= rules.max &&
       this.codigoActividadTarget.value.length === 6 &&
       this.dbSapTarget.value.trim() &&
-      this.sapConnectionIdTarget.value
+      this.sapConnectionIdTarget.value &&
+      // La bandeja de correo es obligatoria SOLO en el alta: sin ella, la
+      // compañía no tiene cómo enviar el correo del comprobante
+      // (`Documents::ReceiptMailer`). En edición sigue siendo opcional — una
+      // compañía ya creada se puede seguir editando sin una, hasta que alguien
+      // se la asigne — así que acá no se suma a la condición
+      // (`Api::CompaniesController#create` reafirma lo mismo del lado del
+      // servidor con el contexto `:new_company_form`, ver `Company`).
+      (this.#isEditing || this.emailConfigIdTarget.value)
     );
   }
 

@@ -31,12 +31,20 @@ module Api
     DEFAULT_PER_PAGE = 10
 
     PERMISSIONS = {
-      'index' => 'Configurations_Companies_ListAccess',
+      'index'  => 'Configurations_Companies_ListAccess',
       # `show` alimenta el formulario de edición, así que pide el permiso de
       # edición — el mismo con el que `auth_guard_controller.js` gatea la ruta
       # /configurations/companies/:id/edit.
-      'show'  => 'Configurations_Companies_Update'
+      'show'   => 'Configurations_Companies_Update',
+      'create' => 'Configurations_Companies_Create'
     }.freeze
+
+    # Los dos adjuntos que acepta el alta, igual que en
+    # `Api::Companies::AttachmentsController`.
+    ATTACHMENTS = [
+      { param: :Logo,        column: :logo_path,         store: ::Attachments::LogoStore },
+      { param: :PrintFormat, column: :print_format_path, store: ::Attachments::PrintFormatStore }
+    ].freeze
 
     # GET /api/companies?name=&issuer_id_number=&page=1&per_page=10
     #
@@ -92,6 +100,61 @@ module Api
       ).to_h
     end
 
+    # POST /api/companies
+    #
+    # A diferencia de las secciones de edición (un botón "Actualizar" — y un
+    # `PATCH` — por sección), el alta tiene un único botón, así que es una sola
+    # petición con TODO lo que el formulario deja llenar en creación: "Datos
+    # Generales", "Adicional" (`EmailCC`), "Hacienda (ATV)" (credenciales y
+    # certificado) y "Adjuntos" (logo y formato de impresión). El cuerpo es
+    # multipart por el certificado y los adjuntos.
+    #
+    # Quedan fuera "Factura a Proveedor" (el formulario la mantiene deshabilitada
+    # hasta que la compañía exista — necesita SAP) y "Códigos de actividad" (UDT
+    # que cuelga de un `company_id` que todavía no hay); las dos siguen ocultas
+    # en el formulario de alta.
+    #
+    # Reemplaza `POST /api/Companies` del .NET (`TODOS.md` → Compañías → "Crear
+    # compañía"), que mandaba lo mismo en una sola petición multipart.
+    #
+    # Quien crea la compañía queda asignado a ella (`UsersByCompany`). Sin eso,
+    # alguien sin `Configurations_Companies_ViewAllApplicationCompanies` la
+    # crearía y la perdería de vista en el mismo instante — ni en `index` ni
+    # pudiendo reabrirla para completar el resto de las secciones (`show` y
+    # `general` comparten el alcance de `VisibleCompanies`). Mismo criterio que
+    # `Api::UsersController#create` con `CompanyId`.
+    def create
+      company = Company.new(create_params)
+      # Antes de tocar el disco: un `Nombre` en blanco, sin conexión de SAP o sin
+      # bandeja de correo no ameritan escribir el certificado o los adjuntos para
+      # después borrarlos. `:new_company_form` es el único contexto que exige la
+      # conexión y la bandeja — ver el comentario de esas dos validaciones en
+      # `Company`.
+      return render_invalid(company) unless company.valid?(:new_company_form)
+
+      begin
+        company.assign_attributes(certificate_attributes(company).merge(attachment_attributes(company)))
+      rescue CompanyFiles::Error => e
+        # El PIN que no abre el .p12, la cédula todavía sin llenar, la extensión
+        # o el tamaño de un archivo: nada de esto tocó la base, pero alguno de
+        # los archivos ya pudo haberse escrito en disco antes del que falló.
+        discard_written
+        return render_error(e.message)
+      end
+
+      unless company.save
+        # La fila no se creó: ningún archivo recién escrito lo apunta.
+        discard_written
+        return render_invalid(company)
+      end
+
+      UsersByCompany.create!(user: Current.user, company: company)
+
+      render json: ApiResponse.success(serialize_detail(company), code: 201,
+                                       message: 'Compañía registrada con éxito.').to_h,
+             status: :created
+    end
+
     private
 
     def authorize_action
@@ -116,6 +179,97 @@ module Api
       return DEFAULT_PER_PAGE if requested <= 0
 
       [requested, MAX_PER_PAGE].min
+    end
+
+    # Los catorce campos de "Datos Generales" (los mismos y con la misma
+    # traducción de claves que acepta `Api::Companies::GeneralController`), más
+    # `EmailCC` de "Adicional" y las tres credenciales de texto de "Hacienda
+    # (ATV)" — el único botón del alta manda las cuatro secciones juntas. Lo que
+    # esa sección tiene de ARCHIVOS (certificado, logo, formato de impresión) lo
+    # resuelven `certificate_attributes` y `attachment_attributes`, porque
+    # necesitan la compañía ya construida (le leen `issuer_id_number` para saber
+    # en qué carpeta escribir, `CLAUDE.md` §34).
+    #
+    # A diferencia de un `PATCH` de sección, acá no importa copiar solo lo que
+    # vino en la petición: es un alta, así que lo que no venga simplemente nace
+    # en su default de columna (o `NULL`).
+    def create_params
+      {
+        name:                    text(:Name),
+        sap_db:                  text(:SapDb),
+        issuer_legal_name:       text(:EmsrNombre),
+        issuer_id_type:          text(:EmsrIdeTipo),
+        issuer_id_number:        text(:EmsrIdeNumero),
+        economic_activity_code:  text(:CodigoActividad),
+        tax_registry_8707:       text(:EmsrRegistroFiscal8707),
+        connection_id:           number(:ConnectionId),
+        email_config_id:         number(:EmailConfigId),
+        reception_mailbox_id:    number(:ReceptionMailboxId),
+        email_sender_type:       number(:EmailSenderType),
+        freight_type:            number(:FreightType),
+        is_active:               boolean(:Active),
+        send_rejected_documents: boolean(:SendRejectedDocuments),
+        email_cc:                text(:EmailCC),
+        token_user:              text(:TokenUsr),
+        cert_pin:                text(:CertPin),
+        token_password:          text(:TokenPass)
+      }.compact
+    end
+
+    # Lo que aporta el certificado, o un hash vacío si no vino ninguno. Mismo
+    # criterio que `Api::Companies::TaxAuthorityController#certificate_attributes`:
+    # primero se abre el `.p12` con su PIN y recién después se escribe en disco,
+    # para que un PIN equivocado no deje un archivo tirado en el servidor.
+    #
+    # @raise [CompanyFiles::Error] PIN que no abre el archivo, cédula faltante,
+    #   extensión inválida, archivo demasiado grande, disco que falla.
+    def certificate_attributes(company)
+      upload = params[:file]
+      return {} if upload.blank?
+
+      pin = params[:CertPin]
+      raise Certificates::Error, 'Ingrese el PIN del certificado para poder guardarlo.' if pin.blank?
+
+      result = Certificates::ExpirationReader.new(file: upload, pin: pin).call
+      raise Certificates::Error, result.error unless result.ok?
+
+      path = Certificates::Store.new(company).save!(upload)
+      (@written ||= []) << [Certificates::Store, company, path]
+      { cert_path: path, cert_expires_at: result.expires_at }
+    end
+
+    # Lo que aportan el logo y el formato de impresión — cada uno solo si vino
+    # en el cuerpo. Mismo criterio que
+    # `Api::Companies::AttachmentsController#saved_attributes`.
+    def attachment_attributes(company)
+      ATTACHMENTS.each_with_object({}) do |attachment, attrs|
+        upload = params[attachment[:param]]
+        next if upload.blank?
+
+        path = attachment[:store].new(company).save!(upload)
+        (@written ||= []) << [attachment[:store], company, path]
+        attrs[attachment[:column]] = path
+      end
+    end
+
+    # Borra los archivos que ya se escribieron en disco cuando el alta no
+    # termina de salir bien (otro archivo falló, o el `save` de la compañía
+    # rechaza los datos): ninguna fila los apunta, así que no se dejan tirados
+    # en el servidor.
+    def discard_written
+      (@written || []).each { |store_class, company, path| store_class.new(company).remove(path) }
+    end
+
+    def text(key)    = params[key].to_s.strip.presence
+    def number(key)  = params[key].to_s.strip.presence&.to_i
+    def boolean(key) = ActiveModel::Type::Boolean.new.cast(params[key])
+
+    def render_invalid(company)
+      render_error(company.errors.full_messages.to_sentence)
+    end
+
+    def render_error(message)
+      render json: ApiResponse.error(message).to_h, status: :unprocessable_content
     end
 
     # Solo lo que pinta el listado. Nombre legal y nombre comercial no salen de
