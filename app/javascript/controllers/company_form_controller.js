@@ -87,8 +87,10 @@ export default class extends Controller {
     'sectionActivityCodes',
     'activityCodesList',
     'activityCodesEmpty',
+    'activityCodesLoadError',
     'activityCodesDupError',
     'btnSaveActivityCodes',
+    'activityCodesErrorIcon',
 
     // Sección 6 - SAP / Factura Proveedor
     'sectionSap',
@@ -138,6 +140,7 @@ export default class extends Controller {
   #xmlTolerances          = [];
   #currencyMappings       = [];
   #activityCodes          = [];
+  #activityCodesLoadFailed = false;
   #currenciesList         = [];
   #taxCodeList            = [];
   #warehouseList          = [];
@@ -267,6 +270,7 @@ export default class extends Controller {
     [
       this.hasCertAlertTarget          ? this.certAlertTarget          : null,
       this.hasSapErrorIconTarget       ? this.sapErrorIconTarget       : null,
+      this.hasActivityCodesErrorIconTarget ? this.activityCodesErrorIconTarget : null,
       this.hasBtnSaveGeneralWrapTarget ? this.btnSaveGeneralWrapTarget : null,
       this.hasBtnSaveAtvWrapTarget     ? this.btnSaveAtvWrapTarget     : null,
       this.hasBtnSaveAttachmentsWrapTarget    ? this.btnSaveAttachmentsWrapTarget    : null,
@@ -495,17 +499,30 @@ export default class extends Controller {
           ActivityCode: item.ActivityCode,
           Description:  item.Description,
         }));
+        this.#activityCodesLoadFailed = false;
         this.#renderActivityCodes();
+        this.#setActivityCodesError(null);
       })
-      .catch(err => Swal.fire({
-        toast: true,
-        position: 'top-end',
-        icon: 'error',
-        title: `No se pudieron cargar los códigos de actividad: ${err.message}`,
-        showConfirmButton: false,
-        timer: 3000,
-        timerProgressBar: true
-      }));
+      .catch((err) => {
+        // El toast se pierde a los 3s si la sección estaba cerrada; la insignia
+        // del encabezado (§33) y el hint de la sección quedan hasta que la
+        // consulta se resuelva. Los dos dicen algo distinto a propósito: el
+        // hint es genérico ("no cargó") porque va a la vista siempre visible
+        // con la sección cerrada, y el motivo real de SAP/Service Layer solo
+        // va en el tooltip del ícono.
+        this.#activityCodesLoadFailed = true;
+        this.#renderActivityCodes();
+        this.#setActivityCodesError(err.message);
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'error',
+          title: `No se pudieron cargar los códigos de actividad: ${err.message}`,
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
+      });
 
     try {
       // El orden importa: las conexiones tienen que estar en el <select> antes de
@@ -1753,6 +1770,14 @@ export default class extends Controller {
     const container = this.activityCodesListTarget;
     container.innerHTML = '';
 
+    // La consulta falló: no se sabe si hay códigos o no, así que el hint dice
+    // eso y no "sin configurar" — son motivos distintos y no se muestran juntos.
+    this.activityCodesLoadErrorTarget.classList.toggle('hidden', !this.#activityCodesLoadFailed);
+    if (this.#activityCodesLoadFailed) {
+      this.activityCodesEmptyTarget.classList.add('hidden');
+      return;
+    }
+
     if (!this.#activityCodes.length) {
       this.activityCodesEmptyTarget.classList.remove('hidden');
       return;
@@ -1789,6 +1814,25 @@ export default class extends Controller {
     const dupErr = codes.length !== new Set(codes).size;
     this.activityCodesDupErrorTarget.classList.toggle('hidden', !dupErr);
     return !dupErr;
+  }
+
+  /**
+   * El aviso de la sección "Códigos de actividad": la UDT de SAP
+   * (`Api::Companies::ActivityCodesController`) no respondió — típicamente un
+   * problema de conexión con el Service Layer, no un error de la compañía.
+   *
+   * Misma insignia que el vencimiento del certificado y las listas de SAP de
+   * "Factura a Proveedor" (§33): disco rojo en el encabezado, con el mensaje
+   * real de la consulta en el tooltip. `message` es `null` para apagarla
+   * cuando la carga (re)sale bien.
+   */
+  #setActivityCodesError(message) {
+    if (!this.hasActivityCodesErrorIconTarget) return;
+
+    this.#paintAlertBadge(this.activityCodesErrorIconTarget, message ? {
+      icon: 'priority_high', tone: ALERT_TONES.error, urgent: false,
+      message: `No se pudieron cargar los códigos de actividad. ${message}`,
+    } : null);
   }
 
   /**

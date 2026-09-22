@@ -700,7 +700,18 @@
          data-company-form-target="sectionActivityCodes"
          class="hidden bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
   <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
-    <span class="text-sm font-semibold text-gray-700">Códigos de actividad</span>
+    <span class="flex items-center gap-2">
+      <span class="text-sm font-semibold text-gray-700">Códigos de actividad</span>
+
+      <%# Aviso: la consulta a la UDT de SAP (Service Layer) falló — típicamente %>
+      <%# un problema de conexión, no de la compañía. Nace oculto y lo pinta    %>
+      <%# `#setActivityCodesError` con la misma insignia del vencimiento del    %>
+      <%# certificado y de "Factura a Proveedor" (§33): el detalle real de la   %>
+      <%# consulta va en el tooltip.                                            %>
+      <span data-company-form-target="activityCodesErrorIcon"
+            data-testid="activity-codes-error-icon"
+            class="hidden"></span>
+    </span>
     <span class="material-icons text-gray-400 text-base">expand_more</span>
   </summary>
 
@@ -732,9 +743,18 @@
       <%# Ítems inyectados por Stimulus %>
     </div>
 
+    <%# La consulta a SAP falló: no se sabe si hay códigos o no, así que este     %>
+    <%# hint reemplaza a "activityCodesEmpty" (§ no son la misma situación) y no  %>
+    <%# se muestra junto con él. El detalle del error va en el tooltip del       %>
+    <%# ícono del encabezado (`activityCodesErrorIcon`), no acá.                 %>
+    <div data-company-form-target="activityCodesLoadError"
+         class="hidden text-xs text-red-500 text-center py-4">
+      No se logró cargar las actividades económicas
+    </div>
+
     <div data-company-form-target="activityCodesEmpty"
          class="hidden text-xs text-gray-400 text-center py-4">
-      Sin códigos de actividad configurados
+      No hay actividades económicas configuradas
     </div>
 
     <div data-company-form-target="activityCodesDupError"
