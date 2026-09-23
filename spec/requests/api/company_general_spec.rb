@@ -150,9 +150,30 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
       patch_section(Name: 'ACME Global')
 
       expect(acme.reload).to have_attributes(sap_db: 'SBO_ACME', issuer_id_number: '3101822733')
-      # El bloque del emisor no vino en el cuerpo: ni siquiera se habla con SAP
-      # para escribir nada — un PATCH que solo trae `Name` no toca la UDT.
+      # `Name` es parte del bloque del emisor (la UDT es la fuente, `companies`
+      # el espejo): se manda SOLO él, sin pisar en SAP lo que no vino.
+      expect(sap_client).to have_received(:patch) do |_path, body:|
+        expect(body.keys - %w[U_UpdatedAt U_UpdatedBy]).to eq(%w[U_CommercialName])
+        expect(body['U_CommercialName']).to eq('ACME Global')
+      end
+    end
+
+    it 'no habla con SAP si no vino nada del bloque del emisor' do
+      patch_section(SapDb: 'SBO_NUEVA')
+
       expect(sap_client).not_to have_received(:patch)
+    end
+
+    # La UDT es la fuente del nombre comercial y la cédula; `companies` guarda
+    # el espejo para el listado, las rutas de disco y el correo entrante.
+    it 'escribe el nombre comercial y la cédula en los dos lados' do
+      patch_section(Name: 'ACME Global', EmsrIdeNumero: '123456789')
+
+      expect(acme.reload).to have_attributes(name: 'ACME Global', issuer_id_number: '123456789')
+      expect(sap_client).to have_received(:patch).with(
+        'U_CL_FEC_ISSUERCONFIG(1)',
+        body: hash_including('U_CommercialName' => 'ACME Global', 'U_IdNumber' => '123456789')
+      )
     end
 
     # Vacío y NULL son la misma cosa para el negocio; tener las dos

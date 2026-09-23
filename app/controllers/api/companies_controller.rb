@@ -265,13 +265,16 @@ module Api
       }.compact
     end
 
-    # Los cuatro campos de "Datos Generales" que ya NO son columna de `companies`:
-    # viven en la UDT `@CL_FEC_ISSUERCONFIG`. Sin `.compact`: el alta manda el
-    # bloque completo (`Sap::CompanyConfig#create` no hace PATCH parcial), así
-    # que un campo en blanco se escribe en blanco a propósito.
+    # El bloque del emisor que va a la UDT `@CL_FEC_ISSUERCONFIG`. Sin
+    # `.compact`: el alta manda el bloque completo (`Sap::CompanyConfig#create`
+    # no hace PATCH parcial), así que un campo en blanco se escribe en blanco a
+    # propósito. `Name` y `EmsrIdeNumero` van también a `create_params`: la UDT
+    # es la fuente y `companies` el espejo local (ver `Sap::CompanyConfig`).
     def issuer_config_params
       {
         legal_name:              text(:EmsrNombre),
+        commercial_name:         text(:Name),
+        id_number:               text(:EmsrIdeNumero),
         id_type:                 text(:EmsrIdeTipo),
         economic_activity_code:  text(:CodigoActividad),
         tax_registry_8707:       text(:EmsrRegistroFiscal8707)

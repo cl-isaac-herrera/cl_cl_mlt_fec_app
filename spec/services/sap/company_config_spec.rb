@@ -24,15 +24,16 @@ RSpec.describe Sap::CompanyConfig do
   def sap_row(legal_name: 'ACME S.A.', id_type: '02', economic_activity_code: '620100',
               tax_registry_8707: nil)
     {
-      'Code' => '1', 'U_LegalName' => legal_name, 'U_IdType' => id_type,
+      'Code' => '1', 'U_LegalName' => legal_name, 'U_CommercialName' => 'ACME',
+      'U_IdNumber' => '3101822733', 'U_IdType' => id_type,
       'U_EconomicActivityCode' => economic_activity_code, 'U_TaxRegistry8707' => tax_registry_8707,
       'U_UpdatedAt' => '2026-09-20T10:00:00-06:00', 'U_UpdatedBy' => 'seed@acme.cr'
     }
   end
 
   def valid_attributes(overrides = {})
-    { legal_name: 'ACME S.A.', id_type: '02', economic_activity_code: '620100',
-      tax_registry_8707: nil }.merge(overrides)
+    { legal_name: 'ACME S.A.', commercial_name: 'ACME', id_number: '3101822733', id_type: '02',
+      economic_activity_code: '620100', tax_registry_8707: nil }.merge(overrides)
   end
 
   describe '#read' do
@@ -42,6 +43,8 @@ RSpec.describe Sap::CompanyConfig do
       config = company_config.read
 
       expect(config.legal_name).to eq('ACME S.A.')
+      expect(config.commercial_name).to eq('ACME')
+      expect(config.id_number).to eq('3101822733')
       expect(config.id_type).to eq('02')
       expect(config.economic_activity_code).to eq('620100')
     end
@@ -63,14 +66,15 @@ RSpec.describe Sap::CompanyConfig do
   end
 
   describe '#create' do
-    it 'manda las cuatro columnas y quién escribe' do
+    it 'manda las columnas del emisor y quién escribe' do
       allow(client).to receive(:post)
 
       company_config.create(valid_attributes)
 
       expect(client).to have_received(:post).with(
         'U_CL_FEC_ISSUERCONFIG',
-        body: hash_including('U_LegalName' => 'ACME S.A.', 'U_IdType' => '02',
+        body: hash_including('U_LegalName' => 'ACME S.A.', 'U_CommercialName' => 'ACME',
+                              'U_IdNumber' => '3101822733', 'U_IdType' => '02',
                               'U_EconomicActivityCode' => '620100', 'U_UpdatedBy' => 'user@acme.cr')
       )
     end
@@ -83,6 +87,11 @@ RSpec.describe Sap::CompanyConfig do
     it 'rechaza un valor más largo que el que acepta la UDT' do
       expect { company_config.create(valid_attributes(tax_registry_8707: '1' * 13)) }
         .to raise_error(Sap::CompanyConfig::InvalidConfig, /registro fiscal/)
+    end
+
+    it 'rechaza una cédula más larga que la columna de la UDT' do
+      expect { company_config.create(valid_attributes(id_number: '1' * 21)) }
+        .to raise_error(Sap::CompanyConfig::InvalidConfig, /número de identificación/)
     end
   end
 
@@ -107,6 +116,22 @@ RSpec.describe Sap::CompanyConfig do
       expect(client).to have_received(:patch) do |_path, body:|
         expect(body).not_to have_key('U_IdType')
       end
+    end
+
+    # Compañías dadas de alta antes de que existiera la UDT (o cuyo `create`
+    # nunca corrió) no tienen fila en SAP: el PATCH responde 404 y el `update`
+    # se autocura creando la fila en vez de fallar.
+    it 'crea la fila si todavía no existe (404 al actualizar)' do
+      allow(client).to receive(:patch)
+        .and_raise(Clavisco::ServiceLayer::Client::NotFoundError.new('Entity with value(1) does not exist'))
+      allow(client).to receive(:post)
+
+      company_config.update(legal_name: 'ACME Costa Rica S.A.')
+
+      expect(client).to have_received(:post).with(
+        'U_CL_FEC_ISSUERCONFIG',
+        body: hash_including('U_LegalName' => 'ACME Costa Rica S.A.')
+      )
     end
   end
 end

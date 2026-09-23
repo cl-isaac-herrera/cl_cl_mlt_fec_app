@@ -200,11 +200,17 @@ class SyncIssuedDocumentsJob < ApplicationJob
   # recibido y `Hacienda::Client` trata esa respuesta como un envío bueno, con
   # el `Location` armado a partir de la clave. Por eso ese caso está manejado y
   # no es una curiosidad del protocolo.
+  #
+  # El emisor del log sale de la vista de cabecera (`EmsrNombreComercial`/
+  # `EmsrIdeNumero`), igual que el del comprobante, y no del espejo de
+  # `companies` (ver `Sap::CompanyConfig`): así el log dice lo mismo que se le
+  # mandó a Hacienda. En FEC el emisor es el proveedor, no la compañía.
   def sent(entry, company, receipt, header)
     clave = document_field('Clave')
 
     Rails.logger.info(
-      "[SyncIssuedDocuments] #{entry} · #{company.name} · #{DocType.label(entry.doc_type)} · " \
+      "[SyncIssuedDocuments] #{entry} · emisor #{header.string('EmsrNombreComercial').inspect} " \
+      "(#{header.string('EmsrIdeNumero').inspect}) · #{DocType.label(entry.doc_type)} · " \
       "clave #{clave.inspect} · enviado#{' (ya lo tenía Hacienda)' if receipt.duplicate?} · " \
       "resolución en #{receipt.location.inspect}"
     )

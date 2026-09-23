@@ -37,25 +37,24 @@ module Sap
   # servicio es solo para la sección "Datos Generales" del formulario de
   # compañías.
   #
-  # ── Qué NO está acá ──────────────────────────────────────────────────────────
-  # `CommercialName`: nadie lo leería — el nombre comercial sale de
-  # `companies.name` (`Api::CompaniesController#serialize_detail`) o de la vista
-  # de cabecera (`EmsrNombreComercial`) para la emisión; declararlo acá sería la
-  # MISMA duplicación sin lector que costó la reversión original.
+  # ── `CommercialName` e `IdNumber`: la UDT manda, `companies` es espejo ──────
+  # El nombre comercial y la cédula viven en la UDT —es la configuración del
+  # emisor completa, la que la vista de cabecera expone como
+  # `EmsrNombreComercial`/`EmsrIdeNumero`—, y además se copian en
+  # `companies.name`/`companies.issuer_id_number` como ESPEJO local. El espejo
+  # existe porque tres consumidores los necesitan SIN poder hablar con SAP:
+  # `CompanyFiles::Store` arma con la cédula la carpeta del certificado/logo/
+  # formato en disco (`CLAUDE.md` §34); `MailReceptionJob#archive` decide a qué
+  # compañía pertenece un correo entrante (`Company.find_by(issuer_id_number:)`
+  # — hace falta saber la compañía para tener su conexión); y el listado/filtro
+  # y el selector de compañías los muestran y buscan localmente.
   #
-  # `IdNumber` (la cédula): se queda ÚNICA Y EXCLUSIVAMENTE en
-  # `companies.issuer_id_number`. Tres consumidores la necesitan SIN depender de
-  # SAP: `CompanyFiles::Store` arma con ella la carpeta del certificado/logo/
-  # formato de impresión en disco (`CLAUDE.md` §34); `MailReceptionJob#archive`
-  # la usa para decidir a qué compañía pertenece un correo entrante
-  # (`Company.find_by(issuer_id_number: …)` — no se puede resolver al revés,
-  # consultando SAP, porque hace falta saber la compañía para tener su
-  # conexión); y el listado/filtro de compañías la muestra y busca localmente.
-  # Los tres son consultas que corren SIN saber de antemano con qué compañía
-  # están tratando, así que no pueden empezar por hablar con el SAP de esa
-  # compañía. Tenerla también en la UDT sería una fuente doble que puede
-  # divergir (`CLAUDE.md` §39, "cada rol tiene UNA sola fuente"); con una sola
-  # alcanza.
+  # Los dos lados se escriben en el MISMO guardado ("Datos Generales" y el
+  # alta), así que no pueden divergir desde la pantalla. La emisión NO lee el
+  # espejo: toma la identidad de la vista de cabecera.
+  #
+  # Validación: el espejo conserva sus validaciones de modelo (largo, cédula
+  # única); acá solo se valida el largo contra el `Size` de la UDT.
   class CompanyConfig
     READ_CODE   = 'getCompanyConfig'
     CREATE_CODE = 'createCompanyConfig'
@@ -68,8 +67,8 @@ module Sap
     # La configuración ya leída. `nil` en cualquier campo es "todavía no se
     # cargó", no un error — mismo criterio que las columnas `allow_nil` que
     # reemplaza.
-    Config = Data.define(:legal_name, :id_type, :economic_activity_code, :tax_registry_8707,
-                          :updated_at, :updated_by)
+    Config = Data.define(:legal_name, :commercial_name, :id_number, :id_type,
+                          :economic_activity_code, :tax_registry_8707, :updated_at, :updated_by)
 
     # Largos que declara `config/sap_schemas/company_config_udt.json` — los
     # mismos `limit:` que tenían las columnas de `companies` que reemplaza. Se
@@ -77,6 +76,8 @@ module Sap
     # cuánto, en vez del error genérico con el que SAP rechaza la escritura.
     MAX_LENGTHS = {
       legal_name:              100,
+      commercial_name:         80,
+      id_number:               20,
       id_type:                 2,
       economic_activity_code:  6,
       tax_registry_8707:       12
@@ -88,7 +89,9 @@ module Sap
 
     LABELS = {
       legal_name:              'La razón social',
-      id_type:                 'El tipo de identificación',
+      commercial_name:         'El nombre comercial',
+      id_number:               'El número de identificación',
+      id_type:                'El tipo de identificación',
       economic_activity_code:  'El código de actividad económica',
       tax_registry_8707:       'El registro fiscal (ley 8707)'
     }.freeze
@@ -96,7 +99,9 @@ module Sap
     # `attributes` → `U_Campo` del cuerpo. El orden es el de la UDT.
     FIELD_MAP = {
       legal_name:              'U_LegalName',
-      id_type:                 'U_IdType',
+      commercial_name:         'U_CommercialName',
+      id_number:               'U_IdNumber',
+      id_type:                'U_IdType',
       economic_activity_code:  'U_EconomicActivityCode',
       tax_registry_8707:       'U_TaxRegistry8707'
     }.freeze
@@ -139,12 +144,27 @@ module Sap
     # "Datos Generales" no borre en SAP lo que esa petición no mencionó — mismo
     # criterio que `Api::Companies::GeneralController#general_params`.
     #
-    # @param attributes [Hash] subconjunto de `:legal_name, :id_type,
-    #   :economic_activity_code, :tax_registry_8707`.
+    # ── Autocuración de la fila que nunca se creó ───────────────────────────
+    # Una compañía dada de alta ANTES de que existiera esta UDT (o cuyo `create`
+    # nunca llegó a correr) no tiene fila en SAP. `PATCH U_CL_FEC_ISSUERCONFIG(1)`
+    # contra una fila inexistente responde `404 Entity with value(1) does not
+    # exist`, que el cliente levanta como `NotFoundError` — antes eso llegaba
+    # crudo (y en inglés) hasta el usuario, bloqueando CUALQUIER edición de
+    # "Datos Generales" para esas compañías hasta correr un backfill aparte.
+    # En vez de eso, un 404 al actualizar se resuelve creando la fila con las
+    # MISMAS llaves que traía el PATCH: la primera edición de una compañía sin
+    # fila la crea sola, y las llaves que esa edición no tocó quedan en blanco
+    # hasta que una edición posterior las llene — mismo comportamiento que
+    # tendría si el backfill se hubiera corrido con esos campos vacíos.
+    #
+    # @param attributes [Hash] subconjunto de `:legal_name, :commercial_name,
+    #   :id_number, :id_type, :economic_activity_code, :tax_registry_8707`.
     def update(attributes)
       validate!(attributes)
 
       client.patch(Sap::ResourceQuery.path_for(UPDATE_CODE), body: body_for(attributes))
+    rescue Clavisco::ServiceLayer::Client::NotFoundError
+      client.post(Sap::ResourceQuery.path_for(CREATE_CODE), body: body_for(attributes))
     end
 
     private
@@ -154,7 +174,9 @@ module Sap
     def build(row)
       Config.new(
         legal_name:              row.string('U_LegalName'),
-        id_type:                 row.string('U_IdType'),
+        commercial_name:         row.string('U_CommercialName'),
+        id_number:               row.string('U_IdNumber'),
+        id_type:                row.string('U_IdType'),
         economic_activity_code:  row.string('U_EconomicActivityCode'),
         tax_registry_8707:       row.string('U_TaxRegistry8707'),
         updated_at:              row.string('U_UpdatedAt'),

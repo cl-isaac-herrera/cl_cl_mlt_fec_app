@@ -7,6 +7,12 @@
     { "Name": "LegalName", "Description": "FEC · Razón social del emisor ante Hacienda",
       "Type": "db_Alpha", "SubType": "st_None", "Size": 100, "Mandatory": "tNO" },
 
+    { "Name": "CommercialName", "Description": "FEC · Nombre comercial del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 80, "Mandatory": "tNO" },
+
+    { "Name": "IdNumber", "Description": "FEC · Número de identificación del emisor",
+      "Type": "db_Alpha", "SubType": "st_None", "Size": 20, "Mandatory": "tNO" },
+
     { "Name": "IdType", "Description": "FEC · Tipo de identificación del emisor",
       "Type": "db_Alpha", "SubType": "st_None", "Size": 2, "Mandatory": "tNO",
       "ValidValues": [

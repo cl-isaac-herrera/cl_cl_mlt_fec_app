@@ -414,7 +414,8 @@ RSpec.describe 'GET /api/companies', type: :request do
       expect(sap_client).to have_received(:post).with(
         'U_CL_FEC_ISSUERCONFIG',
         body: hash_including('U_LegalName' => 'Beta Industrial S.A.', 'U_IdType' => '02',
-                              'U_EconomicActivityCode' => '620100')
+                              'U_EconomicActivityCode' => '620100',
+                              'U_CommercialName' => 'Beta Industrial', 'U_IdNumber' => '3105551234')
       )
     end
 

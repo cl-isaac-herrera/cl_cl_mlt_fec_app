@@ -85,14 +85,18 @@ module Api
         @company = find_visible_company(params[:company_id])
       end
 
-      # Los cuatro campos del bloque del emisor que vinieron en la petición,
-      # SOLO los que vinieron (`params.key?`) — mismo criterio que
-      # `general_params`: un PATCH parcial no puede borrar en SAP lo que esta
-      # petición no mencionó. `Sap::CompanyConfig#update` ya sabe mandar solo
-      # las llaves presentes.
+      # Los campos del bloque del emisor que vinieron en la petición, SOLO los
+      # que vinieron (`params.key?`) — mismo criterio que `general_params`: un
+      # PATCH parcial no puede borrar en SAP lo que esta petición no mencionó.
+      # `Sap::CompanyConfig#update` ya sabe mandar solo las llaves presentes.
+      #
+      # `Name` y `EmsrIdeNumero` van a los DOS lados: acá a la UDT (la fuente) y
+      # en `general_params` al espejo de `companies` (ver `Sap::CompanyConfig`).
       def issuer_config_params
         attrs = {}
         attrs[:legal_name]             = text(:EmsrNombre)             if params.key?(:EmsrNombre)
+        attrs[:commercial_name]        = text(:Name)                   if params.key?(:Name)
+        attrs[:id_number]              = text(:EmsrIdeNumero)          if params.key?(:EmsrIdeNumero)
         attrs[:id_type]                = text(:EmsrIdeTipo)            if params.key?(:EmsrIdeTipo)
         attrs[:economic_activity_code] = text(:CodigoActividad)        if params.key?(:CodigoActividad)
         attrs[:tax_registry_8707]      = text(:EmsrRegistroFiscal8707) if params.key?(:EmsrRegistroFiscal8707)

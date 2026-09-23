@@ -1066,13 +1066,16 @@ proxy .NET:
       2026-09-22 el alta no tocaba SAP en ningún punto. `show`/`PATCH .../general` también
       pasan a depender de SAP para ese bloque (422 si falta configuración, 502 si el Service
       Layer no responde).
-      La cédula (`issuer_id_number`) y el nombre comercial (`name`) se quedan en `companies`
-      — ver la tabla de la nota de §32 sobre por qué esos dos no se movieron.
+      La cédula y el nombre comercial también van a la UDT (`U_IdNumber`/`U_CommercialName`,
+      fuente de verdad para los documentos) y quedan como **espejo** en
+      `companies.issuer_id_number`/`companies.name` para filtros, pantalla, rutas de disco y
+      correo entrante — ver la nota de §32.
       **Pendiente:** las compañías que existían ANTES de este cambio (5 en `development`, al
       momento de escribir esto) no tienen fila en la UDT — `show` les va a devolver el bloque
       del emisor en blanco hasta que alguien lo vuelva a cargar a mano desde el formulario, o
       hasta que se corra un backfill contra su SAP real (no se implementó: solo hay
-      credenciales reales para 1 de las 5 en este ambiente).
+      credenciales reales para 1 de las 5 en este ambiente). El backfill tiene que llenar
+      también `U_CommercialName`/`U_IdNumber` copiándolos del espejo de `companies`.
 - [x] **Conexión de SAP y Bandeja de Correo pasaron a ser obligatorias en el ALTA
       (2026-09-22).** Sin conexión no hay a qué SAP consultar, y sin bandeja la compañía
       no tiene cómo enviar el correo del comprobante — así que crearla sin ninguna de las
@@ -1149,6 +1152,62 @@ proxy .NET:
       quedan (`mail_reception_job_spec.rb`, `documents_spec.rb`, `hacienda_schemas_spec.rb`)
       dependen de datos sembrados que hoy no existen — son preexistentes, no los introdujo
       este cambio, y no se tocaron.
+
+- [ ] **⚠️ REDISEÑO PLANEADO (2026-09-23, sin implementar): separar en el alta y en la
+      edición lo que se guarda en `companies` de lo que vive en la UDT
+      `@CL_FEC_ISSUERCONFIG`.** Hoy el alta pide las cuatro columnas de la UDT
+      (`EmsrNombre`/`EmsrIdeTipo`/`CodigoActividad`/`EmsrRegistroFiscal8707`) y los dos
+      campos espejo (`Name`/`EmsrIdeNumero`) en el MISMO formulario de un solo botón
+      (`Api::CompaniesController#create`, ver el punto de arriba), y la edición los mezcla
+      con el resto de "Datos Generales" (`Api::Companies::GeneralController#update`,
+      `_form.html.erb`). Acordado con el usuario:
+
+      **1. Alta por pasos, no un solo formulario:**
+      - **Paso 1** — solo los campos que NO se guardan en SAP y que tampoco son espejo de
+        la UDT (conexión, base de SAP, bandeja de correo, bandeja de recepción, tipo de
+        envío del nombre, tipo de flete, credenciales de Hacienda ATV, certificado, formato
+        de impresión, EmailCC). **Ni `Name` ni `EmsrIdeNumero` van acá** — son el espejo de
+        `U_CommercialName`/`U_IdNumber`, ver el punto de arriba. Al enviar el paso 1 se crea
+        la compañía (`POST /api/companies` recortado, sin bloque del emisor).
+      - **Paso 2** — se habilita SOLO si el paso 1 creó la compañía con éxito: "Datos
+        legales" (razón social, nombre comercial, cédula, tipo de identificación, actividad
+        económica, registro fiscal 8707) — escribe la UDT vía `Sap::CompanyConfig#create`
+        con la compañía ya existente.
+      - **Paso 3 (opcional)** — configuraciones adicionales: códigos de actividad
+        (`Sap::ActivityCodes`) y "Factura a Proveedor" (uso de facturas de proveedor,
+        almacén por defecto, serie de compra). Se puede completar después, no bloquea el
+        alta.
+      - El "todo o nada" que hoy revierte fila + archivos si falla la UDT (el punto de
+        arriba) **deja de aplicar tal como está**: con el alta partida en pasos, la compañía
+        del paso 1 sobrevive aunque el paso 2 falle o quede pendiente — es justo el
+        comportamiento que hoy se resuelve con un revert completo. Repensar qué reemplaza
+        esa garantía (¿una compañía sin paso 2 completado se marca de algún modo? ¿se deja
+        crear documentos sin datos legales?).
+
+      **2. Edición — "Datos Generales" deja de tener los campos de la UDT:**
+      - `Name` se independiza de `U_CommercialName`: pasa a ser un campo de "Datos
+        Generales" que el usuario edita ahí, sin tocar la UDT. `EmsrIdeNumero` sale también
+        de esa sección.
+      - Los campos de la UDT (`EmsrNombre`/`EmsrIdeTipo`/`CodigoActividad`/
+        `EmsrRegistroFiscal8707`, más `Name`→`U_CommercialName` y `EmsrIdeNumero`→
+        `U_IdNumber` como el espejo que ya son) pasan a una sección nueva **"Datos
+        legales"**, con su PROPIA acción de guardar — mismo patrón que "Adicional"/"Hacienda
+        (ATV)"/"Adjuntos": un botón, un `PATCH` propio, independiente del resto.
+      - **Repensar qué endpoint atiende esa sección.** Hoy es
+        `PATCH /api/companies/:id/general` el que escribe la UDT (`issuer_config_params`
+        dentro de `Api::Companies::GeneralController#update`); con la sección separada,
+        probablemente conviene un endpoint propio (`PATCH /api/companies/:id/legal_data` o
+        similar, ver el patrón de §28 de `CLAUDE.md`) en vez de seguir colgado del de
+        "Datos Generales" que ya no comparte los campos.
+      - **Si la UDT no carga, ícono + tooltip a la par del título de la sección** — mismo
+        patrón que ya usan "Factura a Proveedor" (`#setSapListError`) y "Códigos de
+        actividad" (`#setActivityCodesError`) en `company_form_controller.js`: disco rojo
+        (`priority_high`, `ALERT_TONES.error`, `urgent: false`) vía `#paintAlertBadge`, con
+        el mensaje real del error en el tooltip (`CLAUDE.md` §33). Hoy un `read` fallido de
+        `Sap::CompanyConfig` en `show` no tiene dónde mostrarse porque el bloque vive
+        adentro de "Datos Generales", que no tiene esa insignia.
+      **Pendiente:** todo el punto — vista, controller JS, y decidir el endpoint de la
+      sección nueva. No se tocó ningún archivo todavía.
 
 ---
 

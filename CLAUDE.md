@@ -2156,8 +2156,9 @@ La estructura (UDTs y UDFs) que este producto necesita en SAP se declara en
 > (UDFs sobre tablas nativas) y cinco UDTs propias: `outgoing_mails_udt.json`,
 > `doc_sync_attempts_udt.json`, `sucursales_udt.json`, `activity_codes_udt.json` (códigos
 > de actividad económica de la compañía, administrados por `Sap::ActivityCodes`) y
-> `company_config_udt.json` (razón social, tipo de identificación, actividad económica y
-> registro fiscal 8707 del emisor, administrados por `Sap::CompanyConfig`). La subcarpeta
+> `company_config_udt.json` (razón social, nombre comercial, cédula, tipo de
+> identificación, actividad económica y registro fiscal 8707 del emisor, administrados por
+> `Sap::CompanyConfig`; nombre comercial y cédula con espejo en `companies`, ver abajo). La subcarpeta
 > `delete/` está **vacía**: hoy no hay ninguna instalación con estos schemas creados, así
 > que un manifiesto de borrado no documenta nada que haya pasado en ningún lado (ver la
 > regla de más abajo).
@@ -2165,23 +2166,28 @@ La estructura (UDTs y UDFs) que este producto necesita en SAP se declara en
 > **Hubo un sexto schema (`oadm_company_config.json`, diez UDFs de configuración de FE
 > sobre `OADM`) que se revirtió y después, en parte, se volvió a traer — con un diseño
 > distinto.** La primera vez (2026-08) esos diez campos volvieron enteros a `companies`.
-> La segunda (`company_config_udt.json`, 2026-09) cuatro de ellos volvieron a SAP, pero
-> **no** como UDF sobre `OADM` sino como UDT propia, y **no** los seis originales:
+> La segunda (`company_config_udt.json`, 2026-09) seis de ellos volvieron a SAP, pero
+> **no** como UDF sobre `OADM` sino como UDT propia:
 >
 > | Campo | Dónde quedó | Por qué |
 > |---|---|---|
-> | Razón social, tipo de identificación, actividad económica, registro fiscal 8707 | UDT `@CL_FEC_ISSUERCONFIG` | La emisión (`Documents::UnifiedBuilder`) YA los lee de la vista de cabecera que arma `Sap::DocumentDetails` (`Emsr*`/`Rcpr*`, resueltos por SAP según el tipo de documento) — no hace falta una segunda consulta. Solo el FORMULARIO de compañías los necesita, y ahí sí vale la pena evitar la columna: es exactamente el mismo dato que la vista ya expone, ahora también editable. |
-> | Cédula (`issuer_id_number`) | Se queda en `companies` | Tres consumidores la necesitan SIN saber de antemano con qué compañía están tratando — `CompanyFiles::Store` (ruta del certificado/logo/formato en disco), `MailReceptionJob#archive` (`Company.find_by(issuer_id_number: …)`, decide a qué compañía pertenece un correo entrante) y el listado/filtro de compañías. Ninguno puede empezar por hablar con el SAP de una compañía que todavía no identificó. |
-> | Nombre comercial (`name`) | Se queda en `companies` | Nunca tuvo columna en SAP en ningún intento; sigue siendo el único dato que el resto de la app ya usa (listado, selector). |
+> | Razón social, tipo de identificación, actividad económica, registro fiscal 8707 | UDT `@CL_FEC_ISSUERCONFIG` (solo ahí) | La emisión (`Documents::UnifiedBuilder`) YA los lee de la vista de cabecera que arma `Sap::DocumentDetails` (`Emsr*`/`Rcpr*`, resueltos por SAP según el tipo de documento) — no hace falta una segunda consulta. Solo el FORMULARIO de compañías los necesita, y ahí sí vale la pena evitar la columna: es exactamente el mismo dato que la vista ya expone, ahora también editable. |
+> | Cédula (`U_IdNumber` ↔ `companies.issuer_id_number`) y nombre comercial (`U_CommercialName` ↔ `companies.name`) | UDT `@CL_FEC_ISSUERCONFIG` **+ espejo** en `companies` | **La fuente de verdad para los documentos es la UDT**: la emisión toma la identidad de la vista de cabecera (`EmsrIdeNumero`/`EmsrNombreComercial`) y **nunca** lee las columnas de `companies`. Las columnas son un **espejo** que existe solo porque tres consumidores las necesitan SIN saber de antemano con qué compañía están tratando — `CompanyFiles::Store` (ruta del certificado/logo/formato en disco), `MailReceptionJob#archive` (`Company.find_by(issuer_id_number: …)`, decide a qué compañía pertenece un correo entrante) y el listado/filtro/selector de compañías. Ninguno puede empezar por hablar con el SAP de una compañía que todavía no identificó. El alta y "Datos Generales" escriben los dos lados en el mismo guardado. |
+>
+> **Regla del espejo:** ningún código de emisión, validación o armado de un comprobante lee
+> `companies.name` ni `companies.issuer_id_number` — para eso está la cabecera. El espejo
+> sirve para filtros, pantalla, rutas de disco y enrutamiento de correo entrante, nada más.
+> Si los dos lados divergen (una edición hecha directo en SAP), lo que vale para Hacienda es
+> la UDT.
 >
 > **La lección de la primera reversión sigue siendo válida** —un UDF solo deduplica cuando
 > SAP **ya usa** ese dato por su cuenta— pero la aplicación correcta no es "nunca declarar
 > un schema para configuración de FE": es preguntar, campo por campo, **quién más lo lee o
-> lo necesita sin depender de la compañía ya resuelta**. Cuatro de los seis campos
-> resultaron tener un lector real (la vista de documentos); dos no. Antes de declarar un
-> schema, o de sacar un campo de `companies`, revisar los tres consumos que `issuer_id_number`
-> expuso: rutas de archivo, enrutamiento de correo entrante y listados/filtros — son el tipo
-> de consulta que un UDT nunca puede servir bien, porque corren antes de saber la compañía.
+> lo necesita sin depender de la compañía ya resuelta**. Antes de declarar un schema, o de
+> sacar un campo de `companies`, revisar los tres consumos que `issuer_id_number` expuso:
+> rutas de archivo, enrutamiento de correo entrante y listados/filtros — son el tipo de
+> consulta que un UDT nunca puede servir bien, porque corren antes de saber la compañía. Si
+> un campo tiene lectores de los dos tipos, va a la UDT y se deja un espejo local.
 
 > **Nunca crear ni modificar UDTs/UDFs manualmente en SAP ni con código imperativo.**
 > Todo cambio de estructura pasa por un JSON schema + sync.
