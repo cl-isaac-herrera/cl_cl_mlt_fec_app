@@ -35,103 +35,135 @@
           data-action="submit->user-profile#onSubmit"
           novalidate>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <%# ---------------------------------------------------------------- %>
+      <%# SECCIÓN: INFORMACIÓN PERSONAL %>
+      <%# ---------------------------------------------------------------- %>
+      <section>
+        <h3 class="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-4">
+          <span class="material-icons text-base text-gray-400">person</span>
+          Información personal
+        </h3>
 
-        <%# Campo: Usuario de SAP %>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            Usuario de SAP <span class="text-red-500">*</span>
-          </label>
-          <input type="text"
-                 data-user-profile-target="sapUserInput"
-                 data-testid="sap-user-input"
-                 data-action="input->user-profile#onCredentialChange"
-                 placeholder="Usuario de SAP"
-                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                 required>
-          <p data-user-profile-target="sapUserError"
-             class="hidden mt-1 text-xs text-red-500">
-            El usuario es requerido.
-          </p>
-        </div>
-
-        <%# Campo: Compañía para probar credenciales %>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            Compañía para probar credenciales
-          </label>
-          <select data-user-profile-target="companySelect"
-                  data-testid="company-select"
-                  data-action="change->user-profile#onCompanyChange"
-                  disabled
-                  data-tooltip="Modifique el usuario o la contraseña de SAP para habilitar la selección de compañía"
-                  title="Modifique el usuario o la contraseña de SAP para habilitar la selección de compañía"
-                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed">
-            <option value="">— Seleccione —</option>
-          </select>
-          <p class="mt-1 text-xs text-gray-400">Se usará la conexión SAP de esta compañía.</p>
-        </div>
-
-        <%# Campo: Contraseña de SAP %>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            Contraseña de SAP
-          </label>
-          <div class="relative">
-            <input type="password"
-                   data-user-profile-target="sapPassInput"
-                   data-testid="sap-pass-input"
-                   data-action="input->user-profile#onCredentialChange"
-                   placeholder="Contraseña de SAP"
-                   class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-            <button type="button"
-                    data-user-profile-target="togglePasswordBtn"
-                    data-testid="toggle-password-btn"
-                    data-action="click->user-profile#togglePasswordVisibility"
-                    class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 focus:outline-none"
-                    aria-label="Mostrar/ocultar contraseña">
-              <span data-user-profile-target="eyeIcon"
-                    class="material-icons text-xl">visibility_off</span>
-            </button>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <%# Campo: Nombre %>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Nombre
+            </label>
+            <input type="text"
+                   data-user-profile-target="nameInput"
+                   data-testid="name-input"
+                   maxlength="150"
+                   placeholder="Nombre completo"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
           </div>
         </div>
+      </section>
 
-        <%# Campo: Tipo de OC (condicional) %>
-        <div data-user-profile-target="ocTypeSection"
-             data-testid="oc-type-section"
-             class="hidden">
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            Tipo de OC
-          </label>
-          <select data-user-profile-target="ocTypeSelect"
-                  data-testid="oc-type-select"
-                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-            <option value="">— Seleccione —</option>
-            <option value="1">Con numero de OC</option>
-            <option value="2">Sin numero de OC</option>
-          </select>
-        </div>
+      <%# ---------------------------------------------------------------- %>
+      <%# SECCIÓN: CREDENCIALES DE SAP %>
+      <%# ---------------------------------------------------------------- %>
+      <section class="mt-6 pt-6 border-t border-gray-100">
+        <h3 class="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-4">
+          <span class="material-icons text-base text-gray-400">key</span>
+          Credenciales de SAP
+        </h3>
 
-      </div><%# /grid %>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+          <%# Campo: Usuario de SAP %>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Usuario de SAP <span class="text-red-500">*</span>
+            </label>
+            <div class="relative">
+              <input type="text"
+                     data-user-profile-target="sapUserInput"
+                     data-testid="sap-user-input"
+                     data-action="input->user-profile#onCredentialChange"
+                     placeholder="Usuario de SAP"
+                     class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                     required>
+              <%# Estado de verificación de las credenciales — el color y el tooltip los fija el controller %>
+              <span data-user-profile-target="verifiedBadge"
+                    data-testid="sap-credentials-verified-badge"
+                    data-tooltip="Credenciales de SAP sin verificar"
+                    title="Credenciales de SAP sin verificar"
+                    class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-300 cursor-default">
+                <span class="material-icons text-xl leading-none">verified</span>
+              </span>
+            </div>
+            <p data-user-profile-target="sapUserError"
+               class="hidden mt-1 text-xs text-red-500">
+              El usuario es requerido.
+            </p>
+          </div>
+
+          <%# Campo: Contraseña de SAP %>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Contraseña de SAP
+            </label>
+            <div class="relative">
+              <input type="password"
+                     data-user-profile-target="sapPassInput"
+                     data-testid="sap-pass-input"
+                     data-action="input->user-profile#onCredentialChange"
+                     placeholder="Contraseña de SAP"
+                     class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+              <button type="button"
+                      data-user-profile-target="togglePasswordBtn"
+                      data-testid="toggle-password-btn"
+                      data-action="click->user-profile#togglePasswordVisibility"
+                      class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600 focus:outline-none"
+                      aria-label="Mostrar/ocultar contraseña">
+                <span data-user-profile-target="eyeIcon"
+                      class="material-icons text-xl">visibility_off</span>
+              </button>
+            </div>
+            <p class="mt-1 text-xs text-gray-400">Déjela en blanco para conservar la contraseña guardada.</p>
+          </div>
+
+          <%# Campo: Compañía para probar credenciales + botón de prueba %>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Compañía para probar credenciales
+            </label>
+            <div class="flex items-stretch gap-3">
+              <select data-user-profile-target="companySelect"
+                      data-testid="company-select"
+                      data-action="change->user-profile#onCompanyChange"
+                      disabled
+                      data-tooltip="Modifique el usuario o la contraseña de SAP para habilitar la selección de compañía"
+                      title="Modifique el usuario o la contraseña de SAP para habilitar la selección de compañía"
+                      class="flex-1 min-w-0 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed">
+                <option value="">— Seleccione —</option>
+              </select>
+
+              <%# Botón: Probar credenciales %>
+              <button type="button"
+                      data-user-profile-target="btnTestCredentials"
+                      data-testid="btn-test-credentials"
+                      data-action="click->user-profile#testCredentials"
+                      disabled
+                      data-tooltip="Modifique el usuario o la contraseña de SAP para probar las credenciales"
+                      title="Modifique el usuario o la contraseña de SAP para probar las credenciales"
+                      class="flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-400 text-blue-600 text-sm font-medium whitespace-nowrap hover:bg-blue-50 transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span data-user-profile-target="testCredentialsIcon"
+                      class="material-icons text-base">wifi_tethering</span>
+                <span data-user-profile-target="testCredentialsLabel">Probar credenciales</span>
+              </button>
+            </div>
+            <p class="mt-1 text-xs text-gray-400">Se usará la conexión SAP de esta compañía.</p>
+          </div>
+
+        </div><%# /grid %>
+      </section>
 
       <%# ---------------------------------------------------------------- %>
       <%# ACCIONES %>
       <%# ---------------------------------------------------------------- %>
       <div class="flex justify-end items-center gap-3 mt-6 pt-5 border-t border-gray-100">
-
-        <%# Botón: Probar credenciales %>
-        <button type="button"
-                data-user-profile-target="btnTestCredentials"
-                data-testid="btn-test-credentials"
-                data-action="click->user-profile#testCredentials"
-                disabled
-                data-tooltip="Modifique el usuario o la contraseña de SAP para probar las credenciales"
-                title="Modifique el usuario o la contraseña de SAP para probar las credenciales"
-                class="flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-400 text-blue-600 text-sm font-medium hover:bg-blue-50 transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed">
-          <span data-user-profile-target="testCredentialsIcon"
-                class="material-icons text-base">wifi_tethering</span>
-          <span data-user-profile-target="testCredentialsLabel">Probar credenciales</span>
-        </button>
 
         <%# Botón: Actualizar %>
         <button type="submit"

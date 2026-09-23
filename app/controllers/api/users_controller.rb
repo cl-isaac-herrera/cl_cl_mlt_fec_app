@@ -130,7 +130,6 @@ module Api
       attrs[:email]                 = params[:Email].to_s.strip.downcase     if params.key?(:Email)
       attrs[:sap_user]              = params[:SapUser].to_s.strip            if params.key?(:SapUser)
       attrs[:sap_password]          = params[:SapPass]                       if params[:SapPass].present?
-      attrs[:doc_number_preference] = params[:DocNumberPreference].presence  if params.key?(:DocNumberPreference)
       attrs[:is_active]             = ActiveModel::Type::Boolean.new.cast(params[:Active]) if params.key?(:Active)
       attrs
     end
@@ -160,7 +159,6 @@ module Api
         FullName:            user.name,
         Email:               user.email,
         SapUser:             user.sap_user,
-        DocNumberPreference: user.doc_number_preference,
         CreateDate:          user.created_at,
         Active:              user.is_active
       }

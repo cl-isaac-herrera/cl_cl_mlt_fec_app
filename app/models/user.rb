@@ -40,9 +40,20 @@ class User < ApplicationRecord
 
   # Largos heredados del contrato del API .NET (PatchProfileInformationDto), para
   # que los datos sigan cabiendo cuando la base vuelva a ser SQL Server.
-  validates :sap_user,              length: { maximum: 75 }, allow_blank: true
-  validates :sap_password,          length: { maximum: 50 }, allow_blank: true
-  validates :doc_number_preference, length: { maximum: 2 },  allow_blank: true
+  validates :sap_user,     length: { maximum: 75 }, allow_blank: true
+  validates :sap_password, length: { maximum: 50 }, allow_blank: true
+
+  # `true` cuando las credenciales que se están guardando son exactamente las que
+  # acaban de pasar la prueba contra el Service Layer. No es una columna: lo
+  # decide el controller con `Sap::CredentialVerification`, nunca el cliente.
+  attr_accessor :sap_credentials_just_verified
+
+  # `sap_credentials_verified` describe las credenciales GUARDADAS, así que cambia
+  # con ellas: cualquier cambio de usuario o contraseña que no venga probado lo
+  # apaga. Vive en el modelo para que ninguna pantalla que edite credenciales
+  # (perfil propio, administración de usuarios) pueda dejar el ícono en verde
+  # sobre unas credenciales que nadie probó.
+  before_save :sync_sap_credentials_verified
 
   # Filtro de la lista de usuarios. Ambos parámetros son opcionales y se aplican
   # como "contiene"; en blanco no filtran nada.
@@ -65,4 +76,14 @@ class User < ApplicationRecord
   scope :in_company, lambda { |company_id|
     where(id: UsersByCompany.where(company_id: company_id).select(:user_id))
   }
+
+  private
+
+  def sync_sap_credentials_verified
+    if sap_credentials_just_verified
+      self.sap_credentials_verified = true
+    elsif will_save_change_to_sap_user? || will_save_change_to_sap_password?
+      self.sap_credentials_verified = false
+    end
+  end
 end

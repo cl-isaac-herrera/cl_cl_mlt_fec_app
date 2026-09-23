@@ -18,7 +18,6 @@ const USER_INFO = {
   Owner: false,
   SapUser: 'SAPUser01',
   SapPass: '',
-  DocNumberPreference: '1',
 };
 
 
@@ -120,37 +119,6 @@ test.describe('User Profile — Carga inicial', () => {
     await page.goto(PAGE_URL);
 
     await expect(page.getByTestId('company-select')).toBeDisabled();
-  });
-
-  test('El campo OCTypeControl NO es visible para compañías fuera del enum', async ({ page }) => {
-    await mockInitialApis(page, { selectedCompanyId: 10 });
-    await page.goto(PAGE_URL);
-
-    await expect(page.getByTestId('oc-type-section')).not.toBeVisible();
-  });
-
-  test('El campo OCTypeControl ES visible para compañía 186 (CentroComunidadProd)', async ({ page }) => {
-    await mockInitialApis(page, { selectedCompanyId: 186 });
-    await page.goto(PAGE_URL);
-
-    await expect(page.getByTestId('oc-type-section')).toBeVisible();
-  });
-
-  test('El campo OCTypeControl ES visible para compañía 1206 (CentroComunidadTest)', async ({ page }) => {
-    await mockInitialApis(page, { selectedCompanyId: 1206 });
-    await page.goto(PAGE_URL);
-
-    await expect(page.getByTestId('oc-type-section')).toBeVisible();
-  });
-
-  test('OCTypeControl se pre-selecciona con DocNumberPreference del usuario', async ({ page }) => {
-    await mockInitialApis(page, {
-      selectedCompanyId: 186,
-      userInfo: { ...USER_INFO, DocNumberPreference: '2' },
-    });
-    await page.goto(PAGE_URL);
-
-    await expect(page.getByTestId('oc-type-select')).toHaveValue('2');
   });
 });
 
@@ -372,13 +340,13 @@ test.describe('User Profile — Botón Actualizar: lógica de habilitación', ()
     await expect(page.getByTestId('btn-update')).toBeDisabled();
   });
 
-  test('Botón deshabilitado si credentialsDirty y no validado', async ({ page }) => {
+  test('Botón habilitado con credenciales modificadas sin probar', async ({ page }) => {
     await mockInitialApis(page);
     await page.goto(PAGE_URL);
 
     await page.getByTestId('sap-user-input').fill('NuevoUser');
-    // No se han probado las credenciales → deshabilitado
-    await expect(page.getByTestId('btn-update')).toBeDisabled();
+    // Probar ya no es requisito para guardar: solo define si quedan verificadas
+    await expect(page.getByTestId('btn-update')).not.toBeDisabled();
   });
 
   test('Botón habilitado después de credenciales validadas', async ({ page }) => {
@@ -515,8 +483,8 @@ test.describe('User Profile — Flujo de actualización', () => {
     await page.getByTestId('sap-user-input').fill('NuevoSapUser');
     await page.getByTestId('sap-pass-input').fill('NuevoPass123');
 
-    // 2. Verificar que Actualizar está bloqueado
-    await expect(page.getByTestId('btn-update')).toBeDisabled();
+    // 2. Actualizar ya está habilitado aunque no se hayan probado
+    await expect(page.getByTestId('btn-update')).not.toBeDisabled();
 
     // 3. Probar credenciales
     await page.getByTestId('btn-test-credentials').click();
@@ -531,42 +499,6 @@ test.describe('User Profile — Flujo de actualización', () => {
     expect(patchBody.SapUser).toBe('NuevoSapUser');
     expect(patchBody.SapPass).toBe('NuevoPass123');
     await expect(page.getByTestId('toast-message')).toContainText('actualizada con éxito');
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SUITE 7: OCTypeControl
-// ─────────────────────────────────────────────────────────────────────────────
-test.describe('User Profile — OCTypeControl', () => {
-  test('OCType select tiene opciones "Con numero de OC" y "Sin numero de OC"', async ({ page }) => {
-    await mockInitialApis(page, { selectedCompanyId: 186 });
-    await page.goto(PAGE_URL);
-
-    const options = page.getByTestId('oc-type-select').locator('option');
-    await expect(options).toHaveCount(3); // placeholder + 2 opciones
-  });
-
-  test('OCTypeControl se incluye en el PATCH si está visible', async ({ page }) => {
-    await mockInitialApis(page, {
-      selectedCompanyId: 186,
-      userInfo: { ...USER_INFO, DocNumberPreference: '1' },
-    });
-    await page.goto(PAGE_URL);
-
-    let patchBody = null;
-    await page.route('**/api/User/profile-info', async route => {
-      patchBody = JSON.parse(route.request().postData() || '{}');
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ Data: { Success: true }, Message: null }),
-      });
-    });
-
-    await page.getByTestId('oc-type-select').selectOption('2');
-    await page.getByTestId('btn-update').click();
-
-    expect(patchBody.DocNumberPreference).toBe('2');
   });
 });
 

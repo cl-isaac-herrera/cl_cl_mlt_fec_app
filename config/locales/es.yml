@@ -134,7 +134,6 @@ es:
         name: "El nombre"
         sap_user: "El usuario de SAP"
         sap_password: "La contraseña de SAP"
-        doc_number_preference: "El tipo de OC"
       user_role:
         company: "La compañía"
         role: "El rol"

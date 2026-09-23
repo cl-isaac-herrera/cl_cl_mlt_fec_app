@@ -36,9 +36,6 @@ import { SStore, getApiHeaders } from 'vendor/clavisco/core';
 import Swal from 'sweetalert2';
 import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'controllers/tabulator_locale';
 
-// ── Compañías que requieren campo Tipo de OC ──────────────────────────────────
-const COMPANIES_WITH_OC = new Set([186, 1206]);
-
 // Sub-tabs del panel "Gestionar accesos". El label se usa en el diálogo de
 // cambios sin guardar; el orden acá no importa.
 const ACCESS_TAB_LABELS = {
@@ -66,7 +63,6 @@ export default class extends TabulatorController {
     'createCompanySelect',
     'createFullName', 'createFullNameError',
     'createEmail', 'createEmailError',
-    'createOcTypeWrapper', 'createOcType', 'createOcTypeError',
     'createSubmitBtn',
     // Gestionar accesos panel
     'accessPanel', 'accessBackdrop', 'accessLoader', 'accessUserLabel',
@@ -531,7 +527,6 @@ export default class extends TabulatorController {
         this.createCompanySelectTarget.appendChild(opt);
       });
 
-      if (companies.length) this.#toggleCreateOCType(parseInt(companies[0].Id));
       this.#createDataLoaded = true;
       this.#validateCreateFormState();
     } catch (err) {
@@ -542,7 +537,6 @@ export default class extends TabulatorController {
   }
 
   onCreateCompanyChange() {
-    this.#toggleCreateOCType(parseInt(this.createCompanySelectTarget.value));
     this.#validateCreateFormState();
   }
 
@@ -551,24 +545,13 @@ export default class extends TabulatorController {
     this.#validateCreateFormState();
   }
 
-  #toggleCreateOCType(companyId) {
-    const show = COMPANIES_WITH_OC.has(companyId);
-    this.createOcTypeWrapperTarget.classList.toggle('hidden', !show);
-    if (!show) {
-      this.createOcTypeTarget.value = '';
-      this.createOcTypeErrorTarget.classList.add('hidden');
-    }
-  }
-
   #validateCreateFormState() {
-    const isOCVisible = !this.createOcTypeWrapperTarget.classList.contains('hidden');
-    const emailRegex  = /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i;
+    const emailRegex = /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i;
 
     const valid =
       this.createFullNameTarget.value.trim() &&
       emailRegex.test(this.createEmailTarget.value.trim()) &&
-      this.createCompanySelectTarget.value &&
-      (!isOCVisible || this.createOcTypeTarget.value);
+      this.createCompanySelectTarget.value;
 
     this.createSubmitBtnTarget.disabled = !valid;
   }
@@ -576,10 +559,8 @@ export default class extends TabulatorController {
   #resetCreateForm() {
     this.createFullNameTarget.value = '';
     this.createEmailTarget.value    = '';
-    this.createOcTypeTarget.value   = '';
     this.createFullNameErrorTarget.classList.add('hidden');
     this.createEmailErrorTarget.classList.add('hidden');
-    this.createOcTypeErrorTarget.classList.add('hidden');
     this.createSubmitBtnTarget.disabled = true;
   }
 
@@ -594,12 +575,10 @@ export default class extends TabulatorController {
     // contraseña y la confirmación de correo las resuelve ahora el proveedor OIDC,
     // y el usuario nace activo (si naciera inactivo, el default_scope de
     // SoftDeletable lo escondería del listado apenas se guarda).
-    const isOCVisible = !this.createOcTypeWrapperTarget.classList.contains('hidden');
     const payload = {
-      CompanyId:           parseInt(this.createCompanySelectTarget.value),
-      FullName:            this.createFullNameTarget.value.trim(),
-      Email:               this.createEmailTarget.value.trim(),
-      DocNumberPreference: isOCVisible ? (this.createOcTypeTarget.value || '') : '',
+      CompanyId: parseInt(this.createCompanySelectTarget.value),
+      FullName:  this.createFullNameTarget.value.trim(),
+      Email:     this.createEmailTarget.value.trim(),
     };
 
     try {
@@ -617,8 +596,7 @@ export default class extends TabulatorController {
 
   #runCreateValidation() {
     let valid = true;
-    const emailRegex  = /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i;
-    const isOCVisible = !this.createOcTypeWrapperTarget.classList.contains('hidden');
+    const emailRegex = /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i;
 
     const check = (errorTarget, condition) => {
       const ok = condition();
@@ -628,7 +606,6 @@ export default class extends TabulatorController {
 
     check(this.createFullNameErrorTarget, () => !!this.createFullNameTarget.value.trim());
     check(this.createEmailErrorTarget,    () => emailRegex.test(this.createEmailTarget.value.trim()));
-    if (isOCVisible) check(this.createOcTypeErrorTarget, () => !!this.createOcTypeTarget.value);
 
     return valid;
   }

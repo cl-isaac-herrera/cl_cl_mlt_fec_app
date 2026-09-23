@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_22_110000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_22_130000) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
@@ -189,11 +189,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_22_110000) do
   create_table "users", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "created_by"
-    t.string "doc_number_preference"
     t.string "email", null: false
     t.boolean "is_active", default: true, null: false
     t.string "name"
     t.string "oidc_sub"
+    t.boolean "sap_credentials_verified", default: false, null: false
     t.string "sap_password"
     t.string "sap_user"
     t.datetime "updated_at", null: false

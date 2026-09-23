@@ -124,6 +124,69 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
     expect(response).to have_http_status(:unauthorized)
   end
 
+  # `UseSavedCredentials: true` reverifica lo que YA está guardado, sin mandar
+  # SapUser/SapPass en el cuerpo: el perfil lo usa cuando el formulario no tiene
+  # cambios pero el usuario ya tiene credenciales configuradas.
+  describe 'UseSavedCredentials — reverificar lo guardado sin editar' do
+    let(:user) { User.create!(email: 'sap@example.com', sap_user: 'manager', sap_password: 'secreto') }
+
+    def probar_guardadas(company_id)
+      post '/api/sap_credential_validations', params: { CompanyId: company_id, UseSavedCredentials: true }, as: :json
+    end
+
+    it 'prueba la contraseña guardada, no una que llegue en el cuerpo' do
+      stub_successful_login
+      stub_request(:get, probe_url).to_return(status: 200, body: { value: [] }.to_json,
+                                              headers: { 'Content-Type' => 'application/json' })
+
+      sign_in(user)
+      probar_guardadas(acme.id)
+
+      expect(response).to have_http_status(:ok)
+      expect(body['Data']).to be(true)
+      expect(a_request(:post, login_url).with(body: { CompanyDB: 'SBO_ACME', UserName: 'manager',
+                                                      Password: 'secreto' }.to_json)).to have_been_made
+    end
+
+    it 'marca sap_credentials_verified en la base cuando SAP acepta' do
+      stub_successful_login
+      stub_request(:get, probe_url).to_return(status: 200, body: { value: [] }.to_json,
+                                              headers: { 'Content-Type' => 'application/json' })
+
+      sign_in(user)
+      probar_guardadas(acme.id)
+
+      expect(user.reload.sap_credentials_verified).to be(true)
+    end
+
+    it 'apaga sap_credentials_verified cuando SAP rechaza la contraseña guardada' do
+      user.update!(sap_credentials_verified: true)
+      stub_request(:post, login_url).to_return(
+        status: 401,
+        body: { error: { code: -304, message: { value: 'Invalid user or password' } } }.to_json,
+        headers: { 'Content-Type' => 'application/json' }
+      )
+
+      sign_in(user)
+      probar_guardadas(acme.id)
+
+      expect(body['Data']).to be(false)
+      expect(user.reload.sap_credentials_verified).to be(false)
+    end
+
+    it 'no llama a SAP si no hay credenciales guardadas' do
+      sin_credenciales = User.create!(email: 'sin-creds@example.com')
+      UsersByCompany.create!(user: sin_credenciales, company: acme)
+
+      sign_in(sin_credenciales)
+      post '/api/sap_credential_validations', params: { CompanyId: acme.id, UseSavedCredentials: true }, as: :json
+
+      expect(body['Data']).to be(false)
+      expect(body['Message']).to include('No hay credenciales de SAP guardadas')
+      expect(a_request(:post, login_url)).not_to have_been_made
+    end
+  end
+
   # Con `UserId` las credenciales son de OTRO usuario: es la pantalla de usuarios
   # probando las de alguien más, y eso ya es administrar usuarios.
   describe 'probando las credenciales de otro usuario' do

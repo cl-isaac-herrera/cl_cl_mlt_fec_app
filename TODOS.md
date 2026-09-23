@@ -309,13 +309,6 @@ pendiente:
       Su último consumidor era `group_controller.js`, borrado con la pantalla de grupos
       (ver más abajo → Grupos de compañías).
 
-- [ ] **`users.doc_number_preference` no se importó del origen.** La columna la agregó
-      `db/migrate/20260811130000_add_doc_number_preference_to_users.rb` (texto, equivalente a
-      `Users.DocNumberPreference varchar(2)` del .NET) y hoy nace en `NULL` para todos: quien
-      tuviera un "Tipo de OC" configurado lo ve vacío hasta volver a guardarlo.
-      **Pendiente:** incluir la columna en la importación de usuarios desde SQL Server
-      `CLSQL03` / `CL_CL_MLT_FEC_APP_44`, junto con `SapUser` / `SapPass`.
-
 - [ ] **Las contraseñas de SAP importadas vienen cifradas con el AES del .NET.** Rails las
       guarda con ActiveRecord Encryption (ver `config/application.rb`), que no las puede
       descifrar. Desde que `support_unencrypted_data = false`, una fila insertada así ya no
@@ -339,13 +332,6 @@ pendiente:
       y hostnames de dev.
       **Pendiente:** decidir si se agrega la excepción `!/.env.example` al `.gitignore`. Es
       política del repo, no de esta tarea.
-
-- [ ] **La visibilidad del campo "Tipo de OC" sigue con compañías hardcodeadas.**
-      `user_profile_controller.js` mantiene `COMPANIES_WITH_OC = [186, 1206]`, heredado del
-      enum `CompanyWhitOC` del Angular. Son ids de la base del .NET, que no tienen por qué
-      coincidir con `companies.id` de la base propia.
-      **Pendiente:** convertirlo en un dato de la compañía (columna o UDF) y exponerlo en
-      `GET /api/companies`, en vez de una lista de ids en el frontend.
 
 ---
 

@@ -2,9 +2,6 @@ import { Controller } from '@hotwired/stimulus';
 import { SStore, getApiHeaders } from 'vendor/clavisco/core';
 import Swal from 'sweetalert2';
 
-// Compañías con campo OCTypeControl habilitado (CompanyWhitOC enum del legacy Angular)
-const COMPANIES_WITH_OC = [186, 1206];
-
 /**
  * UserProfileController — Actualización de información de perfil del usuario.
  *
@@ -13,22 +10,31 @@ const COMPANIES_WITH_OC = [186, 1206];
  * - Toggle visibilidad de contraseña
  * - credentialsDirty tracking (SapUser / SapPass changes)
  * - Botón "Probar credenciales" con 3 estados (default / validating / verified)
- * - OCTypeControl condicional según compañía seleccionada
- * - PATCH /api/profile con los tres campos editables del perfil
+ * - El botón también se habilita SIN cambios en el formulario cuando el usuario
+ *   ya tiene usuario y contraseña de SAP guardados: permite reverificar lo
+ *   guardado sin pasar por "Actualizar". El servidor prueba las credenciales
+ *   YA guardadas (`UseSavedCredentials: true`) y persiste el resultado de una
+ *   vez — no hay ningún cambio pendiente que guardar en ese caso.
+ * - Ícono `verified` en el campo de usuario: verde si las credenciales están
+ *   certificadas (`SapCredentialsVerified`), gris tenue si no
+ * - PATCH /api/profile con los campos editables del perfil (nombre, usuario y
+ *   contraseña de SAP). Probar las
+ *   credenciales NO es requisito para guardar: el servidor decide si las
+ *   guardadas quedan certificadas comparándolas con la última prueba exitosa.
  *
  * Todos sus endpoints son nativos de Rails: ya no pasa por el proxy al .NET.
  */
 export default class extends Controller {
   static targets = [
     'form',
+    'nameInput',
     'sapUserInput',
     'sapUserError',
+    'verifiedBadge',
     'sapPassInput',
     'togglePasswordBtn',
     'eyeIcon',
     'companySelect',
-    'ocTypeSection',
-    'ocTypeSelect',
     'btnTestCredentials',
     'testCredentialsIcon',
     'testCredentialsLabel',
@@ -70,6 +76,9 @@ export default class extends Controller {
         this.#loadInitialData(),
         this.#loadAssignableCompanies(),
       ]);
+      // Recién con `#userInfo` y las compañías cargadas se puede decidir si el
+      // select y el botón de prueba nacen habilitados (`#hasSavedCredentials`).
+      this.#syncButtonStates();
     } finally {
       this.#hideCardLoader();
     }
@@ -101,11 +110,7 @@ export default class extends Controller {
 
       this.#userInfo = res.Data ?? null;
 
-      if (this.#userInfo) {
-        this.#fillForm(this.#userInfo.SapUser);
-        this.#configureOcTypeVisibility(this.#selectedCompanyFromStorage);
-        this.#setOcTypeValue(this.#userInfo.DocNumberPreference);
-      }
+      if (this.#userInfo) this.#fillForm(this.#userInfo);
     } catch (err) {
       await Swal.fire({
         icon: 'error',
@@ -149,29 +154,10 @@ export default class extends Controller {
 
   // ── Form helpers ──────────────────────────────────────────────────────────
 
-  #fillForm(sapUser) {
-    this.sapUserInputTarget.value = sapUser ?? '';
+  #fillForm({ Name, SapUser }) {
+    this.nameInputTarget.value    = Name ?? '';
+    this.sapUserInputTarget.value = SapUser ?? '';
     this.sapPassInputTarget.value = '';
-  }
-
-  #configureOcTypeVisibility(companyId) {
-    const id = Number(companyId);
-    const isOcCompany = COMPANIES_WITH_OC.includes(id);
-
-    if (isOcCompany) {
-      this.ocTypeSectionTarget.classList.remove('hidden');
-    } else {
-      this.ocTypeSectionTarget.classList.add('hidden');
-    }
-  }
-
-  #setOcTypeValue(preference) {
-    if (!preference) return;
-    const val = String(preference);
-    const exists = Array.from(this.ocTypeSelectTarget.options).some(o => o.value === val);
-    if (exists) {
-      this.ocTypeSelectTarget.value = val;
-    }
   }
 
   #resetCredentialState() {
@@ -185,16 +171,12 @@ export default class extends Controller {
 
   /**
    * Disparado por cambios en SapUser o SapPass.
-   * Activa credentialsDirty y habilita el select de compañías.
+   * Activa credentialsDirty; el select de compañías y el botón de prueba se
+   * habilitan/deshabilitan de forma centralizada en `#syncButtonStates`.
    */
   onCredentialChange() {
     this.#credentialsDirty = true;
     this.#credentialsValidated = false;
-    this.companySelectTarget.disabled = false;
-    this.#setTip(
-      this.companySelectTarget,
-      'Seleccione la compañía con la que desea probar las credenciales'
-    );
     this.#syncButtonStates();
   }
 
@@ -223,11 +205,28 @@ export default class extends Controller {
     }
   }
 
-  /** Click en "Probar credenciales" */
+  /** true si el perfil ya tiene usuario y contraseña de SAP guardados. Es lo
+   * que habilita "Probar credenciales" aunque el formulario no tenga cambios:
+   * hay algo guardado que reverificar. */
+  #hasSavedCredentials() {
+    return !!(this.#userInfo?.SapUser && this.#userInfo?.HasSapPassword);
+  }
+
+  /**
+   * Click en "Probar credenciales".
+   *
+   * Dos modos, según si el formulario tiene cambios:
+   *   - Dirty: prueba lo ESCRITO. El resultado solo queda persistido si
+   *     después se guarda con "Actualizar" (`Sap::CredentialVerification`
+   *     en el servidor compara la huella de la sesión contra lo guardado).
+   *   - No dirty (nada editado): reverifica lo YA guardado
+   *     (`UseSavedCredentials: true`). El servidor prueba la contraseña que
+   *     tiene en la base — el campo siempre carga en blanco, así que el
+   *     cliente no la tiene — y persiste el resultado de una vez: no hay
+   *     ningún cambio pendiente que "Actualizar" vaya a guardar después.
+   */
   async testCredentials() {
     const selectedCompanyId = Number(this.companySelectTarget.value);
-    const sapUser = this.sapUserInputTarget.value.trim();
-    const sapPass = this.sapPassInputTarget.value;
 
     if (!selectedCompanyId) {
       Swal.fire({
@@ -242,17 +241,33 @@ export default class extends Controller {
       return;
     }
 
-    if (!sapUser || !sapPass) {
-      Swal.fire({
-        toast: true,
-        position: 'top-end',
-        icon: 'warning',
-        title: 'Complete el Usuario y Contraseña de SAP antes de probar.',
-        showConfirmButton: false,
-        timer: 3000,
-        timerProgressBar: true
-      });
-      return;
+    const verifyingSaved = !this.#credentialsDirty;
+    let body;
+
+    if (verifyingSaved) {
+      // El botón solo llega habilitado en este modo si `#hasSavedCredentials()`
+      // ya era true (ver `#syncTestCredentialsBtn`), pero se revalida acá por
+      // si el estado cambió entre renders.
+      if (!this.#hasSavedCredentials()) return;
+      body = { CompanyId: selectedCompanyId, UseSavedCredentials: true };
+    } else {
+      const sapUser = this.sapUserInputTarget.value.trim();
+      const sapPass = this.sapPassInputTarget.value;
+
+      if (!sapUser || !sapPass) {
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'warning',
+          title: 'Complete el Usuario y Contraseña de SAP antes de probar.',
+          showConfirmButton: false,
+          timer: 3000,
+          timerProgressBar: true
+        });
+        return;
+      }
+
+      body = { SapUser: sapUser, SapPass: sapPass, CompanyId: selectedCompanyId };
     }
 
     this.#isValidating = true;
@@ -263,16 +278,28 @@ export default class extends Controller {
       // POST /api/sap_credential_validations — hace el /Login contra el Service
       // Layer de esa compañía. Responde 200 con Data true/false; el motivo del
       // rechazo viene en Message.
-      const data = await this.#post('/api/sap_credential_validations', {
-        SapUser: sapUser,
-        SapPass: sapPass,
-        CompanyId: selectedCompanyId,
-      });
+      const data = await this.#post('/api/sap_credential_validations', body);
 
       if (data?.Data === true) {
         this.#credentialsValidated = true;
+        if (verifyingSaved) {
+          // El servidor ya marcó `sap_credentials_verified` en la base: reflejar
+          // el nuevo estado acá evita un GET /api/profile solo para refrescar
+          // el ícono.
+          if (this.#userInfo) this.#userInfo.SapCredentialsVerified = true;
+          Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: 'success',
+            title: 'Credenciales de SAP verificadas.',
+            showConfirmButton: false,
+            timer: 3000,
+            timerProgressBar: true
+          });
+        }
       } else {
         this.#credentialsValidated = false;
+        if (verifyingSaved && this.#userInfo) this.#userInfo.SapCredentialsVerified = false;
         const message = data?.Message || 'No se pudo conectar a SAP Service Layer.';
         await Swal.fire({
           icon: 'error',
@@ -283,6 +310,7 @@ export default class extends Controller {
       }
     } catch (err) {
       this.#credentialsValidated = false;
+      if (verifyingSaved && this.#userInfo) this.#userInfo.SapCredentialsVerified = false;
       await Swal.fire({
         icon: 'error',
         title: 'Error al validar credenciales',
@@ -300,22 +328,15 @@ export default class extends Controller {
     event.preventDefault();
 
     if (!this.#validateForm()) return;
-    if (this.#updateIsBlocked()) return;
 
-    const sapUser = this.sapUserInputTarget.value.trim();
-    const sapPass = this.sapPassInputTarget.value;
-    const ocTypeValue = this.#isOcTypeVisible()
-      ? this.ocTypeSelectTarget.value
-      : (this.#userInfo?.DocNumberPreference ?? '');
-
-    // Solo los tres campos editables: el endpoint identifica al usuario por la
+    // Solo los campos editables: el endpoint identifica al usuario por la
     // sesión, así que reenviarle el resto del perfil no aportaba nada.
     // SapPass vacío significa "sin cambio" — el formulario siempre carga el campo
     // en blanco porque el servidor nunca devuelve la contraseña guardada.
     const payload = {
-      SapUser: sapUser,
-      SapPass: sapPass,
-      DocNumberPreference: String(ocTypeValue),
+      Name:    this.nameInputTarget.value.trim(),
+      SapUser: this.sapUserInputTarget.value.trim(),
+      SapPass: this.sapPassInputTarget.value,
     };
 
     this.btnUpdateTarget.disabled = true;
@@ -347,15 +368,51 @@ export default class extends Controller {
   // ── Estado de botones ─────────────────────────────────────────────────────
 
   #syncButtonStates() {
-    this.#syncCompanySelectTip();
+    this.#syncCompanySelect();
     this.#syncTestCredentialsBtn();
     this.#syncUpdateBtn();
+    this.#syncVerifiedBadge();
   }
 
-  #syncCompanySelectTip() {
-    const tip = this.companySelectTarget.disabled
-      ? 'Modifique el usuario o la contraseña de SAP para habilitar la selección de compañía'
-      : 'Seleccione la compañía con la que desea probar las credenciales';
+  /**
+   * Ícono del campo de usuario. Sin cambios en el formulario refleja lo guardado
+   * (`SapCredentialsVerified`); con cambios, refleja la prueba de lo que está
+   * escrito — lo guardado ya no describe lo que el usuario ve.
+   */
+  #syncVerifiedBadge() {
+    const badge = this.verifiedBadgeTarget;
+    let verified;
+    let tip;
+
+    if (!this.#credentialsDirty) {
+      verified = !!this.#userInfo?.SapCredentialsVerified;
+      tip = verified
+        ? 'Credenciales de SAP verificadas'
+        : 'Credenciales de SAP sin verificar. Ingrese la contraseña y use «Probar credenciales» para verificarlas';
+    } else {
+      verified = this.#credentialsValidated;
+      tip = verified
+        ? 'Credenciales de SAP verificadas. Guarde los cambios para conservar la verificación'
+        : 'Credenciales de SAP sin verificar. Pruébelas antes de guardar para que queden verificadas';
+    }
+
+    badge.classList.toggle('text-green-600', verified);
+    badge.classList.toggle('text-gray-300', !verified);
+    this.#setTip(badge, tip);
+  }
+
+  /**
+   * El select de compañías se habilita en dos casos: hay cambios que probar
+   * (`credentialsDirty`), o no hay cambios pero ya existe algo guardado que
+   * reverificar (`#hasSavedCredentials`).
+   */
+  #syncCompanySelect() {
+    const enabled = this.#credentialsDirty || this.#hasSavedCredentials();
+    this.companySelectTarget.disabled = !enabled;
+
+    const tip = enabled
+      ? 'Seleccione la compañía con la que desea probar las credenciales'
+      : 'Modifique el usuario o la contraseña de SAP para habilitar la selección de compañía';
     this.#setTip(this.companySelectTarget, tip);
   }
 
@@ -365,7 +422,10 @@ export default class extends Controller {
     const label = this.testCredentialsLabelTarget;
 
     const companySelected = !!this.companySelectTarget.value;
-    const canTest = this.#credentialsDirty && companySelected && !this.#isValidating;
+    // Sin cambios en el formulario, el botón igual se habilita si hay algo
+    // guardado que reverificar.
+    const verifyingSaved  = !this.#credentialsDirty && this.#hasSavedCredentials();
+    const canTest = (this.#credentialsDirty || verifyingSaved) && companySelected && !this.#isValidating;
 
     btn.disabled = !canTest;
 
@@ -384,10 +444,12 @@ export default class extends Controller {
       label.textContent = 'Probar credenciales';
       btn.classList.remove('btn-verified');
       // Tooltip accionable según la condición que mantiene el botón deshabilitado
-      if (!this.#credentialsDirty) {
+      if (!this.#credentialsDirty && !verifyingSaved) {
         this.#setTip(btn, 'Modifique el usuario o la contraseña de SAP para probar las credenciales');
       } else if (!companySelected) {
         this.#setTip(btn, 'Seleccione una compañía para probar las credenciales');
+      } else if (verifyingSaved) {
+        this.#setTip(btn, 'Verificar las credenciales de SAP ya guardadas en la compañía seleccionada');
       } else {
         this.#setTip(btn, 'Probar las credenciales de SAP en la compañía seleccionada');
       }
@@ -396,14 +458,11 @@ export default class extends Controller {
 
   #syncUpdateBtn() {
     const formInvalid = !this.sapUserInputTarget.value.trim();
-    const blocked     = this.#updateIsBlocked();
-    this.btnUpdateTarget.disabled = formInvalid || blocked;
+    this.btnUpdateTarget.disabled = formInvalid;
 
     // Tooltip accionable según la condición que mantiene el botón deshabilitado
     if (formInvalid) {
       this.#setTip(this.btnUpdateTarget, 'Ingrese el usuario de SAP para guardar los cambios');
-    } else if (blocked) {
-      this.#setTip(this.btnUpdateTarget, 'Pruebe las credenciales de SAP antes de guardar los cambios');
     } else {
       this.#setTip(this.btnUpdateTarget, 'Guardar los cambios del perfil');
     }
@@ -418,14 +477,6 @@ export default class extends Controller {
     if (!el) return;
     el.dataset.tooltip = text;
     el.setAttribute('title', text);
-  }
-
-  #updateIsBlocked() {
-    return this.#credentialsDirty && !this.#credentialsValidated;
-  }
-
-  #isOcTypeVisible() {
-    return !this.ocTypeSectionTarget.classList.contains('hidden');
   }
 
   // ── Validación de formulario ──────────────────────────────────────────────

@@ -130,19 +130,6 @@
         <p data-users-target="createEmailError" class="hidden mt-1 text-xs text-red-600">Ingrese un correo válido.</p>
       </div>
 
-      <%# Tipo de OC (solo para compañías con OC) %>
-      <div data-users-target="createOcTypeWrapper" class="hidden">
-        <label class="text-xs font-medium text-gray-600">Tipo de OC <span class="text-red-500">*</span></label>
-        <select data-users-target="createOcType"
-                data-action="change->users#validateCreateForm"
-                class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="">-- Seleccione --</option>
-          <option value="1">Con número de OC</option>
-          <option value="2">Sin número de OC</option>
-        </select>
-        <p data-users-target="createOcTypeError" class="hidden mt-1 text-xs text-red-600">El tipo de OC es requerido.</p>
-      </div>
-
     </div>
 
     <%# Footer %>
