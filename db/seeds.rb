@@ -1464,32 +1464,42 @@ puts "Usuario de sistema: #{record.email}"
 #
 # `find_or_initialize_by(name:)`: no hay índice único sobre `name`, así que sin
 # esto correr el seed dos veces duplicaría la compañía.
-company = Company.find_or_initialize_by(name: 'Template Company')
-company.issuer_id_number       = '3101999999'
-company.sap_db                 = 'SBO_TEMPLATE'
-company.email_sender_type      = 2
-company.freight_type           = 1
-company.is_active              = true
-company.save!
+#
+# `Company.exists?` (con el `default_scope` de `SoftDeletable`, solo cuenta las
+# ACTIVAS): si la instalación ya tiene al menos una compañía activa —importada
+# del cliente, o esta misma plantilla de una corrida anterior— no hay "punto de
+# partida vacío" que resolver, y crear la plantilla al lado de compañías reales
+# sería ruido en el selector, no ayuda.
+if Company.exists?
+  puts 'Compañía de plantilla: se omite (ya hay al menos una compañía activa).'
+else
+  company = Company.find_or_initialize_by(name: 'Template Company')
+  company.issuer_id_number       = '3101999999'
+  company.sap_db                 = 'SBO_TEMPLATE'
+  company.email_sender_type      = 2
+  company.freight_type           = 1
+  company.is_active              = true
+  company.save!
 
-puts "Compañía de plantilla: #{company.name} (##{company.id})"
+  puts "Compañía de plantilla: #{company.name} (##{company.id})"
 
-# El usuario de sistema necesita la compañía ASIGNADA (`users_by_companies`)
-# para poder seleccionarla: el selector nunca lista todas las compañías de la
-# instalación, solo las que el usuario tiene asignadas (`Company.assigned_to`).
-company_assignment = UsersByCompany.find_or_initialize_by(user_id: record.id, company_id: company.id)
-company_assignment.is_active = true
-company_assignment.save!
+  # El usuario de sistema necesita la compañía ASIGNADA (`users_by_companies`)
+  # para poder seleccionarla: el selector nunca lista todas las compañías de la
+  # instalación, solo las que el usuario tiene asignadas (`Company.assigned_to`).
+  company_assignment = UsersByCompany.find_or_initialize_by(user_id: record.id, company_id: company.id)
+  company_assignment.is_active = true
+  company_assignment.save!
 
-# Rol Administrador en esa compañía. No se reutiliza el loop de la sección de
-# permisos (más arriba en el archivo): corre antes de que este usuario y esta
-# compañía existan, así que acá se hace explícito con el mismo upsert.
-admin_role = Role.find_by!(name: ADMIN_ROLE_NAME)
-sys_admin_role = UserRole.find_or_initialize_by(user_id: record.id, company_id: company.id, role_id: admin_role.id)
-sys_admin_role.is_active = true
-sys_admin_role.save!
+  # Rol Administrador en esa compañía. No se reutiliza el loop de la sección de
+  # permisos (más arriba en el archivo): corre antes de que este usuario y esta
+  # compañía existan, así que acá se hace explícito con el mismo upsert.
+  admin_role = Role.find_by!(name: ADMIN_ROLE_NAME)
+  sys_admin_role = UserRole.find_or_initialize_by(user_id: record.id, company_id: company.id, role_id: admin_role.id)
+  sys_admin_role.is_active = true
+  sys_admin_role.save!
 
-puts "Rol #{ADMIN_ROLE_NAME} asignado a #{record.email} en #{company.name}"
+  puts "Rol #{ADMIN_ROLE_NAME} asignado a #{record.email} en #{company.name}"
+end
 
 # Los permisos GLOBALES no se conceden por rol (más arriba, `RolePermission`
 # solo toma `Permission.normal`): se conceden DIRECTO al usuario
