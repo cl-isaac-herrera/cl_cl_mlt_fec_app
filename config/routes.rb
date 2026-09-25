@@ -25,10 +25,11 @@ Rails.application.routes.draw do
     resources :companies, only: %i[index show create] do
       get :assignable, on: :collection
 
-      # UN endpoint por sección del formulario. Cada botón "Actualizar" es
-      # independiente en la pantalla y también en el proceso: escribe solo los
-      # campos de su sección y no puede pisar los de otra. El reparto de campos
-      # vive en `CompanySections`.
+      # UN endpoint por sección del formulario, de lectura Y de escritura. Cada
+      # sección se carga y se guarda por su cuenta: el `show` de acá alimenta
+      # SOLO esa parte del formulario (no el `GET /api/companies/:id` de
+      # arriba) y el `update` escribe SOLO sus propios campos, sin poder pisar
+      # los de otra.
       #
       # `resource` singular y sin id: la sección pertenece a la compañía del
       # path, no es una colección (§28). Las otras tres secciones se agregan
@@ -36,14 +37,23 @@ Rails.application.routes.draw do
       # `controller:` explícito porque `resource` singular busca el controller en
       # PLURAL (`resource :profile` → `ProfilesController`), y estos nombres de
       # sección son adjetivos: "generals" o "additionals" no significan nada.
-      resource :general, only: [:update], module: :companies, controller: 'general'
+      resource :general, only: %i[show update], module: :companies, controller: 'general'
+
+      # Sección "Datos Legales de la Compañía": los campos que viven en la UDT
+      # `@CL_FEC_ISSUERCONFIG` (razón social, tipo y número de identificación,
+      # actividad económica, registro fiscal 8707) — ver `Sap::CompanyConfig` y
+      # CLAUDE.md §32. Se partió de "Datos Generales" para que tuviera su propio
+      # botón "Actualizar" y su propio loader, igual que el resto de las
+      # secciones: antes de esto un guardado de la UDT dependía de SAP aunque el
+      # usuario solo quisiera cambiar la conexión o la bandeja de correo.
+      resource :legal_data, only: %i[show update], module: :companies, controller: 'legal_data'
 
       # Sección "Datos de Conexión de Hacienda (ATV)". `tax_authority` a secas y
       # no `tax_authority_credentials`: la sección guarda además el certificado
       # y su vencimiento, no solo las credenciales del ATV.
       #
       # El cuerpo es multipart, no JSON: la sección incluye la carga del `.p12`.
-      resource :tax_authority, only: [:update], module: :companies,
+      resource :tax_authority, only: %i[show update], module: :companies,
                                controller: 'tax_authority'
 
       # Sección "Adjuntos de la compañía": el logo y el formato de impresión.
@@ -52,7 +62,7 @@ Rails.application.routes.draw do
       #
       # El cuerpo es multipart, igual que el de Hacienda: los dos campos de la
       # sección son archivos, y la parte que no venga queda como está.
-      resource :attachments, only: [:update], module: :companies,
+      resource :attachments, only: %i[show update], module: :companies,
                              controller: 'attachments'
 
       # Descarga del `.p12` de la compañía. Se puede servir desde acá porque el

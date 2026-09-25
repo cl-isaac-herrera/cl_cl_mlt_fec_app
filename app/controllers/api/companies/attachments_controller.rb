@@ -48,15 +48,23 @@ module Api
     # pantalla dejaba `logo.png` a secas en una columna que se lee como ruta.
     # Las dos las arma `CompanyFiles::Store` con la raíz configurada y la cédula.
     class AttachmentsController < AuthorizedController
-      # El alcance lo comparte con la lectura (`GET /api/companies/:id`): si no
-      # resolvieran el mismo conjunto, el formulario abriría una compañía que este
-      # guardado después rechaza (`CLAUDE.md` §28).
+      # El `show` y el `update` comparten el mismo alcance (`load_company` es el
+      # único punto de entrada al registro): si no resolvieran el mismo
+      # conjunto, el formulario podría leer una compañía que después el
+      # guardado rechaza (`CLAUDE.md` §28).
       include VisibleCompanies
 
       # El permiso se resuelve ANTES de buscar el registro: si se hiciera al
       # revés, un 404 le confirmaría a quien no tiene permiso qué ids existen.
       before_action :authorize_action
       before_action :load_company
+
+      # GET /api/companies/:company_id/attachments
+      #
+      # Alimenta SOLO esta sección del formulario.
+      def show
+        render json: ApiResponse.success(serialize(@company)).to_h
+      end
 
       # Los dos adjuntos: cómo se llama su parte en el cuerpo, en qué columna vive
       # su ruta, quién lo guarda y con qué clave se devuelve su nombre.

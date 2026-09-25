@@ -67,8 +67,13 @@ module Api
 
     # GET /api/companies/:id
     #
-    # Los datos de una compañía, para el formulario de edición. La lectura es UNA
-    # sola aunque el guardado esté partido en un endpoint por sección.
+    # El detalle completo de una compañía, con las columnas de `companies` y el
+    # bloque del emisor leído de SAP. El formulario de edición YA NO lo usa
+    # (desde 2026-09-25 cada sección de esa pantalla pide solo lo suyo — ver
+    # `Api::Companies::GeneralController#show` y análogos): este endpoint sigue
+    # vivo porque otras pantallas —`documents_receptions_controller.js`,
+    # `documents_reception_create_controller.js`— necesitan la compañía entera
+    # de una sola vez, sin partirla por sección.
     #
     # ⚠️ El bloque del emisor ante Hacienda (razón social, tipo de
     # identificación, actividad económica, registro fiscal 8707) vive en la UDT
@@ -245,11 +250,13 @@ module Api
       [requested, MAX_PER_PAGE].min
     end
 
-    # Los catorce campos de "Datos Generales" (los mismos y con la misma
-    # traducción de claves que acepta `Api::Companies::GeneralController`), más
-    # `EmailCC` de "Adicional" y las tres credenciales de texto de "Hacienda
-    # (ATV)" — el único botón del alta manda las cuatro secciones juntas. Lo que
-    # esa sección tiene de ARCHIVOS (certificado, logo, formato de impresión) lo
+    # Los ocho campos de "Datos Generales" (los mismos y con la misma traducción
+    # de claves que acepta `Api::Companies::GeneralController`), más `EmailCC`
+    # de "Adicional" y las tres credenciales de texto de "Hacienda (ATV)" — el
+    # único botón del alta manda todas las secciones juntas, "Datos Legales"
+    # incluida (ver `issuer_config_params` más abajo, la misma traducción de
+    # claves que acepta `Api::Companies::LegalDataController`). Lo que esa
+    # sección tiene de ARCHIVOS (certificado, logo, formato de impresión) lo
     # resuelven `certificate_attributes` y `attachment_attributes`, porque
     # necesitan la compañía ya construida y un `client` de SAP para saber en
     # qué carpeta escribir (`CLAUDE.md` §34, `Sap::CompanyConfig`).
@@ -426,11 +433,13 @@ module Api
     #
     # ⚠️ Los campos de cada sección tienen que coincidir con los que acepta el
     # controller de ESA sección (`Api::Companies::GeneralController`,
+    # `Api::Companies::LegalDataController`,
     # `Api::Companies::TaxAuthorityController`,
     # `Api::Companies::AttachmentsController`). Si uno se agrega acá y no allá,
     # el formulario lo muestra, el usuario lo edita, guarda, y no pasa nada — sin
-    # error. `company_general_spec.rb`, `company_tax_authority_spec.rb` y
-    # `company_attachments_spec.rb` comparan las dos listas de su sección.
+    # error. `company_general_spec.rb`, `company_legal_data_spec.rb`,
+    # `company_tax_authority_spec.rb` y `company_attachments_spec.rb` comparan
+    # las dos listas de su sección.
     #
     # @param issuer_config [Sap::CompanyConfig::Config, nil] el bloque del
     #   emisor, ya leído de SAP (`show`) o recién escrito (`create`) — ver
@@ -445,6 +454,8 @@ module Api
         SapDb:                  company.sap_db,
         EmailSenderType:        company.email_sender_type,
         FreightType:            company.freight_type,
+
+        # ── Sección "Datos Legales de la Compañía" (UDT @CL_FEC_ISSUERCONFIG) ─
         EmsrNombre:             issuer_config&.legal_name,
         EmsrIdeTipo:            issuer_config&.id_type,
         EmsrIdeNumero:          company.issuer_id_number,

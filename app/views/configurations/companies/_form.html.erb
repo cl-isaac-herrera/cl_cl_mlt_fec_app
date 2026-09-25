@@ -1,9 +1,9 @@
 <%# ============================================================ %>
 <%# FORMULARIO COMPARTIDO: Crear / Editar Compañía                %>
 <%#                                                                %>
-<%# `mode:` decide la presentación de las cuatro secciones que el  %>
-<%# alta deja llenar (Datos Generales, Adicional, ATV, Adjuntos):  %>
-<%# tarjetas planas y siempre abiertas en creación (como           %>
+<%# `mode:` decide la presentación de las cinco secciones que el   %>
+<%# alta deja llenar (Datos Generales, Datos Legales, Adicional,   %>
+<%# ATV, Adjuntos): tarjetas planas y siempre abiertas en creación (como %>
 <%# /configurations/general), acordeón colapsable en edición — el  %>
 <%# contenido de los campos es EL MISMO en los dos casos, capturado %>
 <%# una sola vez con `capture` para no duplicarlo. "Factura a       %>
@@ -25,82 +25,6 @@
             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
     </svg>
   </div>
-
-    <%# Nombre — la columna `companies.name`. Es el mismo dato que el "Nombre     %>
-    <%# Comercial" del formulario viejo, que se eliminó: tener los dos campos     %>
-    <%# garantizaba que tarde o temprano dijeran cosas distintas. Este es el que  %>
-    <%# usa el resto de la app (listado, selector de compañía) y el que va al     %>
-    <%# <NombreComercial> del XML de Hacienda.                                   %>
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Nombre <span class="text-red-500">*</span></label>
-      <%# 80 es el máximo del <NombreComercial> en el esquema 4.4 de Hacienda, el %>
-      <%# mismo que valida `Company`. Se corta acá para que el aviso llegue al    %>
-      <%# escribir y no como un 422 al guardar.                                   %>
-      <input type="text"
-             data-company-form-target="name"
-             data-testid="field-name"
-             data-action="input->company-form#onFormChange"
-             maxlength="80"
-             required
-             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-    </div>
-
-    <%# Nombre Legal %>
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Nombre Legal <span class="text-red-500">*</span></label>
-      <input type="text"
-             data-company-form-target="legalName"
-             data-testid="field-legal-name"
-             data-action="input->company-form#onFormChange"
-             required
-             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-      <span data-company-form-target="legalNameError" class="hidden text-xs text-red-500">El nombre legal es requerido.</span>
-    </div>
-
-    <%# Tipo de Identificación %>
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Tipo de Identificación <span class="text-red-500">*</span></label>
-      <select data-company-form-target="identificationType"
-              data-testid="field-type"
-              data-action="change->company-form#onIdentificationTypeChange change->company-form#onFormChange"
-              required
-              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-        <option value="01">Cédula Fisica</option>
-        <option value="02">Cedula Juridica</option>
-        <option value="03">DIMEX</option>
-        <option value="04">NITE</option>
-      </select>
-    </div>
-
-    <%# Identificación %>
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Identificación <span class="text-red-500">*</span></label>
-      <input type="text"
-             inputmode="numeric"
-             pattern="[0-9]*"
-             data-company-form-target="identification"
-             data-testid="field-identification"
-             data-action="input->company-form#onFormChange"
-             minlength="9"
-             maxlength="9"
-             required
-             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-      <span data-company-form-target="identificationError" class="hidden text-xs text-red-500"></span>
-    </div>
-
-    <%# Código de Actividad %>
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Código de Actividad <span class="text-red-500">*</span></label>
-      <input type="text"
-             data-company-form-target="codigoActividad"
-             data-testid="field-codigo-actividad"
-             data-action="input->company-form#onFormChange"
-             minlength="6"
-             maxlength="6"
-             required
-             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-      <span data-company-form-target="codigoActividadError" class="hidden text-xs text-red-500"></span>
-    </div>
 
     <%# Nombre para Envío de Correos %>
     <div class="flex flex-col gap-1">
@@ -129,17 +53,6 @@
         <option value="1">Articulos</option>
         <option value="2">Otros Cargos</option>
       </select>
-    </div>
-
-    <%# Registro Fiscal 8707 %>
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-medium text-gray-600">Registro Fiscal 8707</label>
-      <input type="text"
-             data-company-form-target="registrofiscal8707"
-             data-testid="field-registrofiscal"
-             data-action="input->company-form#onFormChange"
-             maxlength="12"
-             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
     </div>
 
     <%# Conexión de SAP %>
@@ -320,6 +233,157 @@
       <span class="material-icons text-gray-400 group-open:rotate-180 transition-transform text-base">expand_more</span>
     </summary>
     <%= general_content %>
+  </details>
+<% end %>
+
+<%# ---- SECCIÓN 1B: Datos Legales de la Compañía ---- %>
+<%# Los seis campos que se guardan en la UDT de SAP `@CL_FEC_ISSUERCONFIG`      %>
+<%# (razón social, tipo y número de identificación, actividad económica,        %>
+<%# registro fiscal 8707 — y el espejo `Name`/`Identificación` en `companies`,   %>
+<%# CLAUDE.md §32). Independiente de "Datos Generales" desde 2026-09-25: antes   %>
+<%# vivían en la misma tarjeta y el mismo botón "Actualizar" hablaba con SAP     %>
+<%# aunque el cambio fuera solo de conexión o bandeja de correo.                 %>
+<% legal_data_content = capture do %>
+  <div class="relative px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+  <div data-company-form-target="loaderLegalData"
+       class="hidden absolute inset-0 z-10 flex items-center justify-center bg-white/80 rounded-xl">
+    <svg class="animate-spin h-6 w-6 text-blue-500"
+         xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10"
+              stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+    </svg>
+  </div>
+
+    <%# Nombre — la columna `companies.name`. Es el mismo dato que el "Nombre     %>
+    <%# Comercial" del formulario viejo, que se eliminó: tener los dos campos     %>
+    <%# garantizaba que tarde o temprano dijeran cosas distintas. Este es el que  %>
+    <%# usa el resto de la app (listado, selector de compañía) y el que va al     %>
+    <%# <NombreComercial> del XML de Hacienda.                                   %>
+    <div class="flex flex-col gap-1">
+      <label class="text-xs font-medium text-gray-600">Nombre <span class="text-red-500">*</span></label>
+      <%# 80 es el máximo del <NombreComercial> en el esquema 4.4 de Hacienda, el %>
+      <%# mismo que valida `Company`. Se corta acá para que el aviso llegue al    %>
+      <%# escribir y no como un 422 al guardar.                                   %>
+      <input type="text"
+             data-company-form-target="name"
+             data-testid="field-name"
+             data-action="input->company-form#onFormChange"
+             maxlength="80"
+             required
+             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+    </div>
+
+    <%# Nombre Legal %>
+    <div class="flex flex-col gap-1">
+      <label class="text-xs font-medium text-gray-600">Nombre Legal <span class="text-red-500">*</span></label>
+      <input type="text"
+             data-company-form-target="legalName"
+             data-testid="field-legal-name"
+             data-action="input->company-form#onFormChange"
+             required
+             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <span data-company-form-target="legalNameError" class="hidden text-xs text-red-500">El nombre legal es requerido.</span>
+    </div>
+
+    <%# Tipo de Identificación %>
+    <div class="flex flex-col gap-1">
+      <label class="text-xs font-medium text-gray-600">Tipo de Identificación <span class="text-red-500">*</span></label>
+      <select data-company-form-target="identificationType"
+              data-testid="field-type"
+              data-action="change->company-form#onIdentificationTypeChange change->company-form#onFormChange"
+              required
+              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="01">Cédula Fisica</option>
+        <option value="02">Cedula Juridica</option>
+        <option value="03">DIMEX</option>
+        <option value="04">NITE</option>
+      </select>
+    </div>
+
+    <%# Identificación %>
+    <div class="flex flex-col gap-1">
+      <label class="text-xs font-medium text-gray-600">Identificación <span class="text-red-500">*</span></label>
+      <input type="text"
+             inputmode="numeric"
+             pattern="[0-9]*"
+             data-company-form-target="identification"
+             data-testid="field-identification"
+             data-action="input->company-form#onFormChange"
+             minlength="9"
+             maxlength="9"
+             required
+             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <span data-company-form-target="identificationError" class="hidden text-xs text-red-500"></span>
+    </div>
+
+    <%# Código de Actividad %>
+    <div class="flex flex-col gap-1">
+      <label class="text-xs font-medium text-gray-600">Código de Actividad <span class="text-red-500">*</span></label>
+      <input type="text"
+             data-company-form-target="codigoActividad"
+             data-testid="field-codigo-actividad"
+             data-action="input->company-form#onFormChange"
+             minlength="6"
+             maxlength="6"
+             required
+             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <span data-company-form-target="codigoActividadError" class="hidden text-xs text-red-500"></span>
+    </div>
+
+    <%# Registro Fiscal 8707 %>
+    <div class="flex flex-col gap-1">
+      <label class="text-xs font-medium text-gray-600">Registro Fiscal 8707</label>
+      <input type="text"
+             data-company-form-target="registrofiscal8707"
+             data-testid="field-registrofiscal"
+             data-action="input->company-form#onFormChange"
+             maxlength="12"
+             class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+    </div>
+
+    <%# Botón guardar sección (solo edición).                                     %>
+    <%# Nace DESHABILITADO y lo habilita `#refreshLegalDataSaveState()` solo       %>
+    <%# cuando hay algo cambiado en ESTA sección (y es válido). El motivo de       %>
+    <%# estar deshabilitado va en el `data-tooltip` del <span>, que el JS          %>
+    <%# reescribe según el caso — un <button disabled> no emite eventos de mouse   %>
+    <%# (§2 y §26).                                                                %>
+    <div data-company-form-target="btnSaveLegalDataContainer"
+         class="hidden sm:col-span-2 flex justify-end pt-2">
+      <span data-company-form-target="btnSaveLegalDataWrap"
+            data-tooltip="No hay cambios por guardar en esta sección">
+        <button type="button"
+                data-action="click->company-form#saveLegalData"
+                data-company-form-target="btnSaveLegalData"
+                data-testid="btn-save-legal-data"
+                disabled
+                class="inline-flex items-center gap-1 px-4 py-2 bg-gray-300 text-gray-500 text-sm font-medium rounded-lg transition-colors cursor-not-allowed pointer-events-none">
+          <span class="material-icons text-base">save</span>
+          Actualizar datos legales
+        </button>
+      </span>
+    </div>
+  </div>
+<% end %>
+
+<% if creating %>
+  <div data-testid="section-legal-data"
+       data-company-form-target="sectionLegalData"
+       class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3">
+    <h2 class="text-sm font-semibold text-gray-700 px-5 pt-5 pb-1">Datos legales de la compañía</h2>
+    <%= legal_data_content %>
+  </div>
+<% else %>
+  <details data-testid="section-legal-data"
+           data-company-form-target="sectionLegalData"
+           class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3 group"
+           open>
+    <summary class="flex items-center justify-between px-5 py-4 cursor-pointer select-none list-none">
+      <span class="text-sm font-semibold text-gray-700">Datos legales de la compañía</span>
+      <span class="material-icons text-gray-400 group-open:rotate-180 transition-transform text-base">expand_more</span>
+    </summary>
+    <%= legal_data_content %>
   </details>
 <% end %>
 

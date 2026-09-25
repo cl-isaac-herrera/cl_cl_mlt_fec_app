@@ -22,18 +22,19 @@ RSpec.describe 'Configurations::Companies', type: :request do
       expect(response.body).to include('data-controller="menu"')
     end
 
-    # "Datos Generales", "Adicional", "Hacienda (ATV)" y "Adjuntos" son
-    # tarjetas planas y siempre visibles en el alta — nunca un `<details>`
-    # colapsable como en edición.
-    it 'renderiza las cuatro secciones del alta como tarjetas, no como acordeón' do
+    # "Datos Generales", "Datos Legales", "Adicional", "Hacienda (ATV)" y
+    # "Adjuntos" son tarjetas planas y siempre visibles en el alta — nunca un
+    # `<details>` colapsable como en edición.
+    it 'renderiza las cinco secciones del alta como tarjetas, no como acordeón' do
       sign_in
 
       get '/configurations/companies/new'
 
-      %w[section-general section-additional section-atv section-attachments].each do |testid|
+      %w[section-general section-legal-data section-additional section-atv section-attachments].each do |testid|
         expect(response.body).not_to match(%r{<details[^>]*data-testid="#{testid}"})
       end
       expect(response.body).to include('Datos Generales de la Compañía')
+      expect(response.body).to include('Datos legales de la compañía')
       expect(response.body).to include('Adjuntos de la compañía')
     end
   end
@@ -50,14 +51,14 @@ RSpec.describe 'Configurations::Companies', type: :request do
       expect(response.body).to include('data-controller="menu"')
     end
 
-    # En edición las cuatro siguen siendo un acordeón: cada una se guarda por
+    # En edición las cinco siguen siendo un acordeón: cada una se guarda por
     # su cuenta con su propio botón "Actualizar".
-    it 'renderiza las cuatro secciones como acordeón (<details>)' do
+    it 'renderiza las cinco secciones como acordeón (<details>)' do
       sign_in
 
       get "/configurations/companies/#{acme.id}/edit"
 
-      %w[section-general section-additional section-atv section-attachments].each do |testid|
+      %w[section-general section-legal-data section-additional section-atv section-attachments].each do |testid|
         expect(response.body).to match(%r{<details[^>]*data-testid="#{testid}"})
       end
     end

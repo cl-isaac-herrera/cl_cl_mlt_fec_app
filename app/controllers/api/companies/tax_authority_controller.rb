@@ -52,15 +52,24 @@ module Api
     # dejaba `cert.p12` a secas en una columna que el firmador lee como ruta, y esa
     # compañía dejaba de poder emitir.
     class TaxAuthorityController < AuthorizedController
-      # El alcance lo comparte con la lectura (`GET /api/companies/:id`): si no
-      # resolvieran el mismo conjunto, el formulario abriría una compañía que este
-      # guardado después rechaza (`CLAUDE.md` §28).
+      # El `show` y el `update` comparten el mismo alcance (`load_company` es el
+      # único punto de entrada al registro): si no resolvieran el mismo
+      # conjunto, el formulario podría leer una compañía que después el
+      # guardado rechaza (`CLAUDE.md` §28).
       include VisibleCompanies
 
       # El permiso se resuelve ANTES de buscar el registro: si se hiciera al
       # revés, un 404 le confirmaría a quien no tiene permiso qué ids existen.
       before_action :authorize_action
       before_action :load_company
+
+      # GET /api/companies/:company_id/tax_authority
+      #
+      # Alimenta SOLO esta sección del formulario — nada de SAP acá, es pura
+      # columna local (a diferencia de `LegalDataController#show`).
+      def show
+        render json: ApiResponse.success(serialize(@company)).to_h
+      end
 
       # PATCH /api/companies/:company_id/tax_authority
       #

@@ -43,14 +43,8 @@ export default class extends Controller {
 
   static targets = [
     // Sección 1 - Datos Generales
-    'name',
-    'legalName', 'legalNameError',
-    'identificationType',
-    'identification', 'identificationError',
-    'codigoActividad', 'codigoActividadError',
     'nameToEmail',
     'freightCharges',
-    'registrofiscal8707',
     'sapConnectionId',
     'btnAddConnection',
     'emailConfigId', 'emailConfigHint', 'emailConfigField',
@@ -59,6 +53,15 @@ export default class extends Controller {
     'active',
     'sendRejectedDocuments', 'sendRejectedDocumentsField',
     'btnSaveGeneralContainer', 'btnSaveGeneral', 'btnSaveGeneralWrap',
+
+    // Sección 1B - Datos Legales de la Compañía (UDT @CL_FEC_ISSUERCONFIG)
+    'name',
+    'legalName', 'legalNameError',
+    'identificationType',
+    'identification', 'identificationError',
+    'codigoActividad', 'codigoActividadError',
+    'registrofiscal8707',
+    'btnSaveLegalDataContainer', 'btnSaveLegalData', 'btnSaveLegalDataWrap',
 
     // Sección 2 - Adicional
     'emailCcList',
@@ -109,7 +112,7 @@ export default class extends Controller {
     'sapErrorIcon',
 
     // Loaders de sección
-    'loaderGeneral', 'loaderAdditional', 'loaderAtv', 'loaderAttachments', 'loaderActivityCodes', 'loaderSap',
+    'loaderGeneral', 'loaderLegalData', 'loaderAdditional', 'loaderAtv', 'loaderAttachments', 'loaderActivityCodes', 'loaderSap',
 
     // Botón registrar
     'btnRegisterContainer', 'btnRegister',
@@ -144,12 +147,20 @@ export default class extends Controller {
   #currenciesList         = [];
   #taxCodeList            = [];
   #warehouseList          = [];
-  #companyData            = null;
+  // Última respuesta de `GET/PATCH .../attachments`. Es la única sección que
+  // todavía necesita recordar su propia respuesta entre llamadas —
+  // `#savedLogoName`/`#savedPrintFormatName` la leen para saber qué archivo hay
+  // guardado—; las demás secciones no guardan nada más allá de lo que ya
+  // pintaron en sus campos.
+  #attachmentsData        = null;
   #permissions            = [];   // string[]
   #selectedCompany        = null;
   // Valores de la sección "Datos Generales" tal como se cargaron. Es la
   // referencia contra la que se decide si hay algo que guardar.
   #generalSnapshot        = null;
+  // Lo mismo para "Datos Legales de la Compañía" (los seis campos de la UDT
+  // @CL_FEC_ISSUERCONFIG y su espejo en `companies`).
+  #legalDataSnapshot      = null;
   // Lo mismo para la sección "Datos de Conexión de Hacienda (ATV)". Los dos
   // secretos no entran en la foto: el servidor no los devuelve, así que el campo
   // siempre arranca vacío y no hay contra qué comparar. En su lugar se recuerda
@@ -202,6 +213,7 @@ export default class extends Controller {
 
       // Edit: mostrar botones "Actualizar" por sección
       this.btnSaveGeneralContainerTarget.classList.remove('hidden');
+      this.btnSaveLegalDataContainerTarget.classList.remove('hidden');
       this.btnSaveAdditionalContainerTarget.classList.remove('hidden');
       this.btnSaveAtvContainerTarget.classList.remove('hidden');
       this.btnSaveAttachmentsContainerTarget.classList.remove('hidden');
@@ -272,6 +284,7 @@ export default class extends Controller {
       this.hasSapErrorIconTarget       ? this.sapErrorIconTarget       : null,
       this.hasActivityCodesErrorIconTarget ? this.activityCodesErrorIconTarget : null,
       this.hasBtnSaveGeneralWrapTarget ? this.btnSaveGeneralWrapTarget : null,
+      this.hasBtnSaveLegalDataWrapTarget ? this.btnSaveLegalDataWrapTarget : null,
       this.hasBtnSaveAtvWrapTarget     ? this.btnSaveAtvWrapTarget     : null,
       this.hasBtnSaveAttachmentsWrapTarget    ? this.btnSaveAttachmentsWrapTarget    : null,
       this.hasBtnDownloadLogoWrapTarget       ? this.btnDownloadLogoWrapTarget       : null,
@@ -385,7 +398,7 @@ export default class extends Controller {
    * Avisa con un MODAL —no un toast: tiene que verlo antes de ponerse a llenar
    * el formulario, no que se le pierda a los 3 segundos— cuando falta el
    * catálogo de conexiones de SAP y/o de bandejas de emisión. Sin cualquiera de
-   * las dos el alta se rechaza (`#validateGeneralForm()` acá, y
+   * las dos el alta se rechaza (`#validateGeneralFieldsForm()` acá, y
    * `Company`/`Api::CompaniesController#create` con el contexto
    * `:new_company_form` del lado del servidor), así que conviene decirlo ANTES
    * de que alguien llene el resto del formulario y se encuentre con el botón
@@ -416,17 +429,19 @@ export default class extends Controller {
   /**
    * Carga de la pantalla de edición.
    *
-   * Solo se piden los datos de las secciones que están migradas — "Datos
-   * Generales", "Hacienda (ATV)" y "Adjuntos", que salen de la misma petición,
-   * y "Códigos de actividad", que tiene su propio endpoint (UDT de SAP). Las
-   * consultas de las otras secciones (`warehouse`, `Tax`, `currencies`,
-   * `currency-map`) se quitaron: van al proxy .NET, que hoy responde 401, así
-   * que no llenaban nada — solo sumaban peticiones fallidas y demoraban el
-   * cierre del loader. Vuelven cuando se migre cada sección (TODOS.md → Compañías).
+   * Cada sección migrada pide SOLO su propio endpoint (`GET .../general`,
+   * `.../legal_data`, `.../tax_authority`, `.../attachments`,
+   * `.../activity_codes`) y se llena y oculta su loader por su cuenta, sin
+   * esperar a las demás — son cadenas de promesas independientes, no un
+   * `Promise.all` con un único punto de repintado. Antes las primeras cuatro
+   * salían de UN solo `GET /api/companies/:id`: cambiar de sección ya no puede
+   * arrastrar una consulta que no le corresponde.
    *
-   * Cada loader se oculta cuando resuelve LO SUYO, no cuando resuelven todas: el
-   * `Promise.allSettled` + un único `hideSectionLoaders()` hacía que la sección
-   * de datos generales siguiera girando por culpa de consultas ajenas.
+   * Las consultas de las secciones que no están migradas (`warehouse`, `Tax`,
+   * `currencies`, `currency-map`) se quitaron: van al proxy .NET, que hoy
+   * responde 401, así que no llenaban nada — solo sumaban peticiones fallidas y
+   * demoraban el cierre del loader. Vuelven cuando se migre cada sección
+   * (TODOS.md → Compañías).
    */
   async #loadCompanyInformation() {
     const companyId = this.companyIdValue;
@@ -475,19 +490,75 @@ export default class extends Controller {
         timerProgressBar: true
       }));
 
-    const general = this.#railsFetch(`/api/companies/${companyId}`)
+    // "Datos Generales" — espera los tres selects de arriba (son parte de ESTA
+    // sección) para que `select.value = …` encuentre la opción ya cargada, y
+    // recién entonces pide su propio endpoint. El loader se oculta apenas
+    // termina, sin esperar a ninguna otra sección.
+    const general = Promise.all([connections, inboxes, receptionMailboxes])
+      .then(() => this.#railsFetch(`/api/companies/${companyId}/general`))
       .then((resp) => {
         if (!resp.Data) throw new Error(resp.Message || 'Error desconocido');
-        this.#companyData = resp.Data;
+        this.#fillGeneralSection(resp.Data);
       })
       .catch((err) => {
         Swal.fire({
           icon: 'error',
-          title: 'Se produjo un error al obtener la información de la compañía',
+          title: 'Se produjo un error al obtener los datos generales',
           text: err.message,
           confirmButtonText: 'Aceptar',
         });
-      });
+      })
+      .finally(() => this.#hideLoader(this.loaderGeneralTarget));
+
+    // "Datos Legales de la Compañía" — sin dependencia de ningún select, pide
+    // su endpoint de una vez.
+    const legalData = this.#railsFetch(`/api/companies/${companyId}/legal_data`)
+      .then((resp) => {
+        if (!resp.Data) throw new Error(resp.Message || 'Error desconocido');
+        this.#fillLegalDataSection(resp.Data);
+      })
+      .catch((err) => {
+        Swal.fire({
+          icon: 'error',
+          title: 'Se produjo un error al obtener los datos legales',
+          text: err.message,
+          confirmButtonText: 'Aceptar',
+        });
+      })
+      .finally(() => this.#hideLoader(this.loaderLegalDataTarget));
+
+    // "Datos de Conexión de Hacienda (ATV)"
+    const atv = this.#railsFetch(`/api/companies/${companyId}/tax_authority`)
+      .then((resp) => {
+        if (!resp.Data) throw new Error(resp.Message || 'Error desconocido');
+        this.#fillAtvSection(resp.Data);
+      })
+      .catch((err) => {
+        Swal.fire({
+          icon: 'error',
+          title: 'Se produjo un error al obtener los datos de Hacienda',
+          text: err.message,
+          confirmButtonText: 'Aceptar',
+        });
+      })
+      .finally(() => this.#hideLoader(this.loaderAtvTarget));
+
+    // "Adjuntos de la compañía"
+    const attachments = this.#railsFetch(`/api/companies/${companyId}/attachments`)
+      .then((resp) => {
+        if (!resp.Data) throw new Error(resp.Message || 'Error desconocido');
+        this.#attachmentsData = resp.Data;
+        this.#fillAttachmentsSection(resp.Data);
+      })
+      .catch((err) => {
+        Swal.fire({
+          icon: 'error',
+          title: 'Se produjo un error al obtener los adjuntos',
+          text: err.message,
+          confirmButtonText: 'Aceptar',
+        });
+      })
+      .finally(() => this.#hideLoader(this.loaderAttachmentsTarget));
 
     // Sección "Códigos de actividad": lista real desde la UDT de SAP
     // (`Api::Companies::ActivityCodesController`). Solo trae los ACTIVOS: no
@@ -522,32 +593,26 @@ export default class extends Controller {
           timer: 3000,
           timerProgressBar: true
         });
-      });
+      })
+      .finally(() => this.#hideLoader(this.loaderActivityCodesTarget));
 
-    try {
-      // El orden importa: las conexiones tienen que estar en el <select> antes de
-      // aplicarle el valor de la compañía, o el `select.value = …` no encuentra
-      // la opción y queda en blanco.
-      await Promise.all([connections, inboxes, receptionMailboxes, general, activityCodes]);
-      if (this.#companyData) {
-        this.#fillGeneralSection(this.#companyData);
-        this.#fillAtvSection(this.#companyData);
-        this.#fillAttachmentsSection(this.#companyData);
-      }
-    } finally {
-      this.#hideLoader(this.loaderGeneralTarget);
-      this.#hideLoader(this.loaderAtvTarget);
-      this.#hideLoader(this.loaderAttachmentsTarget);
-      this.#hideLoader(this.loaderActivityCodesTarget);
-    }
+    // No hay nada más que hacer con el resultado de cada cadena — cada una ya
+    // repintó su sección y ocultó su loader por su cuenta. El `await` es solo
+    // para que el método no "termine" (a efectos de quien lo llame) antes de
+    // que las ocho consultas se hayan resuelto.
+    await Promise.allSettled([
+      connections, inboxes, receptionMailboxes, general, legalData, atv, attachments, activityCodes,
+    ]);
   }
 
   // Solo se muestran los loaders de las secciones que realmente cargan algo. Las
   // demás no piden nada todavía: dejarlas girando diría que están esperando
-  // datos. Las tres salen de la MISMA petición (`GET /api/companies/:id`), aunque
-  // el guardado esté partido en un endpoint por sección.
+  // datos. Cada una pide su propio endpoint y oculta su loader por su cuenta
+  // en `#loadCompanyInformation`; acá solo se encienden los cinco a la vez, al
+  // principio.
   #showSectionLoaders() {
     this.#showLoader(this.loaderGeneralTarget);
+    this.#showLoader(this.loaderLegalDataTarget);
     this.#showLoader(this.loaderAtvTarget);
     this.#showLoader(this.loaderAttachmentsTarget);
     this.#showLoader(this.loaderActivityCodesTarget);
@@ -558,24 +623,11 @@ export default class extends Controller {
 
   /**
    * Llena la sección "Datos Generales" con la respuesta de
-   * GET /api/companies/:id. El contrato JSON no cambió, pero el servidor SÍ
-   * vuelve a hablar con SAP para armar esta respuesta: la razón social, el
-   * tipo de identificación, la actividad económica y el registro fiscal 8707
-   * viven en la UDT @CL_FEC_ISSUERCONFIG (Sap::CompanyConfig), no en
-   * `companies` — solo la cédula (`EmsrIdeNumero`) sigue siendo columna local.
-   *
-   * Las claves del emisor conservan el vocabulario del XML de Hacienda
-   * (`EmsrNombre`, `CodigoActividad`) aunque del lado del servidor salgan de
-   * la UDT y no de una columna: la traducción la hace `serialize_detail` del
-   * controller.
-   *
-   * Las secciones de Hacienda (ATV) y de adjuntos salen de la misma respuesta
-   * pero las llenan `#fillAtvSection` y `#fillAttachmentsSection`. Las demás
-   * (adicional, códigos de actividad, factura a proveedor) todavía no se
-   * migraron y por eso no se llenan.
+   * `GET /api/companies/:id/general`. Son los ocho campos que son columna de
+   * `companies` y nada más: el bloque del emisor ante Hacienda lo llena
+   * `#fillLegalDataSection`, con su propia consulta.
    */
   #fillGeneralSection(data) {
-    this.nameTarget.value           = data.Name || '';
     this.dbSapTarget.value          = data.SapDb || '';
     this.nameToEmailTarget.value    = String(data.EmailSenderType ?? 1);
     this.freightChargesTarget.value = String(data.FreightType ?? 1);
@@ -598,16 +650,6 @@ export default class extends Controller {
     this.receptionMailboxIdTarget.value = data.ReceptionMailboxId ? String(data.ReceptionMailboxId) : '';
     this.#refreshReceptionMailboxHint();
 
-    // `EmsrNombreComercial` llega en la respuesta pero no se pinta: es el mismo
-    // valor que `Name`, que ya está en el campo "Nombre".
-    this.legalNameTarget.value          = data.EmsrNombre             || '';
-    this.identificationTypeTarget.value = data.EmsrIdeTipo            || '01';
-    this.identificationTarget.value     = data.EmsrIdeNumero          || '';
-    this.codigoActividadTarget.value    = data.CodigoActividad        || '';
-    this.registrofiscal8707Target.value = data.EmsrRegistroFiscal8707 || '';
-
-    this.#applyIdentificationRules(data.EmsrIdeTipo || '01');
-
     // La foto se toma DESPUÉS de llenar: es el estado "sin cambios".
     this.#generalSnapshot = this.#generalValues();
     this.#validateForm();
@@ -620,12 +662,6 @@ export default class extends Controller {
    */
   #generalValues() {
     return {
-      name:               this.nameTarget.value.trim(),
-      legalName:          this.legalNameTarget.value.trim(),
-      identificationType: this.identificationTypeTarget.value,
-      identification:     this.identificationTarget.value.trim(),
-      codigoActividad:    this.codigoActividadTarget.value.trim(),
-      registrofiscal8707: this.registrofiscal8707Target.value.trim(),
       nameToEmail:        this.nameToEmailTarget.value,
       freightCharges:     this.freightChargesTarget.value,
       sapConnectionId:    this.sapConnectionIdTarget.value,
@@ -665,6 +701,91 @@ export default class extends Controller {
     );
   }
 
+  // ── Sección "Datos Legales de la Compañía" ─────────────────────────────────
+
+  /**
+   * Llena la sección con la respuesta de `GET /api/companies/:id/legal_data`.
+   * El servidor habla con SAP para armar esta respuesta: la razón social, el
+   * tipo de identificación, la actividad económica y el registro fiscal 8707
+   * viven en la UDT @CL_FEC_ISSUERCONFIG (Sap::CompanyConfig), no en
+   * `companies` — solo la cédula (`EmsrIdeNumero`) y el nombre (`Name`) siguen
+   * siendo también columna local (el espejo, CLAUDE.md §32).
+   *
+   * Las claves del emisor conservan el vocabulario del XML de Hacienda
+   * (`EmsrNombre`, `CodigoActividad`) aunque del lado del servidor salgan de
+   * la UDT y no de una columna: la traducción la hace `serialize` del
+   * controller.
+   */
+  #fillLegalDataSection(data) {
+    this.nameTarget.value = data.Name || '';
+
+    // `EmsrNombreComercial` llega en la respuesta pero no se pinta: es el mismo
+    // valor que `Name`, que ya está en el campo "Nombre".
+    this.legalNameTarget.value          = data.EmsrNombre             || '';
+    this.identificationTypeTarget.value = data.EmsrIdeTipo            || '01';
+    this.identificationTarget.value     = data.EmsrIdeNumero          || '';
+    this.codigoActividadTarget.value    = data.CodigoActividad        || '';
+    this.registrofiscal8707Target.value = data.EmsrRegistroFiscal8707 || '';
+
+    this.#applyIdentificationRules(data.EmsrIdeTipo || '01');
+
+    // La foto se toma DESPUÉS de llenar: es el estado "sin cambios".
+    this.#legalDataSnapshot = this.#legalDataValues();
+    this.#validateForm();
+  }
+
+  /**
+   * Los valores actuales de la sección "Datos Legales de la Compañía",
+   * normalizados a texto para poder compararlos contra la foto inicial.
+   */
+  #legalDataValues() {
+    return {
+      name:               this.nameTarget.value.trim(),
+      legalName:          this.legalNameTarget.value.trim(),
+      identificationType: this.identificationTypeTarget.value,
+      identification:     this.identificationTarget.value.trim(),
+      codigoActividad:    this.codigoActividadTarget.value.trim(),
+      registrofiscal8707: this.registrofiscal8707Target.value.trim(),
+    };
+  }
+
+  /** ¿Cambió algo en la sección respecto a lo que se cargó? */
+  #legalDataIsDirty() {
+    if (!this.#legalDataSnapshot) return false;
+
+    const current = this.#legalDataValues();
+    return Object.keys(current).some(key => current[key] !== this.#legalDataSnapshot[key]);
+  }
+
+  /**
+   * Habilita "Actualizar datos legales" solo si hay algo que actualizar en ESA
+   * sección. Mismo patrón que `#refreshGeneralSaveState` (CLAUDE.md §2 y §26).
+   */
+  #refreshLegalDataSaveState() {
+    if (!this.hasBtnSaveLegalDataTarget) return;
+
+    this.#paintSectionSaveButton(
+      this.btnSaveLegalDataTarget,
+      this.hasBtnSaveLegalDataWrapTarget ? this.btnSaveLegalDataWrapTarget : null,
+      this.#legalDataSaveBlockedReason(),
+      'Actualizar los datos legales de la compañía',
+    );
+  }
+
+  /**
+   * Por qué NO se puede guardar la sección, o null si sí se puede (CLAUDE.md
+   * §2). Mismo criterio que `#generalSaveBlockedReason`.
+   * @returns {?string}
+   */
+  #legalDataSaveBlockedReason() {
+    if (!this.#legalDataIsDirty()) return 'No hay cambios por guardar en esta sección';
+    if (!this.#validateLegalDataForm()) {
+      return 'Complete los campos requeridos de la sección para poder guardar';
+    }
+
+    return null;
+  }
+
   /**
    * Pinta el botón "Actualizar …" de una sección según se pueda guardar o no.
    * Lo comparten todas las secciones migradas para que el gris, el cursor y el
@@ -696,7 +817,7 @@ export default class extends Controller {
    */
   #generalSaveBlockedReason() {
     if (!this.#generalIsDirty()) return 'No hay cambios por guardar en esta sección';
-    if (!this.#validateGeneralForm()) {
+    if (!this.#validateGeneralFieldsForm()) {
       return 'Complete los campos requeridos de la sección para poder guardar';
     }
 
@@ -706,7 +827,7 @@ export default class extends Controller {
   // ── Sección "Hacienda (ATV)" ───────────────────────────────────────────────
 
   /**
-   * Llena la sección con la respuesta de `GET /api/companies/:id`.
+   * Llena la sección con la respuesta de `GET /api/companies/:id/tax_authority`.
    *
    * El PIN del certificado y el token password NO vienen en la respuesta: están
    * cifrados y no se le devuelven a nadie. Lo único que llega es si hay uno
@@ -1278,7 +1399,7 @@ export default class extends Controller {
   // ── Sección "Adjuntos de la compañía" ──────────────────────────────────────
 
   /**
-   * Llena la sección con la respuesta de `GET /api/companies/:id`.
+   * Llena la sección con la respuesta de `GET /api/companies/:id/attachments`.
    *
    * De los dos adjuntos llega el NOMBRE del archivo, no la ruta: la columna
    * guarda la ruta absoluta que otro proceso abre —el servicio de correo el
@@ -1396,8 +1517,8 @@ export default class extends Controller {
   }
 
   /** El nombre del archivo GUARDADO, que es el que se descarga. */
-  #savedLogoName()        { return this.#companyData?.LogoFileName || ''; }
-  #savedPrintFormatName() { return this.#companyData?.PrintFormatFileName || ''; }
+  #savedLogoName()        { return this.#attachmentsData?.LogoFileName || ''; }
+  #savedPrintFormatName() { return this.#attachmentsData?.PrintFormatFileName || ''; }
 
   /**
    * En creación no hay nada que descargar ni restablecer todavía. Es el primer
@@ -1638,16 +1759,16 @@ export default class extends Controller {
   }
 
   /**
-   * Vuelve a leer la compañía y repinta solo la sección de adjuntos. La lectura
-   * del formulario es una sola (`GET /api/companies/:id`), así que se reusa esa
-   * y se refresca lo que cambió.
+   * Vuelve a leer solo la sección de adjuntos y la repinta — su propio
+   * endpoint, `GET /api/companies/:id/attachments`, ya no el de la compañía
+   * entera.
    */
   async #reloadAttachmentsSection() {
-    const resp = await this.#railsFetch(`/api/companies/${this.companyIdValue}`);
+    const resp = await this.#railsFetch(`/api/companies/${this.companyIdValue}/attachments`);
     if (!resp.Data) return;
 
-    this.#companyData = resp.Data;
-    this.#fillAttachmentsSection(this.#companyData);
+    this.#attachmentsData = resp.Data;
+    this.#fillAttachmentsSection(resp.Data);
   }
 
   // ── EmailCC dinámico ───────────────────────────────────────────────────────
@@ -2162,8 +2283,7 @@ export default class extends Controller {
       // servidor normaliza (los vacíos pasan a NULL) y así el formulario muestra
       // el estado real.
       if (json.Data) {
-        this.#companyData = { ...this.#companyData, ...json.Data };
-        this.#fillGeneralSection(this.#companyData);
+        this.#fillGeneralSection(json.Data);
       }
 
       Swal.fire({
@@ -2195,7 +2315,6 @@ export default class extends Controller {
    */
   #generalPayload() {
     return {
-      Name:                   this.nameTarget.value.trim(),
       Active:                 this.activeTarget.checked,
       SendRejectedDocuments:  this.sendRejectedDocumentsTarget.checked,
       ConnectionId:           this.sapConnectionIdTarget.value || null,
@@ -2209,6 +2328,78 @@ export default class extends Controller {
       SapDb:                  this.dbSapTarget.value.trim(),
       EmailSenderType:        this.nameToEmailTarget.value,
       FreightType:            this.freightChargesTarget.value,
+    };
+  }
+
+  /**
+   * Guarda SOLO la sección "Datos Legales de la Compañía", contra su propio
+   * endpoint (`PATCH /api/companies/:id/legal_data`).
+   *
+   * Mismo criterio que `saveGeneralData`: cada sección tiene su propio botón y
+   * su propio endpoint, así que este no puede pisar la conexión, la bandeja de
+   * correo ni nada de otra sección.
+   */
+  async saveLegalData() {
+    // Defensa en profundidad: la UI ya deshabilita el botón, pero se puede
+    // manipular (CLAUDE.md §26).
+    const blocked = this.#legalDataSaveBlockedReason();
+    if (blocked) {
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'info',
+        title: blocked,
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
+      return;
+    }
+
+    this.#showLoader(this.loaderLegalDataTarget);
+    try {
+      const json = await this.#railsFetch(
+        `/api/companies/${this.companyIdValue}/legal_data`,
+        { method: 'PATCH', body: JSON.stringify(this.#legalDataPayload()) },
+      );
+
+      // Se repinta con lo que quedó guardado, no con lo que había en pantalla: el
+      // servidor normaliza (los vacíos pasan a NULL) y así el formulario muestra
+      // el estado real.
+      if (json.Data) {
+        this.#fillLegalDataSection(json.Data);
+      }
+
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: json.Message || 'Datos legales actualizados con éxito.',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
+    } catch (err) {
+      // Error de escritura → modal, no toast (CLAUDE.md §9).
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al guardar datos legales',
+        text: err.message,
+        confirmButtonText: 'Aceptar',
+      });
+    } finally {
+      this.#hideLoader(this.loaderLegalDataTarget);
+    }
+  }
+
+  /**
+   * El cuerpo del PATCH de la sección: exactamente los campos que la sección
+   * ofrece. Tiene que cubrir lo mismo que `#legalDataValues()`, que es lo que
+   * decide si hay cambios que guardar.
+   */
+  #legalDataPayload() {
+    return {
+      Name:                   this.nameTarget.value.trim(),
       EmsrNombre:             this.legalNameTarget.value.trim(),
       EmsrIdeTipo:            this.identificationTypeTarget.value,
       EmsrIdeNumero:          this.identificationTarget.value.trim(),
@@ -2271,8 +2462,7 @@ export default class extends Controller {
       // sus valores no vuelven, y de ver el nombre y el vencimiento que el
       // servidor sacó del archivo.
       if (json.Data) {
-        this.#companyData = { ...this.#companyData, ...json.Data };
-        this.#fillAtvSection(this.#companyData);
+        this.#fillAtvSection(json.Data);
       }
 
       Swal.fire({
@@ -2358,8 +2548,8 @@ export default class extends Controller {
       // servidor limpia el nombre del archivo antes de escribirlo, así que el que
       // se eligió y el que quedó pueden no ser el mismo.
       if (json.Data) {
-        this.#companyData = { ...this.#companyData, ...json.Data };
-        this.#fillAttachmentsSection(this.#companyData);
+        this.#attachmentsData = json.Data;
+        this.#fillAttachmentsSection(json.Data);
       }
 
       Swal.fire({
@@ -2537,9 +2727,9 @@ export default class extends Controller {
   /**
    * El cuerpo del alta — multipart, porque el certificado y los adjuntos viajan
    * en la misma petición que el resto. Son los mismos catorce campos que
-   * `#generalPayload()` arma para `PATCH .../general` (la traducción de claves
-   * es la misma), más `EmailCC` y las credenciales/archivos de "Hacienda (ATV)"
-   * y "Adjuntos".
+   * `#generalPayload()` + `#legalDataPayload()` arman para `PATCH .../general`
+   * y `PATCH .../legal_data` (la traducción de claves es la misma), más
+   * `EmailCC` y las credenciales/archivos de "Hacienda (ATV)" y "Adjuntos".
    *
    * Los tres campos que `#setupMode()` mantiene ocultos en el alta (Bandeja de
    * Correo, Bandeja de Recepción, Enviar rechazados) no se leen acá — sus
@@ -2549,10 +2739,11 @@ export default class extends Controller {
   #buildCreatePayload() {
     const fd = new FormData();
 
-    // "Datos Generales" — mismas claves que `#generalPayload()`, pero como
-    // partes de FormData: un `null` (select vacío) no se manda, para que el
-    // servidor lo trate como "sin valor" y no como el texto literal "null".
-    Object.entries(this.#generalPayload()).forEach(([key, value]) => {
+    // "Datos Generales" + "Datos Legales de la Compañía" — mismas claves que
+    // `#generalPayload()`/`#legalDataPayload()`, pero como partes de FormData:
+    // un `null` (select vacío) no se manda, para que el servidor lo trate como
+    // "sin valor" y no como el texto literal "null".
+    Object.entries({ ...this.#generalPayload(), ...this.#legalDataPayload() }).forEach(([key, value]) => {
       if (value === null || value === undefined) return;
       fd.append(key, value);
     });
@@ -2685,14 +2876,9 @@ export default class extends Controller {
 
   // ── Validación general ─────────────────────────────────────────────────────
 
-  #validateGeneralForm() {
-    const id    = this.identificationTarget.value;
-    const rules = this.#ideRules[this.identificationTypeTarget.value] ?? { min: 9, max: 9 };
+  /** Campos requeridos de "Datos Generales" (los ocho de `companies`). */
+  #validateGeneralFieldsForm() {
     return !!(
-      this.nameTarget.value.trim() &&
-      this.legalNameTarget.value.trim() &&
-      id.length >= rules.min && id.length <= rules.max &&
-      this.codigoActividadTarget.value.length === 6 &&
       this.dbSapTarget.value.trim() &&
       this.sapConnectionIdTarget.value &&
       // La bandeja de correo es obligatoria SOLO en el alta: sin ella, la
@@ -2706,12 +2892,24 @@ export default class extends Controller {
     );
   }
 
+  /** Campos requeridos de "Datos Legales de la Compañía" (la UDT del emisor). */
+  #validateLegalDataForm() {
+    const id    = this.identificationTarget.value;
+    const rules = this.#ideRules[this.identificationTypeTarget.value] ?? { min: 9, max: 9 };
+    return !!(
+      this.nameTarget.value.trim() &&
+      this.legalNameTarget.value.trim() &&
+      id.length >= rules.min && id.length <= rules.max &&
+      this.codigoActividadTarget.value.length === 6
+    );
+  }
+
   /**
    * Todo lo que hace falta para habilitar "Registrar Datos de la Compañía":
-   * "Datos Generales" completos (`#validateGeneralForm()`) + "Hacienda (ATV)"
-   * completa (certificado, PIN, usuario y contraseña del token) + el formato
-   * de impresión de "Adjuntos". El logo se queda opcional — nadie lo pidió
-   * como requisito.
+   * "Datos Generales" (`#validateGeneralFieldsForm()`) + "Datos Legales"
+   * (`#validateLegalDataForm()`) + "Hacienda (ATV)" completa (certificado,
+   * PIN, usuario y contraseña del token) + el formato de impresión de
+   * "Adjuntos". El logo se queda opcional — nadie lo pidió como requisito.
    *
    * Solo se usa para el botón del alta: en edición cada sección se guarda por
    * su cuenta con su propia regla (`#atvSaveBlockedReason`,
@@ -2720,7 +2918,8 @@ export default class extends Controller {
    */
   #validateCreateForm() {
     return !!(
-      this.#validateGeneralForm() &&
+      this.#validateGeneralFieldsForm() &&
+      this.#validateLegalDataForm() &&
       this.#selectedCertFile &&
       this.certPinTarget.value.trim() &&
       this.tokenUsrTarget.value.trim() &&
@@ -2734,7 +2933,8 @@ export default class extends Controller {
       this.btnRegisterTarget.disabled = !this.#validateCreateForm();
     }
     this.#refreshGeneralSaveState();
-    // La identificación de la compañía vive en "Datos Generales" pero condiciona
+    this.#refreshLegalDataSaveState();
+    // La identificación de la compañía vive en "Datos Legales" pero condiciona
     // el guardado de la sección de Hacienda (el nombre del certificado y el token
     // tienen que contenerla), así que editarla también repinta ese botón.
     this.#refreshAtvSaveState();
