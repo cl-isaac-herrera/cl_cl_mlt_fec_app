@@ -178,6 +178,56 @@ RSpec.describe MailReceptionJob do
     end
   end
 
+  describe 'archivo del .eml' do
+    let(:company) { create(:company, issuer_id_number: '3101999999') }
+    let(:attachment) do
+      MailReception::IncomingDocument::Attachment.new(
+        clave: '506...', receptor_id_number: '3101999999', doc_type: DocType::FE, root: double('root')
+      )
+    end
+
+    before do
+      company
+      allow(MailReception::IncomingDocument).to receive(:attachments_from).and_return([attachment])
+    end
+
+    it 'con Azure caído (transitorio), NO marca \\Seen ni intenta registrar en SAP' do
+      allow(Documents::EmailArchive).to receive(:store).and_raise(Azure::BlobStorage::TransientError, 'timeout')
+      allow(Sap::CompanyClient).to receive(:for)
+
+      imap = FakeImap.new(uids: [1])
+      stub_sessions(mailbox1.id => imap)
+
+      described_class.perform_now
+
+      expect(Sap::CompanyClient).not_to have_received(:for)
+      expect(imap.marked_seen).to eq([])
+    end
+
+    it 'sin uuid válido en la compañía (configuración), NO marca \\Seen — se reintenta igual' do
+      allow(Documents::EmailArchive).to receive(:store).and_raise(Documents::EmailArchive::MissingUuid, 'sin uuid')
+
+      imap = FakeImap.new(uids: [1])
+      stub_sessions(mailbox1.id => imap)
+
+      described_class.perform_now
+
+      expect(imap.marked_seen).to eq([])
+    end
+
+    it 'con la configuración de Azure incompleta, NO marca \\Seen' do
+      allow(Documents::EmailArchive).to receive(:store)
+        .and_raise(Azure::BlobStorage::MissingConfiguration, 'falta configurar')
+
+      imap = FakeImap.new(uids: [1])
+      stub_sessions(mailbox1.id => imap)
+
+      described_class.perform_now
+
+      expect(imap.marked_seen).to eq([])
+    end
+  end
+
   describe 'registro del mensaje receptor (después de archivar el .eml)' do
     let(:company) { create(:company, issuer_id_number: '3101999999') }
     let(:attachment) do

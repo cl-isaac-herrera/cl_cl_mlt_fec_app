@@ -87,9 +87,18 @@
 #     interesa a este job (spam, un XML que no es de Hacienda), o le falta una
 #     compañía que alguien tiene que dar de alta — no algo que se arregle
 #     reintentando.
-#   · Un fallo transitorio de Azure/red al archivar → NO se marca. El correo
-#     sigue como no leído y la corrida siguiente lo vuelve a intentar, sin
-#     necesitar una tabla de reintentos propia.
+#   · El `.eml` no se pudo archivar (Azure caído, sin credenciales
+#     configuradas, o la compañía sin uuid válido) → NO se marca, sin importar
+#     el motivo, y tampoco se intenta registrar el mensaje receptor en SAP. El
+#     archivo del correo original es el dato que no se puede perder ni
+#     reconstruir bajando el correo de nuevo por IMAP una vez marcado \Seen, así
+#     que la corrida siguiente reintenta el correo completo — aunque el motivo
+#     sea de configuración y no vaya a resolverse solo, es preferible seguir
+#     reintentando (y quedar visible en Sentry/logs) a arriesgar perder el .eml.
+#   · Con el `.eml` ya archivado, un fallo transitorio de sesión SAP al
+#     registrar el mensaje receptor → tampoco se marca (se reintenta). Un
+#     rechazo de SAP a los datos (no transitorio) → sí se marca: reintentar el
+#     mismo cuerpo no lo arregla, y el `.eml` ya quedó a salvo.
 class MailReceptionJob < ApplicationJob
   queue_as :mail_reception
 
@@ -182,11 +191,12 @@ class MailReceptionJob < ApplicationJob
 
     outcomes = attachments.map { |attachment| archive(raw, mailbox, attachment) }
     outcomes.each { |outcome| tally[outcome] += 1 }
-    # Si CUALQUIER adjunto falló por algo transitorio, el correo entero queda
+    # Si CUALQUIER adjunto falló al archivar el .eml (sea transitorio o de
+    # configuración) o por un fallo transitorio de SAP, el correo entero queda
     # sin marcar: la corrida siguiente reintenta el correo completo, incluidos
     # los adjuntos que sí se archivaron (re-subir el mismo blob no es un
     # problema — `Azure::BlobStorage#upload` sobrescribe en el mismo path).
-    mark_seen(imap, uid) unless outcomes.include?(:error_transitorio)
+    mark_seen(imap, uid) unless (outcomes & %i[error_transitorio error_guardado_eml]).any?
   rescue StandardError => e
     Sentry.capture_exception(e)
     Rails.logger.error("[MailReception] #{mailbox.email} · uid #{uid}: #{e.class}: #{e.message}")
@@ -205,20 +215,31 @@ class MailReceptionJob < ApplicationJob
       return :sin_compania
     end
 
+    store_eml(company, attachment, raw) || register_reception_message(raw, mailbox, company, attachment)
+  end
+
+  # El .eml es el dato que no se puede perder: si no se pudo archivar, el
+  # correo NO se registra en SAP y NO se marca \Seen — sin importar si el
+  # motivo es transitorio (Azure caído) o de configuración (falta credencial,
+  # compañía sin uuid válido). Un motivo de configuración no se arregla solo
+  # reintentando, pero es preferible seguir reintentando (y que el error quede
+  # visible en Sentry/logs) a marcar leído un correo cuyo .eml nunca quedó
+  # guardado — no hay forma de recuperarlo después sin bajarlo de nuevo por
+  # IMAP, y ya estaría marcado \Seen.
+  #
+  # Devuelve `:error_guardado_eml` si falló, o `nil` si se archivó bien (para
+  # que `archive` siga con `register_reception_message` solo en ese caso).
+  def store_eml(company, attachment, raw)
     Documents::EmailArchive.store(company: company, clave: attachment.clave, eml: raw)
-    register_reception_message(raw, mailbox, company, attachment)
+    nil
   rescue Azure::BlobStorage::TransientError => e
     Rails.logger.warn("[MailReception] clave #{attachment.clave}: Azure no disponible — #{e.message}")
-    :error_transitorio
+    :error_guardado_eml
   rescue Azure::BlobStorage::MissingConfiguration, Azure::BlobStorage::RejectedError,
          Documents::EmailArchive::MissingUuid => e
-    # No es transitorio: reintentar esto exactamente igual nunca cambia el
-    # resultado (falta configuración, o la compañía no tiene uuid válido), así
-    # que el correo SÍ se marca \Seen — queda como error visible en el log y
-    # en Sentry, no como un correo que se reintenta para siempre.
     Sentry.capture_exception(e)
-    Rails.logger.error("[MailReception] clave #{attachment.clave}: #{e.message}")
-    :error_configuracion
+    Rails.logger.error("[MailReception] clave #{attachment.clave}: no se pudo archivar el .eml — #{e.message}")
+    :error_guardado_eml
   end
 
   # Ya con el `.eml` archivado, registra la cabecera + colecciones del
