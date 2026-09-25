@@ -5,8 +5,9 @@ class Api::AuthorizedController < Api::BaseController
 
   private
 
-  # Un solo EXISTS query sobre user_roles/role_permissions/permissions.
-  # Nunca cargar los permisos del usuario completos y filtrar en Ruby.
+  # Un solo EXISTS query sobre role_permissions/permissions (por rol de
+  # instalación o de compañía, ver `permission?`). Nunca cargar los permisos
+  # del usuario completos y filtrar en Ruby.
   def require_permission!(name)
     require_any_permission!(name)
   end
@@ -32,24 +33,43 @@ class Api::AuthorizedController < Api::BaseController
   # producto). No marca la acción como verificada a propósito: preguntar no es
   # autorizar, y el safety net tiene que seguir exigiendo el check explícito.
   #
-  # Hay DOS vías de concesión y el permiso vale si cualquiera lo otorga:
-  #   1. por rol en la compañía activa — el caso normal, y el que se evalúa primero
-  #      porque cubre la enorme mayoría de las verificaciones;
-  #   2. concedido directo al usuario, solo para permisos `global` (§ UserPermission).
-  # La segunda consulta solo corre si la primera no concedió nada.
+  # Roles por alcance (docs/PLAN-ROLES-POR-ALCANCE.md): el permiso vale si
+  # cualquiera de estas vías lo otorga —
+  #   1. el rol de INSTALACIÓN del usuario (`users.installation_role_id`), que
+  #      no depende de ninguna compañía activa;
+  #   2. el rol de COMPAÑÍA de la asignación activa (`users_by_companies`,
+  #      usuario + compañía activa) — sin compañía activa, no aplica.
+  # Por invariante, un permiso de instalación nunca debería quedar en el rol de
+  # compañía de nadie (`RolePermission#scope_matches_role`) — pero esa
+  # validación no corre en las escrituras en lote (`insert_all`/`update_all`,
+  # §1.6), así que cada vía filtra ADEMÁS por `permissions.scope` acá: defensa
+  # en profundidad (§26), no solo confiar en que la fila nunca debió existir.
   def permission?(name)
-    granted_by_role?(name) || UserPermission.granting?(user_id: Current.user&.id, name: name)
+    granted_by_installation_role?(name) || granted_by_company_role?(name)
   end
 
-  # Un solo EXISTS query sobre user_roles/role_permissions/permissions.
-  def granted_by_role?(name)
+  # Un solo EXISTS query sobre role_permissions/permissions, contra el rol de
+  # instalación del usuario.
+  def granted_by_installation_role?(name)
+    RolePermission
+      .joins(:permission)
+      .where(role_id: Current.user&.installation_role_id, is_active: true)
+      .where(permissions: { name: name, is_active: true, scope: 'installation' })
+      .exists?
+  end
+
+  # Un solo EXISTS query sobre users_by_companies/role_permissions/permissions,
+  # acotado a la compañía activa.
+  def granted_by_company_role?(name)
+    return false unless Current.company_id
+
     RolePermission
       .joins(:permission, :role)
-      .joins("INNER JOIN user_roles ON user_roles.role_id = roles.id")
+      .joins('INNER JOIN users_by_companies ON users_by_companies.role_id = roles.id')
       .where(
-        user_roles:       { user_id: Current.user&.id, company_id: Current.company_id, is_active: true },
-        permissions:      { name: name, is_active: true },
-        role_permissions: { is_active: true }
+        users_by_companies: { user_id: Current.user&.id, company_id: Current.company_id, is_active: true },
+        permissions:        { name: name, is_active: true, scope: 'company' },
+        role_permissions:   { is_active: true }
       ).exists?
   end
 

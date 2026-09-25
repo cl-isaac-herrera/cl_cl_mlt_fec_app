@@ -14,7 +14,7 @@ RSpec.describe 'GET /api/permissions', type: :request do
   end
 
   it 'devuelve los permisos efectivos del usuario en la compañía de la sesión' do
-    UserRole.create!(user: user, role: role, company: acme)
+    UsersByCompany.create!(user: user, company: acme, role: role)
     RolePermission.create!(role: role, permission: permiso)
 
     sign_in(user, company: acme)
@@ -25,7 +25,7 @@ RSpec.describe 'GET /api/permissions', type: :request do
   end
 
   it 'no filtra permisos de otra compañía' do
-    UserRole.create!(user: user, role: role, company: otra)
+    UsersByCompany.create!(user: user, company: otra, role: role)
     RolePermission.create!(role: role, permission: permiso)
 
     sign_in(user, company: acme)
@@ -34,8 +34,8 @@ RSpec.describe 'GET /api/permissions', type: :request do
     expect(names).to be_empty
   end
 
-  it 'devuelve vacío cuando todavía no hay compañía seleccionada' do
-    UserRole.create!(user: user, role: role, company: acme)
+  it 'devuelve vacío cuando todavía no hay compañía seleccionada y el permiso es de compañía' do
+    UsersByCompany.create!(user: user, company: acme, role: role)
     RolePermission.create!(role: role, permission: permiso)
 
     sign_in(user)
@@ -43,6 +43,36 @@ RSpec.describe 'GET /api/permissions', type: :request do
 
     expect(response).to have_http_status(:ok)
     expect(names).to be_empty
+  end
+
+  # Roles por alcance (docs/PLAN-ROLES-POR-ALCANCE.md): los permisos de
+  # instalación no dependen de la compañía activa — siguen viéndose aunque no
+  # haya ninguna seleccionada, a diferencia de los de compañía.
+  it 'devuelve los permisos de instalación aunque no haya compañía seleccionada' do
+    instalacion_role = Role.create!(name: 'Soporte técnico', scope: 'installation')
+    instalacion_permiso = Permission.create!(name: 'Configurations_General_Access', scope: 'installation')
+    RolePermission.create!(role: instalacion_role, permission: instalacion_permiso)
+    user.update!(installation_role: instalacion_role)
+
+    sign_in(user)
+    get '/api/permissions'
+
+    expect(names).to contain_exactly('Configurations_General_Access')
+  end
+
+  it 'combina el rol de instalación con el de la compañía activa' do
+    instalacion_role = Role.create!(name: 'Soporte técnico', scope: 'installation')
+    instalacion_permiso = Permission.create!(name: 'Configurations_General_Access', scope: 'installation')
+    RolePermission.create!(role: instalacion_role, permission: instalacion_permiso)
+    user.update!(installation_role: instalacion_role)
+
+    UsersByCompany.create!(user: user, company: acme, role: role)
+    RolePermission.create!(role: role, permission: permiso)
+
+    sign_in(user, company: acme)
+    get '/api/permissions'
+
+    expect(names).to contain_exactly('Configurations_General_Access', 'Sales_Documents_Create')
   end
 
   it 'responde 401 sin sesión' do

@@ -69,9 +69,10 @@ renames:
 # `deactivated` dice si YA se les puso `is_active = false`:
 #   · true  → lo hizo una migración sobre la base existente
 #             (`20260812130000_apply_permission_catalog_changes.rb`,
-#             `20260913150000_deactivate_group_permissions.rb`) y `DEACTIVATED` en
-#             `db/seeds.rb` sobre la base nueva. Las listas tienen que seguir
-#             coincidiendo.
+#             `20260913150000_deactivate_group_permissions.rb`,
+#             `20260924170000_deactivate_scope_superseded_permissions.rb`) y
+#             `DEACTIVATED` en `db/seeds.rb` sobre la base nueva. Las listas
+#             tienen que seguir coincidiendo.
 #   · false → todavía los evalúa algún código. Se dan de baja cuando se borre la
 #             pantalla que los usa, NO antes: hacerlo ahora la volvería
 #             inalcanzable sin que nadie lo haya decidido.
@@ -141,8 +142,29 @@ orphaned:
     reason: >-
       Variante de alcance global del anterior. Misma pantalla, mismo destino.
 
-# ⚠️ NO confundir: `Configurations_Companies_ViewGroupCompanies` tiene "Group" en
-# el nombre pero NO es huérfano. Es la vía de escape del alcance de asignación de
-# compañías (`AssignableCompanies::SEE_ALL_COMPANIES`): sin grupos, "las
-# compañías del grupo" son las de la instalación, que es justo lo que ese permiso
-# habilita. No darlo de baja.
+  # ── Huérfanos desde docs/PLAN-ROLES-POR-ALCANCE.md ───────────────────────────
+  #    Baja aplicada por
+  #    `db/migrate/20260924170000_deactivate_scope_superseded_permissions.rb`.
+  - name:        Configurations_Users_ViewAllApplicationUsers
+    deactivated: true
+    reason: >-
+      Ampliaba "los usuarios de mi compañía" a "todos". Administrar usuarios
+      pasó a ser un permiso de INSTALACIÓN (`Api::UsersController#visible_users`),
+      así que ya no hay un alcance más chico del que ampliarse.
+
+  - name:        Configurations_Companies_ViewGroupCompanies
+    deactivated: true
+    reason: >-
+      Era la vía de escape de `AssignableCompanies` para "ver todas las
+      compañías" (antes se documentaba acá como NO huérfano, justamente por
+      eso). La reemplazó `Configurations_Companies_ViewAllApplicationCompanies`,
+      que ya cubría el mismo caso sin depender del concepto de "grupo"
+      (CLAUDE.md §31).
+
+  - name:        Configurations_Users_Access
+    deactivated: true
+    reason: >-
+      Gateaba el nodo de menú "Usuarios", duplicando a
+      Configurations_Users_ListAccess — el que de verdad exige
+      Api::UsersController#index. El menú se unificó para pedir este último
+      (Fase 5 de docs/PLAN-ROLES-POR-ALCANCE.md, "arreglo de paso").

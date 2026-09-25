@@ -9,11 +9,7 @@ RSpec.describe 'Api::Branches', type: :request do
   let(:client)  { instance_double(Clavisco::ServiceLayer::Client) }
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: company)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 
@@ -267,10 +263,10 @@ RSpec.describe 'Api::Branches', type: :request do
   end
 
   describe 'compañía activa' do
-    it 'responde 403 si la compañía de la sesión no está asignada al usuario' do
-      UserRole.create!(user: user, role: role, company: company)
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: 'S_Sucursal'))
-      sign_in(user, company: company)   # sin UsersByCompany
+    it 'responde 403 si la compañía activa no es donde el usuario tiene el rol' do
+      grant_permissions(user, 'S_Sucursal', company: company)
+      otra = Company.create!(name: 'Otra S.A.')
+      sign_in(user, company: otra) # el permiso lo tiene en `company`, no acá
 
       get '/api/branches'
 

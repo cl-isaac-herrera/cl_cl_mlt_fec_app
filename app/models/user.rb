@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 # Persona que entra a la aplicación. La autenticación la resuelve el proveedor
-# OIDC; esta tabla dice quién es, a qué compañías llega (`users_by_companies`) y
-# con qué rol en cada una (`user_roles`).
+# OIDC; esta tabla dice quién es, a qué compañías llega y con qué rol en cada
+# una (`users_by_companies.role_id`), y con qué rol de INSTALACIÓN administra
+# el producto entero (`installation_role_id` — docs/PLAN-ROLES-POR-ALCANCE.md).
 #
 # La tabla es más chica que la `Users` del .NET, que venía de ASP.NET Identity:
 # no hay `PasswordHash`, `EmailConfirmed`, `UserName` ni `Identification`. Las
@@ -20,11 +21,11 @@ class User < ApplicationRecord
 
   has_many :users_by_companies, dependent: :destroy
   has_many :companies, through: :users_by_companies
-  has_many :user_roles, dependent: :destroy
 
-  # Permisos concedidos directamente, sin rol y sin compañía. Solo `global`.
-  has_many :user_permissions, dependent: :destroy
-  has_many :global_permissions, through: :user_permissions, source: :permission
+  # Rol de INSTALACIÓN (docs/PLAN-ROLES-POR-ALCANCE.md): aplica sin depender de
+  # ninguna compañía activa. Nullable — un usuario puede no administrar nada de
+  # la instalación y solo operar dentro de las compañías que tiene asignadas.
+  belongs_to :installation_role, class_name: 'Role', optional: true
 
   validates :email, presence: true, length: { maximum: 256 }
   validates :email, format: { with: URI::MailTo::EMAIL_REGEXP }, allow_blank: true
@@ -42,6 +43,7 @@ class User < ApplicationRecord
   # que los datos sigan cabiendo cuando la base vuelva a ser SQL Server.
   validates :sap_user,     length: { maximum: 75 }, allow_blank: true
   validates :sap_password, length: { maximum: 50 }, allow_blank: true
+  validate :installation_role_must_be_installation_scoped
 
   # `true` cuando las credenciales que se están guardando son exactamente las que
   # acaban de pasar la prueba contra el Service Layer. No es una columna: lo
@@ -70,14 +72,13 @@ class User < ApplicationRecord
     scope
   }
 
-  # Usuarios asignados a una compañía. Es el alcance por defecto de la lista:
-  # quien administra usuarios ve a los de su compañía, no a los de todo el
-  # sistema (para eso está `Configurations_Users_ViewAllApplicationUsers`).
-  scope :in_company, lambda { |company_id|
-    where(id: UsersByCompany.where(company_id: company_id).select(:user_id))
-  }
-
   private
+
+  def installation_role_must_be_installation_scoped
+    return if installation_role.nil? || installation_role.scope == 'installation'
+
+    errors.add(:installation_role, "es de alcance #{installation_role.scope} y tiene que ser de instalación")
+  end
 
   def sync_sap_credentials_verified
     if sap_credentials_just_verified

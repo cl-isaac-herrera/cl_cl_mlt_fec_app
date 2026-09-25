@@ -2,29 +2,32 @@
 
 require 'rails_helper'
 
-# Asignación de compañías a un usuario (tab "Asignación de compañías" de
-# /configurations/users). Es lo que define qué compañías puede elegir en el
-# selector del toolbar, así que un error acá le abre o le cierra el acceso a
-# datos de una compañía entera.
+# Asignación de compañías a un usuario, CON el rol de compañía en cada una
+# (tab "Compañías" del panel "Gestionar accesos" de /configurations/users —
+# docs/PLAN-ROLES-POR-ALCANCE.md: `UsersByCompany` da el acceso y el rol a la
+# vez). Un error acá le abre o le cierra el acceso a datos de una compañía
+# entera, o le deja el permiso equivocado dentro de ella.
 RSpec.describe 'Api::Users::Companies', type: :request do
-  let(:admin)  { User.create!(email: 'admin@example.com', name: 'Administradora') }
-  let(:target) { User.create!(email: 'objetivo@example.com', name: 'Objetivo') }
-  let(:acme)   { Company.create!(name: 'ACME S.A.') }
-  let(:beta)   { Company.create!(name: 'Beta S.A.') }
-  let(:role)   { Role.create!(name: 'Configurador') }
+  let(:admin)      { User.create!(email: 'admin@example.com', name: 'Administradora') }
+  let(:target)     { User.create!(email: 'objetivo@example.com', name: 'Objetivo') }
+  let(:acme)       { Company.create!(name: 'ACME S.A.') }
+  let(:beta)       { Company.create!(name: 'Beta S.A.') }
+  let(:role)       { Role.create!(name: 'Configurador') }
+  let(:otro_role)  { Role.create!(name: 'Operador') }
 
   def sign_in_with(*permission_names)
-    UserRole.create!(user: admin, role: role, company: acme)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(admin, *permission_names, company: acme)
     sign_in(admin, company: acme)
   end
 
   # El alcance por defecto son las compañías del propio administrador: nadie
   # reparte accesos donde él mismo no llega.
   def admin_reaches(*companies)
-    companies.each { |c| UsersByCompany.create!(user: admin, company: c) }
+    companies.each { |c| UsersByCompany.create!(user: admin, company: c, role: role) }
+  end
+
+  def assignments(*companies)
+    companies.map { |c| { CompanyId: c.id, RoleId: role.id } }
   end
 
   def json_headers = { 'CONTENT_TYPE' => 'application/json' }
@@ -32,20 +35,22 @@ RSpec.describe 'Api::Users::Companies', type: :request do
   def body_data = body['Data']
 
   describe 'GET /api/users/:user_id/companies' do
-    it 'devuelve las compañías asignadas al usuario' do
-      UsersByCompany.create!(user: target, company: acme)
+    it 'devuelve las compañías asignadas al usuario, con su rol en cada una' do
+      UsersByCompany.create!(user: target, company: acme, role: role)
 
       sign_in_with('Configurations_Users_CompanyAssignment')
       get "/api/users/#{target.id}/companies"
 
       expect(response).to have_http_status(:ok)
-      expect(body_data.map { |c| c['Name'] }).to eq(['ACME S.A.'])
+      expect(body_data).to eq(
+        [{ 'Id' => acme.id, 'Name' => 'ACME S.A.', 'RoleId' => role.id, 'RoleName' => role.name }]
+      )
     end
 
     # El mismo endpoint sirve al panel de edición (selector para probar
     # credenciales) y al tab de asignación: cualquiera de los dos permisos alcanza.
     it 'lo puede leer quien edita usuarios, sin el permiso de asignación' do
-      UsersByCompany.create!(user: target, company: acme)
+      UsersByCompany.create!(user: target, company: acme, role: role)
 
       sign_in_with('Configurations_Users_Update')
       get "/api/users/#{target.id}/companies"
@@ -69,39 +74,75 @@ RSpec.describe 'Api::Users::Companies', type: :request do
   end
 
   describe 'PUT /api/users/:user_id/companies' do
-    it 'asigna el conjunto completo' do
+    it 'asigna el conjunto completo, con el rol de cada fila' do
       admin_reaches(acme, beta)
       sign_in_with('Configurations_Users_CompanyAssignment')
 
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [acme.id, beta.id] }.to_json, headers: json_headers
+          params: { Assignments: assignments(acme, beta) }.to_json, headers: json_headers
 
       expect(response).to have_http_status(:ok)
       expect(target.companies.pluck(:id)).to contain_exactly(acme.id, beta.id)
+      expect(UsersByCompany.where(user_id: target.id).pluck(:role_id).uniq).to eq([role.id])
     end
 
     # PUT lleva el estado final: lo que no venga queda desasignado. Es lo que
     # reemplaza al par bulk-assign / bulk-unassign del .NET.
     it 'desasigna lo que no viene en el cuerpo' do
       admin_reaches(acme, beta)
-      UsersByCompany.create!(user: target, company: acme)
-      UsersByCompany.create!(user: target, company: beta)
+      UsersByCompany.create!(user: target, company: acme, role: role)
+      UsersByCompany.create!(user: target, company: beta, role: role)
 
       sign_in_with('Configurations_Users_CompanyAssignment')
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [beta.id] }.to_json, headers: json_headers
+          params: { Assignments: assignments(beta) }.to_json, headers: json_headers
 
       expect(target.companies.pluck(:id)).to eq([beta.id])
     end
 
     it 'desasigna todo con una lista vacía' do
       admin_reaches(acme)
-      UsersByCompany.create!(user: target, company: acme)
+      UsersByCompany.create!(user: target, company: acme, role: role)
 
       sign_in_with('Configurations_Users_CompanyAssignment')
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [] }.to_json, headers: json_headers
+          params: { Assignments: [] }.to_json, headers: json_headers
 
+      expect(target.companies).to be_empty
+    end
+
+    it 'cambia el rol de una compañía que ya tenía, sin desasignarla' do
+      admin_reaches(acme)
+      UsersByCompany.create!(user: target, company: acme, role: role)
+
+      sign_in_with('Configurations_Users_CompanyAssignment')
+      put "/api/users/#{target.id}/companies",
+          params: { Assignments: [{ CompanyId: acme.id, RoleId: otro_role.id }] }.to_json, headers: json_headers
+
+      expect(response).to have_http_status(:ok)
+      expect(UsersByCompany.find_by(user_id: target.id, company_id: acme.id).role_id).to eq(otro_role.id)
+    end
+
+    it 'rechaza una asignación sin RoleId' do
+      admin_reaches(acme)
+      sign_in_with('Configurations_Users_CompanyAssignment')
+
+      put "/api/users/#{target.id}/companies",
+          params: { Assignments: [{ CompanyId: acme.id }] }.to_json, headers: json_headers
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(target.companies).to be_empty
+    end
+
+    it 'rechaza un RoleId que no es un rol de compañía' do
+      admin_reaches(acme)
+      instalacion = Role.create!(name: 'Instalación', scope: 'installation')
+      sign_in_with('Configurations_Users_CompanyAssignment')
+
+      put "/api/users/#{target.id}/companies",
+          params: { Assignments: [{ CompanyId: acme.id, RoleId: instalacion.id }] }.to_json, headers: json_headers
+
+      expect(response).to have_http_status(:unprocessable_content)
       expect(target.companies).to be_empty
     end
 
@@ -115,7 +156,7 @@ RSpec.describe 'Api::Users::Companies', type: :request do
       sign_in_with('Configurations_Users_CompanyAssignment')
 
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [acme.id, beta.id] }.to_json, headers: json_headers
+          params: { Assignments: assignments(acme, beta) }.to_json, headers: json_headers
 
       expect(response).to have_http_status(:forbidden)
       expect(body['Message']).to include(beta.id.to_s)
@@ -125,37 +166,37 @@ RSpec.describe 'Api::Users::Companies', type: :request do
 
     # ⚠️ El caso que hace peligroso el reemplazo completo. La compañía que el
     # administrador no administra nunca aparece en el panel, así que no viaja en
-    # `CompanyIds` — si el reemplazo la revocara, le sacaría al usuario el acceso
+    # `Assignments` — si el reemplazo la revocara, le sacaría al usuario el acceso
     # a otra sociedad sin que nadie se entere.
     it 'NO revoca las compañías que el administrador no administra' do
       admin_reaches(acme)
-      UsersByCompany.create!(user: target, company: acme)
-      UsersByCompany.create!(user: target, company: beta) # fuera del alcance
+      UsersByCompany.create!(user: target, company: acme, role: role)
+      UsersByCompany.create!(user: target, company: beta, role: role) # fuera del alcance
 
       sign_in_with('Configurations_Users_CompanyAssignment')
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [] }.to_json, headers: json_headers
+          params: { Assignments: [] }.to_json, headers: json_headers
 
       expect(response).to have_http_status(:ok)
       expect(target.companies.reload.pluck(:id)).to eq([beta.id])
     end
 
-    it 'con Configurations_Companies_ViewGroupCompanies alcanza a todas' do
-      sign_in_with('Configurations_Users_CompanyAssignment', 'Configurations_Companies_ViewGroupCompanies')
+    it 'con Configurations_Companies_ViewAllApplicationCompanies alcanza a todas' do
+      sign_in_with('Configurations_Users_CompanyAssignment', 'Configurations_Companies_ViewAllApplicationCompanies')
 
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [acme.id, beta.id] }.to_json, headers: json_headers
+          params: { Assignments: assignments(acme, beta) }.to_json, headers: json_headers
 
       expect(response).to have_http_status(:ok)
       expect(target.companies.pluck(:id)).to contain_exactly(acme.id, beta.id)
     end
 
     it 'y entonces sí puede revocar cualquiera' do
-      UsersByCompany.create!(user: target, company: beta)
-      sign_in_with('Configurations_Users_CompanyAssignment', 'Configurations_Companies_ViewGroupCompanies')
+      UsersByCompany.create!(user: target, company: beta, role: role)
+      sign_in_with('Configurations_Users_CompanyAssignment', 'Configurations_Companies_ViewAllApplicationCompanies')
 
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [] }.to_json, headers: json_headers
+          params: { Assignments: [] }.to_json, headers: json_headers
 
       expect(target.companies.reload).to be_empty
     end
@@ -168,11 +209,11 @@ RSpec.describe 'Api::Users::Companies', type: :request do
       sign_in_with('Configurations_Users_CompanyAssignment')
 
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [acme.id] }.to_json, headers: json_headers
+          params: { Assignments: assignments(acme) }.to_json, headers: json_headers
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [] }.to_json, headers: json_headers
+          params: { Assignments: [] }.to_json, headers: json_headers
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [acme.id] }.to_json, headers: json_headers
+          params: { Assignments: assignments(acme) }.to_json, headers: json_headers
 
       expect(response).to have_http_status(:ok)
       expect(UsersByCompany.unscoped.where(user_id: target.id).count).to eq(1)
@@ -181,11 +222,12 @@ RSpec.describe 'Api::Users::Companies', type: :request do
 
     it 'rechaza una compañía inexistente sin aplicar nada' do
       admin_reaches(acme)
-      UsersByCompany.create!(user: target, company: acme)
+      UsersByCompany.create!(user: target, company: acme, role: role)
       sign_in_with('Configurations_Users_CompanyAssignment')
 
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [acme.id, 999_999] }.to_json, headers: json_headers
+          params: { Assignments: assignments(acme) + [{ CompanyId: 999_999, RoleId: role.id }] }.to_json,
+          headers: json_headers
 
       expect(response).to have_http_status(:unprocessable_content)
       expect(target.companies.reload.pluck(:id)).to eq([acme.id])
@@ -196,7 +238,7 @@ RSpec.describe 'Api::Users::Companies', type: :request do
       sign_in_with('Configurations_Users_CompanyAssignment')
 
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [acme.id] }.to_json, headers: json_headers
+          params: { Assignments: assignments(acme) }.to_json, headers: json_headers
 
       fila = UsersByCompany.find_by(user_id: target.id, company_id: acme.id)
       expect(fila.created_by).to eq('admin@example.com')
@@ -208,7 +250,7 @@ RSpec.describe 'Api::Users::Companies', type: :request do
       sign_in_with('Configurations_Users_Update')
 
       put "/api/users/#{target.id}/companies",
-          params: { CompanyIds: [acme.id] }.to_json, headers: json_headers
+          params: { Assignments: assignments(acme) }.to_json, headers: json_headers
 
       expect(response).to have_http_status(:forbidden)
       expect(target.companies).to be_empty
@@ -230,9 +272,9 @@ RSpec.describe 'Api::Users::Companies', type: :request do
       expect(body_data.map { |c| c['Name'] }).to eq(['ACME S.A.'])
     end
 
-    it 'devuelve todas con Configurations_Companies_ViewGroupCompanies' do
+    it 'devuelve todas con Configurations_Companies_ViewAllApplicationCompanies' do
       beta
-      sign_in_with('Configurations_Users_CompanyAssignment', 'Configurations_Companies_ViewGroupCompanies')
+      sign_in_with('Configurations_Users_CompanyAssignment', 'Configurations_Companies_ViewAllApplicationCompanies')
 
       get '/api/companies/assignable'
 

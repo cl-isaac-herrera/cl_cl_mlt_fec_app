@@ -49,10 +49,11 @@ export default class extends Controller {
   connect() {
     this.#updateToolbarLabel()
 
-    // Sin compañía seleccionada se abre el panel para que elija. Ya no hay
-    // preselección automática: la compañía favorita vivía en
-    // localStorage['FavoriteCompany'] y el esquema nuevo no la modela.
-    if (!SStore.get('CurrentCompany')?.companyId) this.open()
+    // Ya NO se abre el panel a la fuerza sin compañía seleccionada
+    // (docs/PLAN-ROLES-POR-ALCANCE.md): con roles de instalación se puede usar
+    // la aplicación entera (Usuarios, Seguridad, Conexiones…) sin elegir
+    // ninguna. El usuario abre el selector cuando la necesita, igual que
+    // cualquier otro control del toolbar.
   }
 
   disconnect() {
@@ -110,13 +111,17 @@ export default class extends Controller {
 
   /**
    * Click derecho en el botón de compañía.
-   * Solo muestra el menú si el usuario tiene Configurations_Companies_Update.
+   * Solo muestra el menú si el usuario tiene Configurations_Companies_Update
+   * (de compañía) o Configurations_Companies_UpdateInAllCompanies (de
+   * instalación) — docs/PLAN-ROLES-POR-ALCANCE.md.
    */
   onContextMenu(event) {
     event.preventDefault()
 
     const permissions = SStore.get('Permissions') ?? []
-    if (!permissions.includes('Configurations_Companies_Update')) return
+    const canEdit = permissions.includes('Configurations_Companies_Update') ||
+      permissions.includes('Configurations_Companies_UpdateInAllCompanies')
+    if (!canEdit) return
     if (!this.hasContextMenuTarget) return
 
     this.contextMenuTarget.classList.remove('hidden')

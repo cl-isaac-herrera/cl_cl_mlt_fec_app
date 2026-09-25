@@ -40,7 +40,8 @@ module Api
       # identidad de la compañía ante Hacienda, así que descargarlo no es una
       # lectura más — quien puede bajarlo es quien puede cambiarlo.
       def authorize_action
-        require_permission!('Configurations_Companies_Update')
+        require_any_permission!('Configurations_Companies_Update',
+                                'Configurations_Companies_UpdateInAllCompanies')
       end
 
       def load_company

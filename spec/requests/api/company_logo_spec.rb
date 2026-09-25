@@ -16,11 +16,7 @@ RSpec.describe 'GET /api/companies/:company_id/logo', type: :request do
   end
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: acme)
-    UserRole.create!(user: user, role: role, company: acme)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: acme)
     sign_in(user, company: acme)
   end
 

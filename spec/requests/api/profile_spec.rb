@@ -136,7 +136,7 @@ RSpec.describe 'Api::Profiles', type: :request do
 
     before do
       Clavisco::ServiceLayer::LoadBalancer.instance.instance_variable_set(:@sessions, {})
-      UsersByCompany.create!(user: user, company: acme)
+      UsersByCompany.create!(user: user, company: acme, role: Role.create!(name: 'Acceso'))
       SlResource.create!(code: 'qsValidateSapCredentials', resource: 'BusinessPartners',
                          query_params: '$top=1&$select=CardCode', page_size: 0, is_standard: true)
       stub_request(:post, %r{/b1s/v1/Logout\z}).to_return(status: 204)

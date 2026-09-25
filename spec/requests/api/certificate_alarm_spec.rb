@@ -9,6 +9,7 @@ RSpec.describe 'GET /api/certificate_alarm', type: :request do
   let(:user) { User.create!(email: 'emisor@example.com') }
   let(:sap)  { Connection.create!(name: 'SAP Producción', sl_url: 'https://sap.test:50000/b1s/v1') }
   let(:acme) { Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db: 'SBO_ACME') }
+  let(:role) { Role.create!(name: 'Acceso') }
 
   def body      = JSON.parse(response.body)
   def body_data = body['Data']
@@ -16,7 +17,7 @@ RSpec.describe 'GET /api/certificate_alarm', type: :request do
   # Deja la compañía asignada al usuario y activa en la sesión: el endpoint la
   # resuelve de ahí, no de un parámetro.
   def sign_in_with_active(company)
-    UsersByCompany.create!(user: user, company: company)
+    UsersByCompany.create!(user: user, company: company, role: role)
     sign_in(user, company: company)
   end
 
@@ -113,24 +114,25 @@ RSpec.describe 'GET /api/certificate_alarm', type: :request do
 
   # El companyId no viaja: si la compañía de la sesión no es del usuario, no hay
   # nada que responder — y no hay forma de preguntar por una ajena.
-  it 'responde 404 cuando la compañía activa no está asignada al usuario' do
+  it 'responde 403 cuando la compañía activa no está asignada al usuario' do
     otra = Company.create!(name: 'Otra S.A.', sap_connection: sap, sap_db: 'SBO_OTRA')
     otra.update!(cert_expires_at: 1.day.from_now)
     sign_in(user, company: otra)
 
     get '/api/certificate_alarm'
 
-    expect(response).to have_http_status(:not_found)
+    expect(response).to have_http_status(:forbidden)
     expect(body['Message']).to eq('La compañía activa no está asignada a este usuario.')
   end
 
-  it 'responde 404 cuando la sesión no tiene compañía activa' do
-    UsersByCompany.create!(user: user, company: acme)
+  it 'responde 422 cuando la sesión no tiene compañía activa' do
+    UsersByCompany.create!(user: user, company: acme, role: role)
     sign_in(user)
 
     get '/api/certificate_alarm'
 
-    expect(response).to have_http_status(:not_found)
+    expect(response).to have_http_status(:unprocessable_content)
+    expect(body['Message']).to eq('Seleccione una compañía')
   end
 
   it 'ignora el companyId que llegue por query string' do

@@ -9,8 +9,9 @@
         confirmar, y el alta nace activa.
       · "Asignación de compañías": era un segundo buscador de usuarios, peor que
         esta tabla. Ahora es el sub-tab "Compañías" del panel "Gestionar accesos".
-    Todo lo que se le concede a un usuario (rol, permisos globales, compañías)
-    vive en ese panel, que es una acción de fila. %>
+    Todo lo que se le concede a un usuario (rol de instalación y compañías, cada
+    una con su propio rol de compañía) vive en ese panel, que es una acción de
+    fila (docs/PLAN-ROLES-POR-ALCANCE.md). %>
 <div data-controller="users"
      class="p-6 flex flex-col h-full">
 
@@ -293,17 +294,10 @@
       <nav class="-mb-px flex gap-4" role="tablist">
         <button type="button"
                 data-users-target="accessTabBtn"
-                data-access-tab="roles"
+                data-access-tab="installation_role"
                 data-action="click->users#switchAccessTab"
                 class="px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors whitespace-nowrap">
-          Roles<sup data-access-dot class="hidden text-red-500 font-bold ml-0.5" title="Cambios sin guardar">*</sup>
-        </button>
-        <button type="button"
-                data-users-target="accessTabBtn"
-                data-access-tab="global"
-                data-action="click->users#switchAccessTab"
-                class="hidden px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors whitespace-nowrap">
-          Permisos globales<sup data-access-dot class="hidden text-red-500 font-bold ml-0.5" title="Cambios sin guardar">*</sup>
+          Rol de instalación<sup data-access-dot class="hidden text-red-500 font-bold ml-0.5" title="Cambios sin guardar">*</sup>
         </button>
         <button type="button"
                 data-users-target="accessTabBtn"
@@ -331,64 +325,17 @@
         </svg>
       </div>
 
-      <%# === TAB: ROLES === %>
-      <div data-users-target="accessTabContent" data-access-tab="roles" class="hidden">
-        <%# Buscador %>
-        <div class="relative mb-3">
-          <input type="text"
-                 data-users-target="accessRoleSearch"
-                 data-action="input->users#onAccessRoleSearch"
-                 placeholder="Buscar rol..."
-                 autocomplete="off"
-                 class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-          <span class="material-icons absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-lg pointer-events-none">search</span>
-        </div>
-
-        <div data-users-target="accessRoleList" class="flex flex-col gap-2"></div>
-
-        <div data-users-target="accessRoleEmpty"
-             class="hidden flex-col items-center justify-center text-gray-400 py-16 text-center">
-          <span class="material-icons text-5xl opacity-30 mb-3">search_off</span>
-          <p class="text-sm">No se encontraron roles</p>
-        </div>
-
-        <p data-users-target="accessRoleError" class="hidden mt-2 text-xs text-red-600">
-          Debe seleccionar un rol.
-        </p>
+      <%# === TAB: ROL DE INSTALACIÓN === %>
+      <div data-users-target="accessTabContent" data-access-tab="installation_role" class="hidden">
+        <label class="text-xs font-medium text-gray-600">Rol de instalación</label>
+        <select data-users-target="accessRoleSelect"
+                data-action="change->users#onAccessInstallationRoleChange"
+                class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">-- Sin rol --</option>
+        </select>
         <p class="mt-3 text-xs text-gray-400">
-          Cada usuario tiene un rol por compañía. El cambio aplica a la compañía actual.
+          El rol de instalación aplica en toda la aplicación, sin depender de ninguna compañía.
         </p>
-      </div>
-
-      <%# === TAB: PERMISOS GLOBALES === %>
-      <div data-users-target="accessTabContent" data-access-tab="global" class="hidden">
-        <%# Toolbar: buscar + seleccionar todos %>
-        <div class="flex items-center gap-3 mb-3">
-          <div class="relative flex-1">
-            <input type="text"
-                   data-users-target="accessGlobalSearch"
-                   data-action="input->users#onAccessGlobalSearch"
-                   placeholder="Buscar permiso..."
-                   autocomplete="off"
-                   class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-            <span class="material-icons absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-lg pointer-events-none">search</span>
-          </div>
-          <label class="flex items-center gap-2 text-xs font-medium text-gray-600 cursor-pointer whitespace-nowrap">
-            <input type="checkbox"
-                   data-users-target="accessGlobalSelectAll"
-                   data-action="change->users#toggleAccessGlobalAll"
-                   class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer">
-            Seleccionar todos
-          </label>
-        </div>
-
-        <div data-users-target="accessGlobalList" class="flex flex-col gap-2"></div>
-
-        <div data-users-target="accessGlobalEmpty"
-             class="hidden flex-col items-center justify-center text-gray-400 py-16 text-center">
-          <span class="material-icons text-5xl opacity-30 mb-3">search_off</span>
-          <p class="text-sm">No se encontraron permisos</p>
-        </div>
       </div>
 
       <%# === TAB: COMPAÑÍAS === %>
@@ -425,7 +372,8 @@
         </div>
 
         <p class="mt-3 text-xs text-gray-400">
-          Solo se listan las compañías que usted puede asignar.
+          Solo se listan las compañías que usted puede asignar. Cada compañía marcada
+          necesita un rol de compañía seleccionado antes de poder guardar.
         </p>
       </div>
 
@@ -434,7 +382,7 @@
     <%# Footer %>
     <div class="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3 flex-shrink-0">
       <%# Contador del tab activo. Lo escribe entero el controller: cada tab cuenta
-          otra cosa (permisos, compañías) y en Roles no hay nada que contar. %>
+          otra cosa (compañías) y en Rol de instalación no hay nada que contar. %>
       <span data-users-target="accessFooterNote" class="text-xs text-gray-500"></span>
       <div class="flex gap-3">
         <button type="button"

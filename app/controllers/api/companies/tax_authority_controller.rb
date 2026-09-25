@@ -98,7 +98,8 @@ module Api
       private
 
       def authorize_action
-        require_permission!('Configurations_Companies_Update')
+        require_any_permission!('Configurations_Companies_Update',
+                                'Configurations_Companies_UpdateInAllCompanies')
       end
 
       def load_company

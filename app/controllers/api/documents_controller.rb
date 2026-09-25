@@ -41,7 +41,7 @@ module Api
     # pedido (403 de compañía y 422 de tipo). Un usuario sin permiso no tiene
     # por qué enterarse de si mandó bien los parámetros.
     before_action :authorize_action
-    before_action :require_company!
+    include RequiresActiveCompany
     before_action :require_doc_type!
 
     MAX_PER_PAGE = Sap::IssuedDocumentsSearch::MAX_PAGE_SIZE
@@ -187,18 +187,6 @@ module Api
 
     private
 
-    # Las cinco acciones operan sobre un documento de la compañía activa y todas
-    # necesitan lo mismo antes de empezar: que la compañía sea del usuario y que
-    # el tipo de comprobante sea uno que este producto emite. Vive acá y no
-    # repetido en cada acción para que una acción nueva no pueda nacer sin los
-    # dos controles — que es justo lo que pasa cuando el guard es copia y pega.
-    def require_company!
-      return if company
-
-      render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
-             status: :forbidden
-    end
-
     # Los tres mensajes de receptor (`05`, `06`, `07`) no son comprobantes
     # emitidos: no los devuelve ninguna de estas consultas, así que pedirlos es
     # un error del llamador y no una búsqueda sin resultados.
@@ -279,13 +267,6 @@ module Api
 
     def authorize_action
       require_permission!(PERMISSIONS.fetch(action_name))
-    end
-
-    # La compañía activa, validada contra las asignadas al usuario — igual que
-    # `Api::CertificateAlarmsController` (§28 regla 5): el id sale de la sesión,
-    # nunca de un parámetro, y se confirma que sea una compañía del usuario.
-    def company
-      @company ||= Company.assigned_to(Current.user.id).find_by(id: Current.company_id)
     end
 
     def page = [params[:page].to_i, 1].max

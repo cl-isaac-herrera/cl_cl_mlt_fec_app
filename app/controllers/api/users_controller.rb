@@ -24,11 +24,6 @@ module Api
       'update' => 'Configurations_Users_Update'
     }.freeze
 
-    # Permite ver a todos los usuarios del producto, no solo a los de la compañía
-    # activa. No es un permiso de acción sino de alcance: se consulta con
-    # `permission?`, que no corta la respuesta.
-    SEE_ALL_PERMISSION = 'Configurations_Users_ViewAllApplicationUsers'
-
     # GET /api/users?name=&email=&page=1&per_page=10
     #
     # Paginación por query string y total en el cuerpo, igual que el resto de los
@@ -58,16 +53,15 @@ module Api
     # inactivo desaparece del listado por el default_scope de SoftDeletable, así
     # que crearlo así lo volvería invisible apenas se guarda.
     #
-    # `CompanyId` es obligatorio: sin una fila en `users_by_companies` el usuario
-    # entra pero no puede elegir compañía, y ninguna pantalla le funciona.
+    # Ya NO exige `CompanyId`: la administración de usuarios pasó a ser de
+    # instalación (docs/PLAN-ROLES-POR-ALCANCE.md), así que puede existir un
+    # usuario que solo tenga rol de instalación y ninguna compañía asignada
+    # todavía. El acceso a compañías (y su rol dentro de cada una) se asigna
+    # después, desde el panel "Gestionar accesos"
+    # (`PUT /api/users/:id/companies`, `PUT /api/users/:id/installation_role`).
     def create
-      company = assignable_company
-      return if performed?
-
       user = User.new(user_params.merge(is_active: true))
       return render_invalid(user) unless user.save
-
-      UsersByCompany.create!(user: user, company: company)
 
       render json: ApiResponse.success(serialize(user), code: 201,
                                        message: 'Usuario registrado con éxito.').to_h,
@@ -91,10 +85,15 @@ module Api
     # `unscoped` a propósito: el default_scope de SoftDeletable esconde a los
     # inactivos, y esta pantalla existe justamente para poder verlos y
     # reactivarlos — es lo que el .NET pedía con `activeOnly=false`.
+    #
+    # Sin alcance por compañía: administrar usuarios es un permiso de
+    # INSTALACIÓN (`Configurations_Users_*`), así que quien entra a esta
+    # pantalla ya administra a todos los usuarios del producto, haya o no una
+    # compañía activa. `Configurations_Users_ViewAllApplicationUsers` (que
+    # ampliaba el alcance de "los de mi compañía" a "todos") se da de baja: ya
+    # no hay un alcance más chico del que ampliarse.
     def visible_users
-      return User.unscoped if permission?(SEE_ALL_PERMISSION)
-
-      User.unscoped.in_company(Current.company_id)
+      User.unscoped
     end
 
     def load_user
@@ -102,18 +101,6 @@ module Api
       return if @user
 
       render json: ApiResponse.not_found('El usuario no existe.').to_h, status: :not_found
-    end
-
-    # La compañía a la que se asigna el usuario nuevo. Se valida contra las del
-    # administrador que lo está creando: no puede sembrar usuarios en compañías a
-    # las que él mismo no llega.
-    def assignable_company
-      company = Company.assigned_to(Current.user.id).find_by(id: params[:CompanyId])
-      return company if company
-
-      render json: ApiResponse.error('Seleccione una compañía asignada a su usuario.').to_h,
-             status: :unprocessable_content
-      nil
     end
 
     # Se copia únicamente lo que vino en la petición, para que un PATCH parcial no

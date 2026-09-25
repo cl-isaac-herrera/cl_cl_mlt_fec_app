@@ -6,6 +6,7 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
   let(:user) { User.create!(email: 'sap@example.com') }
   let(:sap)  { Connection.create!(name: 'SAP Producción', sl_url: 'https://sap.test:50000/b1s/v1') }
   let(:acme) { Company.create!(name: 'ACME S.A.', sap_connection: sap, sap_db: 'SBO_ACME') }
+  let(:role) { Role.create!(name: 'Acceso') }
 
   let(:login_url) { 'https://sap.test:50000/b1s/v1/Login' }
   let(:probe_url) { %r{\Ahttps://sap\.test:50000/b1s/v1/BusinessPartners} }
@@ -19,7 +20,7 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
   # pedir /Login, que es justamente lo que se está probando.
   before do
     Clavisco::ServiceLayer::LoadBalancer.instance.instance_variable_set(:@sessions, {})
-    UsersByCompany.create!(user: user, company: acme)
+    UsersByCompany.create!(user: user, company: acme, role: role)
 
     # El recurso del sondeo sale del catálogo (`sl_resources`), no del código: por
     # eso hace falta la fila. Ya no hay sondeo de emergencia — si falta, la
@@ -98,7 +99,7 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
 
   it 'no llama a SAP si la compañía no tiene conexión configurada' do
     sin_conexion = Company.create!(name: 'Sin SAP')
-    UsersByCompany.create!(user: user, company: sin_conexion)
+    UsersByCompany.create!(user: user, company: sin_conexion, role: role)
 
     sign_in(user)
     post '/api/sap_credential_validations', params: credentials.merge(CompanyId: sin_conexion.id)
@@ -176,7 +177,7 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
 
     it 'no llama a SAP si no hay credenciales guardadas' do
       sin_credenciales = User.create!(email: 'sin-creds@example.com')
-      UsersByCompany.create!(user: sin_credenciales, company: acme)
+      UsersByCompany.create!(user: sin_credenciales, company: acme, role: role)
 
       sign_in(sin_credenciales)
       post '/api/sap_credential_validations', params: { CompanyId: acme.id, UseSavedCredentials: true }, as: :json
@@ -194,12 +195,11 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
     let(:role)   { Role.create!(name: 'Configurador') }
 
     def grant(*names)
-      UserRole.create!(user: user, role: role, company: acme)
-      names.each { |n| RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: n)) }
+      grant_permissions(user, *names, company: acme)
     end
 
     it 'exige Configurations_Users_Update' do
-      UsersByCompany.create!(user: target, company: acme)
+      UsersByCompany.create!(user: target, company: acme, role: role)
       grant('Configurations_Users_ListAccess')
 
       sign_in(user, company: acme)
@@ -210,7 +210,7 @@ RSpec.describe 'POST /api/sap_credential_validations', type: :request do
     end
 
     it 'valida contra la compañía del usuario objetivo y no la del administrador' do
-      UsersByCompany.create!(user: target, company: acme)
+      UsersByCompany.create!(user: target, company: acme, role: role)
       grant('Configurations_Users_Update')
       stub_successful_login
       stub_request(:get, probe_url).to_return(status: 200, body: { value: [] }.to_json,

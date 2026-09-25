@@ -35,7 +35,7 @@ module Api
     # El orden importa: primero el permiso (401/403) y después la compañía. Un
     # usuario sin permiso no tiene por qué enterarse de cómo está configurada.
     before_action :authorize_action
-    before_action :require_company!
+    include RequiresActiveCompany
 
     MAX_PER_PAGE     = Sap::Branches::MAX_PAGE_SIZE
     DEFAULT_PER_PAGE = 10
@@ -126,19 +126,6 @@ module Api
 
     def authorize_action
       require_permission!(PERMISSIONS.fetch(action_name))
-    end
-
-    def require_company!
-      return if company
-
-      render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
-             status: :forbidden
-    end
-
-    # La compañía activa, validada contra las asignadas al usuario (§28 regla 5):
-    # el id sale de la sesión, nunca de un parámetro.
-    def company
-      @company ||= Company.assigned_to(Current.user.id).find_by(id: Current.company_id)
     end
 
     # @param write [Boolean] las escrituras se atribuyen a la persona; las

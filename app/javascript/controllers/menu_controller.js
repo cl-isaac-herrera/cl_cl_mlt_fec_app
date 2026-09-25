@@ -125,13 +125,12 @@ export default class extends Controller {
   }
 
   async #loadPermissionsAndRender() {
-    const company  = SStore.get('CurrentCompany')
     let permissions = SStore.get('Permissions') // array de strings — sessionStorage (per-tab)
 
-    // Si no hay permisos en caché, cargarlos del API. Se sigue exigiendo compañía
-    // seleccionada: sin ella el servidor no tiene con qué resolver los roles y
-    // devolvería una lista vacía que se cachearía como "sin permisos".
-    if (!permissions && company?.companyId) {
+    // Se pide SIEMPRE, haya o no compañía activa (docs/PLAN-ROLES-POR-ALCANCE.md):
+    // los permisos de instalación (Usuarios, Seguridad, Conexiones…) no dependen
+    // de ninguna, así que el menú tiene que poder mostrarlos igual.
+    if (!permissions) {
       permissions = await this.#fetchPermissions()
     }
 
@@ -140,10 +139,11 @@ export default class extends Controller {
   }
 
   /**
-   * GET /api/permissions — endpoint nativo de Rails, lee de las tablas propias
-   * (user_roles → role_permissions → permissions). No recibe companyId: la
-   * compañía activa vive en la session cookie del servidor (§2.4), así que el
-   * cliente no puede pedir los permisos de otra.
+   * GET /api/permissions — endpoint nativo de Rails: los de instalación
+   * (`users.installation_role_id`) más los de la compañía activa, si hay una
+   * (`users_by_companies.role_id`). No recibe companyId: la compañía activa
+   * vive en la session cookie del servidor (§2.4), así que el cliente no puede
+   * pedir los permisos de otra.
    */
   async #fetchPermissions() {
     try {
@@ -163,6 +163,8 @@ export default class extends Controller {
    * @param {Set<string>} permSet
    */
   #buildVisibleNodes(permSet) {
+    const hasCompany = !!SStore.get('CurrentCompany')?.companyId
+
     return this.constructor.MENU_NODES.map(node => {
       // home y logout siempre visibles
       if (node.key === 'home' || node.key === 'logout') {
@@ -178,10 +180,15 @@ export default class extends Controller {
           : permSet.has(req)
       }
 
-      // Nodos hijo visibles
-      const visibleChildren = (node.nodes ?? []).filter(child =>
-        hasPermission(child.requiredPermission)
-      )
+      // Nodos hijo visibles. `requiresCompany` (docs/PLAN-ROLES-POR-ALCANCE.md,
+      // §26): sin compañía activa no se puede resolver el permiso de compañía
+      // de este nodo, así que se muestra igual pero DESHABILITADO con tooltip
+      // (`#createNodeElement`), en vez de ocultarlo — no es lo mismo "no tiene
+      // permiso" que "todavía no eligió compañía".
+      const visibleChildren = (node.nodes ?? []).filter(child => {
+        if (child.requiresCompany && !hasCompany) return true
+        return hasPermission(child.requiredPermission)
+      })
 
       // Padre visible si tiene su propio permiso O algún hijo tiene permiso
       const parentVisible = hasPermission(node.requiredPermission) || visibleChildren.length > 0
@@ -192,6 +199,16 @@ export default class extends Controller {
         nodes: visibleChildren
       }
     })
+  }
+
+  /**
+   * ¿El nodo necesita una compañía activa y no hay ninguna seleccionada?
+   * (`requiresCompany: true` en `data/menu.js`). A diferencia de un permiso
+   * ausente, esto SÍ se muestra —deshabilitado, con tooltip— porque el usuario
+   * puede resolverlo solo con elegir una compañía (§26).
+   */
+  #isCompanyRequiredButMissing(node) {
+    return !!node.requiresCompany && !SStore.get('CurrentCompany')?.companyId
   }
 
   /**
@@ -280,6 +297,18 @@ export default class extends Controller {
             'cursor-not-allowed text-left'
           ].join(' ')
           childBtn.title = 'Opción no disponible: la compañía seleccionada no tiene habilitada la facturación de proveedor.'
+          subList.appendChild(childBtn)
+          return
+        }
+
+        // Nodo que necesita compañía activa y todavía no hay ninguna elegida:
+        // se DESHABILITA con tooltip en vez de ocultarse (§26).
+        if (this.#isCompanyRequiredButMissing(child)) {
+          childBtn.className = [
+            'w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-600',
+            'cursor-not-allowed text-left'
+          ].join(' ')
+          childBtn.title = 'Seleccione una compañía para usar esta opción.'
           subList.appendChild(childBtn)
           return
         }

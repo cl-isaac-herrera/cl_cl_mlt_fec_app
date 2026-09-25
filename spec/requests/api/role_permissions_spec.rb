@@ -4,20 +4,18 @@ require 'rails_helper'
 
 RSpec.describe 'Api::Roles::Permissions', type: :request do
   let(:user)    { User.create!(email: 'permisos@example.com') }
-  let(:company) { Company.create!(name: 'ACME S.A.') }
-  let(:role)    { Role.create!(name: 'Configurador') }
   let(:target)  { Role.create!(name: 'Ventas') }
 
   let(:leer)    { Permission.create!(name: 'Documents_Issued_Access',  description: 'Ver emitidos')   }
   let(:emitir)  { Permission.create!(name: 'Documents_Issued_Create',  description: 'Emitir')         }
   let(:anular)  { Permission.create!(name: 'Documents_Issued_Cancel',  description: 'Anular')         }
 
+  # `Configurations_Permissions_Access` y `Configurations_Security_Access` son
+  # de alcance `installation` (docs/PLAN-ROLES-POR-ALCANCE.md): no dependen de
+  # ninguna compañía activa.
   def sign_in_with(*permission_names)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.create!(name: name))
-    end
-    sign_in(user, company: company)
+    grant_permissions(user, *permission_names)
+    sign_in(user)
   end
 
   def body      = JSON.parse(response.body)
@@ -226,7 +224,7 @@ RSpec.describe 'Api::Roles::Permissions', type: :request do
 
       expect(body_data.find { |p| p['Id'] == leer.id })
         .to eq('Id' => leer.id, 'Name' => 'Documents_Issued_Access',
-               'Description' => 'Ver emitidos', 'Type' => 'normal')
+               'Description' => 'Ver emitidos', 'Scope' => 'company')
     end
 
     it 'responde 403 sin el permiso de asignación' do
@@ -256,7 +254,7 @@ RSpec.describe 'Api::Roles::Permissions', type: :request do
 
       # Catálogo: todos los que existen, con el registro completo.
       expect(catalogo.map { |p| p['Name'] }).to include('Documents_Issued_Access')
-      expect(catalogo.first.keys).to contain_exactly('Id', 'Name', 'Description', 'Type')
+      expect(catalogo.first.keys).to contain_exactly('Id', 'Name', 'Description', 'Scope')
     end
   end
 end

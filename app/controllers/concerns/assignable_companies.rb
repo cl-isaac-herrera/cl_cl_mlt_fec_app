@@ -12,10 +12,14 @@ module AssignableCompanies
   extend ActiveSupport::Concern
 
   # Vía de escape para poder asignarle su primera compañía a alguien en una
-  # sociedad donde el administrador no opera. Bajo `CLAUDE.md` §31 "las compañías
-  # del grupo" son literalmente las de la instalación, así que este permiso del
-  # catálogo hace de "ver todas" sin inventar uno nuevo.
-  SEE_ALL_COMPANIES = 'Configurations_Companies_ViewGroupCompanies'
+  # sociedad donde el administrador no opera.
+  #
+  # Antes era `Configurations_Companies_ViewGroupCompanies` ("las compañías del
+  # grupo"), pero bajo `CLAUDE.md` §31 no hay grupos: "el grupo" siempre fue
+  # literalmente la instalación entera, así que se reemplaza por el permiso que
+  # ya dice eso sin depender de un concepto inexistente
+  # (docs/PLAN-ROLES-POR-ALCANCE.md, Fase 0 decisión 5).
+  SEE_ALL_COMPANIES = 'Configurations_Companies_ViewAllApplicationCompanies'
 
   private
 

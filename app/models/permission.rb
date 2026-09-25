@@ -4,20 +4,16 @@ class Permission < ApplicationRecord
   include Auditable
   include Clavisco::DataAccess::SoftDeletable
 
-  # ⚠️ `type` acá NO es Single Table Inheritance: es el tipo de permiso del negocio.
-  # ActiveRecord toma por convención una columna llamada `type` como discriminador
-  # de STI, así que sin esta línea cualquier lectura falla con
-  # `ActiveRecord::SubclassNotFound` al no encontrar una clase `normal`/`global`.
-  self.inheritance_column = nil
-
-  # normal → se concede por compañía (user_roles lleva company_id).
-  # global → aplica a nivel de aplicación, no depende de la compañía activa.
-  TYPES = %w[normal global].freeze
+  # installation → se concede con el rol de instalación del usuario, sin
+  #                depender de la compañía activa (`users.installation_role_id`).
+  # company      → se concede con el rol de compañía de la asignación
+  #                (`users_by_companies.role_id`), y solo aplica ahí.
+  SCOPES = %w[installation company].freeze
 
   # Mensaje explícito: el proyecto declara `default_locale = :es` pero no tiene
   # `config/locales`, así que un mensaje por i18n saldría como "translation missing".
-  validates :type, inclusion: { in: TYPES, message: "debe ser 'normal' o 'global'" }
+  validates :scope, inclusion: { in: SCOPES, message: "debe ser 'installation' o 'company'" }
 
-  scope :normal, -> { where(type: 'normal') }
-  scope :global, -> { where(type: 'global') }
+  scope :installation, -> { where(scope: 'installation') }
+  scope :company,      -> { where(scope: 'company') }
 end

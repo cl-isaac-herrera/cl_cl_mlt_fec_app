@@ -18,10 +18,7 @@ RSpec.describe 'POST /api/sap_license_validations', type: :request do
   def body = JSON.parse(response.body)
 
   def sign_in_with(*permission_names)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.create!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 

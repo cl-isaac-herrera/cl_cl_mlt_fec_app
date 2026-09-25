@@ -2,8 +2,9 @@
  * UsersController — Gestión de Usuarios (/configurations/users)
  *
  * Pantalla sin tabs: ES la lista de usuarios (perm: Configurations_Users_ListAccess).
- * Todo lo que se le concede a un usuario —rol, permisos globales y compañías— vive
- * en el panel "Gestionar accesos", que es una acción de fila.
+ * Todo lo que se le concede a un usuario —rol de instalación y compañías (cada
+ * una con su rol de compañía)— vive en el panel "Gestionar accesos", que es una
+ * acción de fila (docs/PLAN-ROLES-POR-ALCANCE.md).
  *
  * De los tres tabs del Angular original quedó uno:
  *   · "Completar registro" activaba usuarios pendientes de confirmar su correo.
@@ -18,16 +19,13 @@
  *   - GET   /api/users/:id                            (detalle)
  *   - POST  /api/users                                (alta)
  *   - PATCH /api/users/:id                            (edición)
- *   - GET   /api/users/:id/companies                  (compañías del usuario)
- *   - PUT   /api/users/:id/companies                  (reemplazar sus compañías)
- *   - GET   /api/users/:id/role                       (rol en la compañía activa)
- *   - PUT   /api/users/:id/role                       (asignar rol)
- *   - GET   /api/users/:id/permissions                (permisos globales del usuario)
- *   - PUT   /api/users/:id/permissions                (reemplazar sus permisos globales)
- *   - GET   /api/permissions/catalog?type=global      (catálogo de permisos globales)
+ *   - GET   /api/users/:id/companies                  (compañías del usuario, con su rol)
+ *   - PUT   /api/users/:id/companies                  (reemplazar sus compañías y roles)
+ *   - GET   /api/users/:id/installation_role           (rol de instalación del usuario)
+ *   - PUT   /api/users/:id/installation_role           (asignar/quitar el rol de instalación)
+ *   - GET   /api/roles?scope=installation|company     (catálogo de roles por alcance)
  *   - GET   /api/profile/companies                    (compañías del administrador)
  *   - GET   /api/companies/assignable                 (las que puede asignar)
- *   - GET   /api/roles                                (catálogo de roles)
  *   - POST  /api/sap_credential_validations           (probar credenciales de SAP)
  */
 
@@ -39,9 +37,8 @@ import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'contr
 // Sub-tabs del panel "Gestionar accesos". El label se usa en el diálogo de
 // cambios sin guardar; el orden acá no importa.
 const ACCESS_TAB_LABELS = {
-  roles:     'Roles',
-  global:    'Permisos globales',
-  companies: 'Compañías',
+  installation_role: 'Rol de instalación',
+  companies:          'Compañías',
 };
 
 export default class extends TabulatorController {
@@ -67,9 +64,7 @@ export default class extends TabulatorController {
     // Gestionar accesos panel
     'accessPanel', 'accessBackdrop', 'accessLoader', 'accessUserLabel',
     'accessTabBtn', 'accessTabContent',
-    'accessRoleSearch', 'accessRoleList', 'accessRoleEmpty', 'accessRoleError',
-    'accessGlobalSearch', 'accessGlobalSelectAll',
-    'accessGlobalList', 'accessGlobalEmpty',
+    'accessRoleSelect',
     'accessCompanySearch', 'accessCompanySelectAll',
     'accessCompanyList', 'accessCompanyEmpty',
     'accessFooterNote', 'accessSaveBtn',
@@ -97,25 +92,18 @@ export default class extends TabulatorController {
   #createDataLoaded = false;
 
   // Gestionar accesos (panel por usuario)
-  #globalAccessAllowed   = false;   // permiso para el tab de permisos globales
   #companyAccessAllowed  = false;   // permiso para el tab de compañías
   #accessUser            = null;    // usuario seleccionado (fila de la tabla)
-  #accessActiveTab       = 'roles';
-  // Roles tab
-  #accessRoles           = [];
-  #accessInitialRolId    = null;
-  #accessCurrentRolId    = null;
-  #accessRoleFilter      = '';
-  // Permisos globales tab
-  #accessGlobalPerms     = [];      // catálogo global (cacheado entre usuarios)
-  #accessGlobalInitial   = new Set();
-  #accessGlobalCurrent   = new Set();
-  #accessGlobalFilter    = '';
-  #accessGlobalLoaded    = false;   // asignados del usuario actual ya cargados
-  // Compañías tab
-  #accessCompanies       = [];      // catálogo asignable (cacheado entre usuarios)
-  #accessCompaniesInitial = new Set();
-  #accessCompaniesCurrent = new Set();
+  #accessActiveTab       = 'installation_role';
+  // Rol de instalación
+  #accessRoles           = [];      // catálogo de roles de instalación (scope=installation)
+  #accessInitialRolId    = '';
+  #accessCurrentRolId    = '';
+  // Compañías tab — cada compañía marcada lleva su rol de compañía.
+  #accessCompanies        = [];             // catálogo asignable (cacheado entre usuarios)
+  #accessCompanyRoles     = [];             // catálogo de roles de compañía (cacheado entre usuarios)
+  #accessCompaniesInitial = new Map();      // CompanyId -> RoleId
+  #accessCompaniesCurrent = new Map();      // CompanyId -> RoleId
   // Compañías que el usuario tiene asignadas pero que YO no administro: se
   // muestran marcadas y deshabilitadas (§26 — no se ocultan) y nunca viajan en el
   // guardado, porque el servidor tampoco las toca.
@@ -127,7 +115,6 @@ export default class extends TabulatorController {
 
   connect() {
     this.#permissions = SStore.get('Permissions') || [];
-    this.#globalAccessAllowed  = this.#hasPerm('Configurations_Permissions_GlobalAccess');
     this.#companyAccessAllowed = this.#hasPerm('Configurations_Users_CompanyAssignment');
 
     // Sin tabs: el permiso de la pantalla es el de la lista. Antes lo gateaba el
@@ -612,72 +599,56 @@ export default class extends TabulatorController {
 
   // ── Gestionar accesos (panel por usuario) ──────────────────────────────────────
   //
-  // Tab "Roles" (nativo): un rol por usuario y compañía.
-  //   - GET /api/roles                → catálogo de roles del producto
-  //   - GET /api/users/:id/role       → rol del usuario en la compañía activa
-  //   - PUT /api/users/:id/role       → asignar (reemplaza el rol anterior)
-  // La compañía la pone la sesión: ya no viaja como parámetro, y el servidor
-  // resuelve solo si el guardado es alta o cambio (el .NET exigía mandarle el id
-  // de la asignación existente en `RolByUser`).
+  // Tab "Rol de instalación" (nativo): un rol de instalación por usuario, sin
+  // depender de ninguna compañía activa.
+  //   - GET /api/roles?scope=installation           → catálogo de roles de instalación
+  //   - GET /api/users/:id/installation_role         → rol de instalación del usuario (o null)
+  //   - PUT /api/users/:id/installation_role         → asignar (RoleId) o quitar (RoleId: null)
   //
-  // Tab "Permisos globales" (nativo, solo si Configurations_Permissions_GlobalAccess):
-  //   - GET /api/permissions/catalog?type=global → catálogo de permisos globales
-  //   - GET /api/users/:id/permissions           → asignados al usuario
-  //   - PUT /api/users/:id/permissions           → reemplaza el conjunto completo
-  // El .NET obligaba a calcular el delta acá y mandar DOS peticiones (POST de
-  // altas + DELETE de bajas) que podían quedar a medias si la segunda fallaba.
-  //   - GET    /api/Permission/global-permissions       → catálogo global
-  //   - GET    /api/User/global-permissions?userId=X     → asignados al usuario
-  //   - POST   /api/Permission/bulk-global-permissions   → asignar
-  //   - DELETE /api/Permission/bulk-global-permissions   → desasignar
+  // Tab "Compañías" (nativo, solo si Configurations_Users_CompanyAssignment):
+  //   - GET /api/companies/assignable       → catálogo de compañías que YO puedo asignar
+  //   - GET /api/roles?scope=company          → catálogo de roles de compañía
+  //   - GET /api/users/:id/companies         → compañías del usuario, cada una con su RoleId
+  //   - PUT /api/users/:id/companies         → reemplaza el conjunto completo (con su rol)
 
   async #openAccessPanel(row) {
     if (!row) return;
     if (!this.#hasPerm('Configurations_Users_ManageAccess')) return;
 
     this.#accessUser = row;
-    this.#accessActiveTab = 'roles';
-    this.#accessGlobalFilter = '';
+    this.#accessActiveTab = 'installation_role';
     this.#accessCompanyFilter = '';
-    this.#accessRoleFilter = '';
 
     // Estado por-usuario: reiniciar al abrir para otro usuario (evita asteriscos
     // de cambios "fantasma" heredados del usuario anterior).
     this.#accessInitialRolId  = '';
     this.#accessCurrentRolId  = '';
-    this.#accessGlobalInitial = new Set();
-    this.#accessGlobalCurrent = new Set();
-    this.#accessGlobalLoaded  = false;
-    this.accessGlobalListTarget.innerHTML = '';
-    this.#accessCompaniesInitial = new Set();
-    this.#accessCompaniesCurrent = new Set();
+    this.#accessCompaniesInitial = new Map();
+    this.#accessCompaniesCurrent = new Map();
     this.#accessCompaniesLocked  = [];
     this.#accessCompaniesLoaded  = false;
     this.accessCompanyListTarget.innerHTML = '';
 
     this.accessUserLabelTarget.textContent = row.FullName || row.Email || '';
-    this.accessGlobalSearchTarget.value = '';
     this.accessCompanySearchTarget.value = '';
-    this.accessRoleSearchTarget.value = '';
 
-    // Cada tab opcional se muestra solo si el usuario actual tiene su permiso.
+    // El tab "Compañías" se muestra solo si el usuario actual tiene su permiso.
+    // "Rol de instalación" siempre está visible: abrir el panel ya exige
+    // Configurations_Users_ManageAccess.
     this.accessTabBtnTargets.forEach(btn => {
-      if (btn.dataset.accessTab === 'global') {
-        btn.classList.toggle('hidden', !this.#globalAccessAllowed);
-      }
       if (btn.dataset.accessTab === 'companies') {
         btn.classList.toggle('hidden', !this.#companyAccessAllowed);
       }
     });
 
-    this.#activateAccessTab('roles');
+    this.#activateAccessTab('installation_role');
 
     // Abrir panel
     this.accessBackdropTarget.classList.remove('hidden');
     this.accessPanelTarget.classList.remove('translate-x-full');
     document.body.style.overflow = 'hidden';
 
-    await this.#loadAccessRoles();
+    await this.#loadAccessInstallationRole();
   }
 
   // Cierre por X o backdrop (puede ser accidental): confirma si hay cambios sin
@@ -700,7 +671,7 @@ export default class extends TabulatorController {
   // Cancelar es un descarte explícito del tab activo: no confirma por esos
   // cambios. Solo confirma por los OTROS tabs, que se perderían sin que el
   // usuario los estuviera mirando — y los nombra, para que sepa qué está por
-  // tirar. Con tres tabs ya no alcanza con mirar "el otro".
+  // tirar.
   async cancelAccessPanel() {
     const pending = this.#tabsWithChanges().filter(name => name !== this.#accessActiveTab);
 
@@ -733,7 +704,6 @@ export default class extends TabulatorController {
 
     // Carga perezosa: los datos del tab se traen la primera vez que se entra,
     // una vez por usuario.
-    if (name === 'global'    && !this.#accessGlobalLoaded)    this.#loadAccessGlobalPerms();
     if (name === 'companies' && !this.#accessCompaniesLoaded) this.#loadAccessCompanies();
   }
 
@@ -755,95 +725,55 @@ export default class extends TabulatorController {
     this.#updateAccessSaveBtn();
   }
 
-  // ── Tab Roles ───────────────────────────────────────────────────────────────
+  // ── Tab Rol de instalación ────────────────────────────────────────────────────
 
-  async #loadAccessRoles() {
+  async #loadAccessInstallationRole() {
     this.accessLoaderTarget.classList.remove('hidden');
-    this.accessRoleErrorTarget.classList.add('hidden');
 
     try {
       const [rolesRes, assignRes] = await Promise.all([
-        this.#railsFetch('/api/roles'),
-        this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/role`),
+        this.#railsFetch('/api/roles?scope=installation'),
+        this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/installation_role`),
       ]);
 
       this.#accessRoles = (rolesRes.Data || []).filter(r => r.Active && r.Name !== 'OWNER');
 
-      // Asignación actual del usuario en la compañía activa (Data es null si no tiene)
+      // `Data` es `null` si el usuario no tiene rol de instalación asignado —
+      // es un estado válido, no un error.
       const assigned = assignRes.Data;
       this.#accessInitialRolId = assigned ? String(assigned.RoleId) : '';
       this.#accessCurrentRolId = this.#accessInitialRolId;
 
-      this.#renderAccessRoleList();
+      this.#renderAccessRoleSelect();
       this.#updateAccessSaveBtn();
     } catch (err) {
-      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message || 'Error al cargar los roles del usuario', showConfirmButton: false, timer: 3000, timerProgressBar: true });
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message || 'Error al cargar el rol de instalación', showConfirmButton: false, timer: 3000, timerProgressBar: true });
     } finally {
       this.accessLoaderTarget.classList.add('hidden');
     }
   }
 
-  #filteredAccessRoles() {
-    const q = this.#accessRoleFilter.trim().toLowerCase();
-    if (!q) return this.#accessRoles;
-    return this.#accessRoles.filter(r => (r.Name || '').toLowerCase().includes(q));
+  #renderAccessRoleSelect() {
+    const select = this.accessRoleSelectTarget;
+    select.innerHTML = '<option value="">-- Sin rol --</option>' +
+      this.#accessRoles.map(role => `<option value="${role.Id}">${this.#escapeHtml(role.Name)}</option>`).join('');
+    select.value = this.#accessCurrentRolId || '';
   }
 
-  #renderAccessRoleList() {
-    const roles = this.#filteredAccessRoles();
-    this.accessRoleListTarget.innerHTML = '';
-
-    if (roles.length === 0) {
-      this.accessRoleEmptyTarget.classList.remove('hidden');
-      this.accessRoleEmptyTarget.classList.add('flex');
-      return;
-    }
-    this.accessRoleEmptyTarget.classList.add('hidden');
-    this.accessRoleEmptyTarget.classList.remove('flex');
-
-    roles.forEach(role => {
-      const checked = String(role.Id) === String(this.#accessCurrentRolId);
-      const label = document.createElement('label');
-      label.className =
-        'flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-colors ' +
-        (checked ? 'border-blue-200 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50');
-      label.innerHTML = `
-        <input type="radio" name="access-role" data-action="change->users#selectAccessRole" data-rol-id="${role.Id}"
-               ${checked ? 'checked' : ''}
-               class="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer">
-        <div class="flex flex-col flex-1 gap-0.5 min-w-0">
-          <span class="font-medium text-gray-800 text-sm">${this.#escapeHtml(role.Name)}</span>
-        </div>`;
-      this.accessRoleListTarget.appendChild(label);
-    });
-  }
-
-  selectAccessRole(event) {
-    this.#accessCurrentRolId = event.target.dataset.rolId;
-    this.accessRoleErrorTarget.classList.add('hidden');
-    this.#renderAccessRoleList();   // refleja la selección (un solo rol activo)
+  onAccessInstallationRoleChange(event) {
+    this.#accessCurrentRolId = event.target.value;
     this.#updateAccessSaveBtn();
   }
 
-  onAccessRoleSearch(event) {
-    this.#accessRoleFilter = event.target.value || '';
-    this.#renderAccessRoleList();
-  }
-
   async #saveAccessRole() {
-    if (!this.#accessCurrentRolId) {
-      this.accessRoleErrorTarget.classList.remove('hidden');
-      return;
-    }
-
     this.accessLoaderTarget.classList.remove('hidden');
     try {
-      // PUT: el cuerpo lleva el estado final (un rol) y reemplaza el anterior.
-      // Ni el id del usuario ni el de la compañía viajan en el cuerpo: uno está en
-      // el path y la otra sale de la sesión.
-      await this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/role`, {
+      // `RoleId: null` quita el rol de instalación — acá "sin rol" es un estado
+      // legítimo, a diferencia del rol de compañía que siempre exige uno.
+      const roleId = this.#accessCurrentRolId ? parseInt(this.#accessCurrentRolId, 10) : null;
+      await this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/installation_role`, {
         method: 'PUT',
-        body: JSON.stringify({ RoleId: parseInt(this.#accessCurrentRolId) }),
+        body: JSON.stringify({ RoleId: roleId }),
       });
       Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Asignación realizada correctamente.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       this.#accessInitialRolId = this.#accessCurrentRolId;
@@ -856,168 +786,36 @@ export default class extends TabulatorController {
     }
   }
 
-  // ── Tab Permisos globales ─────────────────────────────────────────────────────
-
-  async #loadAccessGlobalPerms() {
-    this.accessLoaderTarget.classList.remove('hidden');
-
-    try {
-      const requests = [
-        this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/permissions`),
-      ];
-      // El catálogo es el mismo para todos: se pide una sola vez por sesión.
-      if (this.#accessGlobalPerms.length === 0) {
-        requests.push(this.#railsFetch('/api/permissions/catalog?type=global'));
-      }
-
-      const [assignedRes, catalogRes] = await Promise.all(requests);
-
-      if (catalogRes) {
-        if (catalogRes.Data && catalogRes.Data.length) {
-          this.#accessGlobalPerms = catalogRes.Data;
-        } else {
-          Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: catalogRes.Message || 'No hay permisos globales disponibles', showConfirmButton: false, timer: 3000, timerProgressBar: true });
-        }
-      }
-
-      const assignedIds = (assignedRes.Data && Array.isArray(assignedRes.Data))
-        ? assignedRes.Data.map(p => p.Id)
-        : [];
-      this.#accessGlobalInitial = new Set(assignedIds);
-      this.#accessGlobalCurrent = new Set(assignedIds);
-      this.#accessGlobalLoaded  = true;
-
-      this.#renderAccessGlobalList();
-      this.#updateAccessSaveBtn();
-    } catch (err) {
-      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: err.message || 'Error al cargar los permisos globales', showConfirmButton: false, timer: 3000, timerProgressBar: true });
-    } finally {
-      this.accessLoaderTarget.classList.add('hidden');
-    }
-  }
-
-  #filteredAccessGlobal() {
-    const q = this.#accessGlobalFilter.trim().toLowerCase();
-    if (!q) return this.#accessGlobalPerms;
-    return this.#accessGlobalPerms.filter(p =>
-      (p.Description || '').toLowerCase().includes(q) ||
-      (p.Name || '').toLowerCase().includes(q));
-  }
-
-  #renderAccessGlobalList() {
-    const perms = this.#filteredAccessGlobal();
-    this.accessGlobalListTarget.innerHTML = '';
-
-    if (perms.length === 0) {
-      this.accessGlobalEmptyTarget.classList.remove('hidden');
-      this.accessGlobalEmptyTarget.classList.add('flex');
-      return;
-    }
-    this.accessGlobalEmptyTarget.classList.add('hidden');
-    this.accessGlobalEmptyTarget.classList.remove('flex');
-
-    perms.forEach(perm => {
-      const checked = this.#accessGlobalCurrent.has(perm.Id);
-      const label = document.createElement('label');
-      label.className =
-        'flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-colors ' +
-        (checked ? 'border-blue-200 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50');
-      label.innerHTML = `
-        <input type="checkbox" data-action="change->users#toggleAccessGlobalPerm" data-perm-id="${perm.Id}"
-               ${checked ? 'checked' : ''}
-               class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer">
-        <div class="flex flex-col flex-1 gap-0.5 min-w-0">
-          <span class="font-medium text-gray-800 text-sm">${this.#escapeHtml(perm.Description)}</span>
-          ${perm.Name ? `<span class="text-[11px] text-gray-400 font-mono truncate">${this.#escapeHtml(perm.Name)}</span>` : ''}
-        </div>`;
-      this.accessGlobalListTarget.appendChild(label);
-    });
-  }
-
-  toggleAccessGlobalPerm(event) {
-    const id = parseInt(event.target.dataset.permId, 10);
-    if (Number.isNaN(id)) return;
-
-    if (event.target.checked) this.#accessGlobalCurrent.add(id);
-    else this.#accessGlobalCurrent.delete(id);
-
-    const label = event.target.closest('label');
-    if (label) {
-      const checked = event.target.checked;
-      label.className =
-        'flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-colors ' +
-        (checked ? 'border-blue-200 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50');
-    }
-
-    this.#updateAccessSaveBtn();
-  }
-
-  onAccessGlobalSearch(event) {
-    this.#accessGlobalFilter = event.target.value || '';
-    this.#renderAccessGlobalList();
-    this.#updateAccessSaveBtn();
-  }
-
-  toggleAccessGlobalAll(event) {
-    const select = event.target.checked;
-    this.#filteredAccessGlobal().forEach(perm => {
-      if (select) this.#accessGlobalCurrent.add(perm.Id);
-      else this.#accessGlobalCurrent.delete(perm.Id);
-    });
-    this.#renderAccessGlobalList();
-    this.#updateAccessSaveBtn();
-  }
-
-  async #saveAccessGlobal() {
-    if (!this.#tabHasChanges('global')) {
-      Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No hay cambios para guardar', showConfirmButton: false, timer: 3000, timerProgressBar: true });
-      return;
-    }
-
-    this.accessLoaderTarget.classList.remove('hidden');
-    try {
-      // Un solo PUT con el conjunto final: el servidor calcula el delta en una
-      // transacción. Antes eran dos peticiones (altas y bajas) y si la segunda
-      // fallaba el usuario quedaba con la mitad de los cambios aplicados.
-      await this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/permissions`, {
-        method: 'PUT',
-        body: JSON.stringify({ PermissionIds: [...this.#accessGlobalCurrent] }),
-      });
-
-      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Permisos globales actualizados exitosamente', showConfirmButton: false, timer: 3000, timerProgressBar: true });
-      this.#accessGlobalInitial = new Set(this.#accessGlobalCurrent);
-      this.#updateAccessSaveBtn();
-      this.#afterAccessSave();
-    } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Error al aplicar cambios', text: err.message, confirmButtonText: 'Aceptar' });
-    } finally {
-      this.accessLoaderTarget.classList.add('hidden');
-    }
-  }
-
   // ── Tab Compañías ─────────────────────────────────────────────────────────────
   //
   // Reemplaza al tab "Asignación de compañías", que era un segundo buscador de
-  // usuarios peor que la tabla de la Lista. Acá el usuario ya está elegido.
+  // usuarios peor que la tabla de la Lista. Acá el usuario ya está elegido, y
+  // cada compañía marcada lleva su propio rol de compañía
+  // (docs/PLAN-ROLES-POR-ALCANCE.md).
   //
   //   - GET /api/companies/assignable → las que YO puedo asignar (no todas)
-  //   - GET /api/users/:id/companies  → las que el usuario tiene hoy
-  //   - PUT /api/users/:id/companies  → reemplaza el conjunto
+  //   - GET /api/roles?scope=company    → catálogo de roles de compañía
+  //   - GET /api/users/:id/companies   → las que el usuario tiene hoy, con su rol
+  //   - PUT /api/users/:id/companies   → reemplaza el conjunto { CompanyId, RoleId }
   //
-  // El catálogo se cachea entre usuarios; las asignadas no, obviamente.
+  // Los catálogos se cachean entre usuarios; las asignadas no, obviamente.
 
   async #loadAccessCompanies() {
     this.accessLoaderTarget.classList.remove('hidden');
 
     try {
-      const requests = [
-        this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/companies`),
-      ];
-      if (this.#accessCompanies.length === 0) {
-        requests.push(this.#railsFetch('/api/companies/assignable'));
-      }
+      // `Promise.all` acepta valores no-promesa: si el catálogo ya está
+      // cacheado, el `null` resuelve al instante y el destructuring de abajo
+      // simplemente no lo usa.
+      const assignedPromise = this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/companies`);
+      const catalogPromise  = this.#accessCompanies.length === 0
+        ? this.#railsFetch('/api/companies/assignable')
+        : null;
+      const rolesPromise    = this.#accessCompanyRoles.length === 0
+        ? this.#railsFetch('/api/roles?scope=company')
+        : null;
 
-      const [assignedRes, catalogRes] = await Promise.all(requests);
+      const [assignedRes, catalogRes, rolesRes] = await Promise.all([assignedPromise, catalogPromise, rolesPromise]);
 
       if (catalogRes) {
         this.#accessCompanies = catalogRes.Data || [];
@@ -1026,17 +824,24 @@ export default class extends TabulatorController {
         }
       }
 
+      if (rolesRes) {
+        this.#accessCompanyRoles = (rolesRes.Data || []).filter(r => r.Active && r.Name !== 'OWNER');
+        if (this.#accessCompanyRoles.length === 0) {
+          Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'No hay roles de compañía disponibles.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
+        }
+      }
+
       // Las asignadas que NO están en el catálogo son de compañías fuera de mi
       // alcance: se muestran marcadas y deshabilitadas para que el administrador
       // sepa que existen (§26: no se ocultan, se explica por qué no se tocan) y
       // quedan fuera del conjunto editable.
-      const assigned    = assignedRes.Data || [];
-      const catalogIds  = new Set(this.#accessCompanies.map(c => c.Id));
-      const editableIds = assigned.filter(c => catalogIds.has(c.Id)).map(c => c.Id);
+      const assigned   = assignedRes.Data || [];
+      const catalogIds = new Set(this.#accessCompanies.map(c => c.Id));
+      const editable   = assigned.filter(c => catalogIds.has(c.Id));
 
       this.#accessCompaniesLocked  = assigned.filter(c => !catalogIds.has(c.Id));
-      this.#accessCompaniesInitial = new Set(editableIds);
-      this.#accessCompaniesCurrent = new Set(editableIds);
+      this.#accessCompaniesInitial = new Map(editable.map(c => [c.Id, c.RoleId]));
+      this.#accessCompaniesCurrent = new Map(this.#accessCompaniesInitial);
       this.#accessCompaniesLoaded  = true;
 
       this.#renderAccessCompanyList();
@@ -1056,9 +861,9 @@ export default class extends TabulatorController {
 
   #renderAccessCompanyList() {
     const companies = this.#filteredAccessCompanies();
-    const locked    = this.#accessCompanyFilter.trim()
-      ? this.#accessCompaniesLocked.filter(c =>
-          (c.Name || '').toLowerCase().includes(this.#accessCompanyFilter.trim().toLowerCase()))
+    const q = this.#accessCompanyFilter.trim().toLowerCase();
+    const locked = q
+      ? this.#accessCompaniesLocked.filter(c => (c.Name || '').toLowerCase().includes(q))
       : this.#accessCompaniesLocked;
 
     this.accessCompanyListTarget.innerHTML = '';
@@ -1073,16 +878,23 @@ export default class extends TabulatorController {
 
     companies.forEach(company => {
       const checked = this.#accessCompaniesCurrent.has(company.Id);
-      const label = document.createElement('label');
-      label.className = this.#accessRowClass(checked);
-      label.innerHTML = `
+      const roleId  = this.#accessCompaniesCurrent.get(company.Id) ?? '';
+      const row = document.createElement('div');
+      row.className = this.#accessRowClass(checked);
+      row.innerHTML = `
         <input type="checkbox" data-action="change->users#toggleAccessCompany" data-company-id="${company.Id}"
                ${checked ? 'checked' : ''}
                class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer">
         <div class="flex flex-col flex-1 gap-0.5 min-w-0">
           <span class="font-medium text-gray-800 text-sm">${this.#escapeHtml(company.Name)}</span>
-        </div>`;
-      this.accessCompanyListTarget.appendChild(label);
+        </div>
+        <select data-action="change->users#onAccessCompanyRoleChange" data-company-id="${company.Id}"
+                ${checked ? '' : 'disabled'}
+                class="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 flex-shrink-0">
+          <option value="">-- Rol --</option>
+          ${this.#accessCompanyRoles.map(r => `<option value="${r.Id}" ${String(r.Id) === String(roleId) ? 'selected' : ''}>${this.#escapeHtml(r.Name)}</option>`).join('')}
+        </select>`;
+      this.accessCompanyListTarget.appendChild(row);
     });
 
     // Asignadas fuera de mi alcance: visibles, marcadas y bloqueadas.
@@ -1096,7 +908,7 @@ export default class extends TabulatorController {
                class="h-4 w-4 rounded border-gray-300 text-gray-400 cursor-not-allowed">
         <div class="flex flex-col flex-1 gap-0.5 min-w-0">
           <span class="font-medium text-gray-500 text-sm">${this.#escapeHtml(company.Name)}</span>
-          <span class="text-[11px] text-gray-400">Fuera de su alcance</span>
+          <span class="text-[11px] text-gray-400">Fuera de su alcance${company.RoleName ? ` · ${this.#escapeHtml(company.RoleName)}` : ''}</span>
         </div>
         <span class="material-icons text-base text-gray-400">lock</span>`;
       this.accessCompanyListTarget.appendChild(div);
@@ -1112,12 +924,28 @@ export default class extends TabulatorController {
     const id = parseInt(event.target.dataset.companyId, 10);
     if (Number.isNaN(id)) return;
 
-    if (event.target.checked) this.#accessCompaniesCurrent.add(id);
-    else this.#accessCompaniesCurrent.delete(id);
+    if (event.target.checked) {
+      // Si ya tenía un rol asignado (estaba marcada y se desmarcó sin guardar),
+      // se restaura ese rol; si es la primera vez, nace sin rol y el usuario
+      // tiene que elegir uno antes de poder guardar.
+      this.#accessCompaniesCurrent.set(id, this.#accessCompaniesInitial.get(id) ?? null);
+    } else {
+      this.#accessCompaniesCurrent.delete(id);
+    }
 
-    const label = event.target.closest('label');
-    if (label) label.className = this.#accessRowClass(event.target.checked);
+    // El checkbox cambia si el <select> queda habilitado: re-renderizar toda
+    // la fila es más simple que mutar el `disabled` a mano.
+    this.#renderAccessCompanyList();
+    this.#updateAccessSaveBtn();
+  }
 
+  onAccessCompanyRoleChange(event) {
+    const id = parseInt(event.target.dataset.companyId, 10);
+    if (Number.isNaN(id)) return;
+    if (!this.#accessCompaniesCurrent.has(id)) return;
+
+    const roleId = event.target.value ? parseInt(event.target.value, 10) : null;
+    this.#accessCompaniesCurrent.set(id, roleId);
     this.#updateAccessSaveBtn();
   }
 
@@ -1130,11 +958,23 @@ export default class extends TabulatorController {
   toggleAccessCompanyAll(event) {
     const select = event.target.checked;
     this.#filteredAccessCompanies().forEach(company => {
-      if (select) this.#accessCompaniesCurrent.add(company.Id);
-      else this.#accessCompaniesCurrent.delete(company.Id);
+      if (select) {
+        this.#accessCompaniesCurrent.set(company.Id, this.#accessCompaniesInitial.get(company.Id) ?? null);
+      } else {
+        this.#accessCompaniesCurrent.delete(company.Id);
+      }
     });
     this.#renderAccessCompanyList();
     this.#updateAccessSaveBtn();
+  }
+
+  // Todas las compañías marcadas tienen que tener un rol elegido antes de poder
+  // guardar (§22 patrón de "botón deshabilitado hasta completar").
+  #accessCompaniesReady() {
+    for (const roleId of this.#accessCompaniesCurrent.values()) {
+      if (roleId === null || roleId === undefined || roleId === '') return false;
+    }
+    return true;
   }
 
   async #saveAccessCompanies() {
@@ -1142,18 +982,25 @@ export default class extends TabulatorController {
       Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No hay cambios para guardar', showConfirmButton: false, timer: 3000, timerProgressBar: true });
       return;
     }
+    if (!this.#accessCompaniesReady()) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Seleccione un rol de compañía para cada compañía marcada.', showConfirmButton: false, timer: 3000, timerProgressBar: true });
+      return;
+    }
 
     this.accessLoaderTarget.classList.remove('hidden');
     try {
       // Solo viaja lo editable: las compañías fuera de alcance no van en el cuerpo
       // y el servidor tampoco las revoca — si viajaran, las rechazaría con 403.
+      const assignments = [...this.#accessCompaniesCurrent.entries()]
+        .map(([CompanyId, RoleId]) => ({ CompanyId, RoleId }));
+
       await this.#railsFetch(`/api/users/${encodeURIComponent(this.#accessUser.Id)}/companies`, {
         method: 'PUT',
-        body: JSON.stringify({ CompanyIds: [...this.#accessCompaniesCurrent] }),
+        body: JSON.stringify({ Assignments: assignments }),
       });
 
       Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Compañías actualizadas exitosamente', showConfirmButton: false, timer: 3000, timerProgressBar: true });
-      this.#accessCompaniesInitial = new Set(this.#accessCompaniesCurrent);
+      this.#accessCompaniesInitial = new Map(this.#accessCompaniesCurrent);
       this.#updateAccessSaveBtn();
       this.#afterAccessSave();
     } catch (err) {
@@ -1166,31 +1013,27 @@ export default class extends TabulatorController {
   // ── Guardar (despacha según el tab activo) ────────────────────────────────────
 
   saveAccess() {
-    if (this.#accessActiveTab === 'roles')     return this.#saveAccessRole();
-    if (this.#accessActiveTab === 'companies') return this.#saveAccessCompanies();
-    return this.#saveAccessGlobal();
+    if (this.#accessActiveTab === 'installation_role') return this.#saveAccessRole();
+    return this.#saveAccessCompanies();
   }
 
-  // Cambios pendientes de un tab específico ('roles' | 'global' | 'companies').
+  // Cambios pendientes de un tab específico ('installation_role' | 'companies').
   #tabHasChanges(name) {
-    if (name === 'roles') {
-      return !!this.#accessCurrentRolId && this.#accessCurrentRolId !== this.#accessInitialRolId;
-    }
-    if (name === 'global') {
-      return this.#setsDiffer(this.#accessGlobalInitial, this.#accessGlobalCurrent);
+    if (name === 'installation_role') {
+      return this.#accessCurrentRolId !== this.#accessInitialRolId;
     }
     if (name === 'companies') {
-      return this.#setsDiffer(this.#accessCompaniesInitial, this.#accessCompaniesCurrent);
+      return this.#mapsDiffer(this.#accessCompaniesInitial, this.#accessCompaniesCurrent);
     }
     return false;
   }
 
-  // Dos conjuntos difieren si cambió el tamaño o si alguno del segundo no está en
-  // el primero: con tamaños iguales e inclusión en un sentido, son idénticos.
-  #setsDiffer(initial, current) {
+  // Dos mapas (CompanyId -> RoleId) difieren si cambió el tamaño o si alguna
+  // llave del actual no está en el inicial, o su valor cambió.
+  #mapsDiffer(initial, current) {
     if (initial.size !== current.size) return true;
-    for (const id of current) {
-      if (!initial.has(id)) return true;
+    for (const [id, roleId] of current) {
+      if (!initial.has(id) || initial.get(id) !== roleId) return true;
     }
     return false;
   }
@@ -1205,9 +1048,7 @@ export default class extends TabulatorController {
 
   // Tras guardar un tab: cierra el panel solo si NINGÚN otro tab quedó con
   // cambios pendientes. Si los tiene, lo deja abierto — el asterisco rojo ya
-  // indica cuál. Antes recibía "el otro tab"; con tres hay que mirarlos todos, y
-  // el tab recién guardado ya no tiene cambios, así que basta con preguntar por
-  // los que quedan.
+  // indica cuál.
   #afterAccessSave() {
     if (!this.#anyAccessChanges()) {
       this.closeAccessPanel();
@@ -1223,13 +1064,8 @@ export default class extends TabulatorController {
   }
 
   #updateAccessSaveBtn() {
-    // Estado del "Seleccionar todos/todas" de cada tab: marcado solo si TODO lo
+    // Estado del "Seleccionar todas" del tab Compañías: marcado solo si TODO lo
     // visible bajo el filtro actual está seleccionado.
-    if (this.hasAccessGlobalSelectAllTarget) {
-      const visible = this.#filteredAccessGlobal();
-      this.accessGlobalSelectAllTarget.checked =
-        visible.length > 0 && visible.every(p => this.#accessGlobalCurrent.has(p.Id));
-    }
     if (this.hasAccessCompanySelectAllTarget) {
       const visible = this.#filteredAccessCompanies();
       this.accessCompanySelectAllTarget.checked =
@@ -1237,11 +1073,18 @@ export default class extends TabulatorController {
     }
 
     this.#updateAccessFooterNote();
-    this.accessSaveBtnTarget.disabled = !this.#tabHasChanges(this.#accessActiveTab);
+
+    // Guardar además exige que, en Compañías, cada fila marcada tenga su rol
+    // elegido — sin eso el PUT se rechazaría igual, pero el botón lo anticipa.
+    let canSave = this.#tabHasChanges(this.#accessActiveTab);
+    if (this.#accessActiveTab === 'companies' && canSave) {
+      canSave = this.#accessCompaniesReady();
+    }
+    this.accessSaveBtnTarget.disabled = !canSave;
     this.#updateAccessTabIndicators();
   }
 
-  // El pie cuenta lo del tab activo. En Roles no hay nada que contar (es uno solo).
+  // El pie cuenta lo del tab activo. En Rol de instalación no hay nada que contar.
   #updateAccessFooterNote() {
     if (!this.hasAccessFooterNoteTarget) return;
 
@@ -1249,8 +1092,7 @@ export default class extends TabulatorController {
     const lockedNote = locked ? ` (+${locked} fuera de su alcance)` : '';
 
     const notes = {
-      roles:     '',
-      global:    `${this.#accessGlobalCurrent.size} permiso(s) global(es) asignado(s)`,
+      installation_role: '',
       companies: `${this.#accessCompaniesCurrent.size} compañía(s) asignada(s)${lockedNote}`,
     };
     this.accessFooterNoteTarget.textContent = notes[this.#accessActiveTab] ?? '';

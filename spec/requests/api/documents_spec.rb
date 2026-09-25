@@ -9,11 +9,7 @@ RSpec.describe 'GET /api/documents', type: :request do
   let(:client)  { instance_double(Clavisco::ServiceLayer::Client) }
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: company)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 
@@ -131,11 +127,7 @@ RSpec.describe 'GET /api/documents/:id', type: :request do
   let(:client)  { instance_double(Clavisco::ServiceLayer::Client) }
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: company)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 
@@ -253,11 +245,7 @@ RSpec.describe 'GET /api/documents/:id/attempts', type: :request do
   let(:client)  { instance_double(Clavisco::ServiceLayer::Client) }
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: company)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 
@@ -361,11 +349,7 @@ RSpec.describe 'GET /api/documents/:id/mails', type: :request do
   let(:client)  { instance_double(Clavisco::ServiceLayer::Client) }
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: company)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 
@@ -507,11 +491,7 @@ RSpec.describe 'POST /api/documents/:id/mails', type: :request do
   end
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: company)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 
@@ -691,11 +671,7 @@ RSpec.describe 'PATCH /api/documents/:id/reprocess', type: :request do
   let(:odbc_client) { instance_double(ExternalDb::Client) }
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: company)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 

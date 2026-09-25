@@ -25,7 +25,8 @@ const ROUTE_PATTERN_PERMISSIONS = [
   // Crear compañía: /configurations/companies/new
   { pattern: /^\/configurations\/companies\/new\/?$/, permission: 'Configurations_Companies_Create' },
   // Editar compañía: /configurations/companies/:id/edit
-  { pattern: /^\/configurations\/companies\/[^/]+\/edit\/?$/, permission: 'Configurations_Companies_Update' },
+  { pattern: /^\/configurations\/companies\/[^/]+\/edit\/?$/,
+    permission: ['Configurations_Companies_Update', 'Configurations_Companies_UpdateInAllCompanies'] },
 ]
 
 // Rutas que además requieren que la compañía seleccionada (SStore.CurrentCompany)
@@ -90,13 +91,10 @@ export default class extends Controller {
       let permissions = SStore.get('Permissions')
 
       // Si no hay caché (primera carga o nueva pestaña), cargarlos del API.
-      // Mismo patrón que menu_controller — el segundo en correr encontrará el caché.
+      // Se pide SIEMPRE, haya o no compañía activa (docs/PLAN-ROLES-POR-ALCANCE.md):
+      // los permisos de instalación no dependen de ninguna. Mismo patrón que
+      // menu_controller — el segundo en correr encontrará el caché.
       if (!permissions) {
-        const company = SStore.get('CurrentCompany')
-        if (!company?.companyId) {
-          this.#revealContent()
-          return
-        }
         permissions = await this.#fetchPermissions()
       }
 
@@ -129,9 +127,10 @@ export default class extends Controller {
   }
 
   /**
-   * GET /api/permissions — endpoint nativo de Rails, lee de las tablas propias
-   * (user_roles → role_permissions → permissions). No recibe companyId: la
-   * compañía activa vive en la session cookie del servidor (§2.4).
+   * GET /api/permissions — endpoint nativo de Rails: los de instalación más
+   * los de la compañía activa, si hay una (docs/PLAN-ROLES-POR-ALCANCE.md). No
+   * recibe companyId: la compañía activa vive en la session cookie del
+   * servidor (§2.4).
    */
   async #fetchPermissions() {
     try {

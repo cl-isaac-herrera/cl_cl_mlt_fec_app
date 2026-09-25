@@ -710,22 +710,15 @@ que armaba el Bearer para el proxy se borró con el último tab que lo usaba.
       CLAVISCO-PLATFORM-STANDARDS §4.1 no la lista porque describe el mínimo obligatorio
       (permisos por rol), no un tope.
 
-- [ ] **`user_permissions` nace vacía: nadie tiene permisos globales todavía.** La tabla
-      existe y los endpoints funcionan, pero las concesiones reales viven en
-      `PermissionByUser` del .NET y no se importaron.
-      **Pendiente:** incluirla en la tarea de importación desde SQL Server, junto con
-      `Rol` / `PermissionByRol` / `RolByUser`. Ojo con dos cosas: (a) el origen puede
-      tener concedidos permisos que acá son `type = 'normal'` —la validación los va a
-      rechazar y hay que decidir caso por caso si el permiso estaba mal clasificado o la
-      concesión estaba de más—, y (b) el índice único no excluye inactivos, así que
-      importar duplicados con distinto `is_active` va a chocar.
-
-- [ ] **`db/seeds.rb` no siembra ninguna concesión global.** El rol `Administrador`
-      recibe los 92 permisos —incluidos los 25 `global`— por la vía del rol, así que en
-      desarrollo el sub-tab se ve pero no cambia nada observable: el permiso ya venía
-      concedido por otro lado.
-      **Pendiente:** para probar la vía directa de verdad hay que sembrar un usuario sin
-      esos permisos en su rol. Hoy se cubre solo en specs.
+- [x] **`user_permissions` (permisos globales por usuario) — reemplazada por roles por
+      alcance.** Las dos entradas de abajo describían deuda de importación sobre esa
+      tabla; con `docs/PLAN-ROLES-POR-ALCANCE.md` implementado, `user_permissions` y
+      `user_roles` se ELIMINARON (Fase 6): los permisos de instalación se conceden con
+      el rol de instalación del usuario (`users.installation_role_id`) y los de
+      compañía con el rol de la asignación (`users_by_companies.role_id`). La
+      importación desde SQL Server (`PermissionByUser`, `PermissionByRol`, `RolByUser`)
+      sigue pendiente, pero ahora traduce a esas dos columnas, no a una tabla puente.
+      Ver `db/permission_name_map.yml` y `CLAUDE.md` §28.
 
 - [x] **⚠️ CAMBIO DE COMPORTAMIENTO: el usuario nuevo nace ACTIVO.** El .NET lo creaba con
       `Active: false` a la espera de que confirmara su correo, y el tab "Completar registro"

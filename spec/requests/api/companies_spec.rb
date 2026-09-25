@@ -28,11 +28,7 @@ RSpec.describe 'GET /api/companies', type: :request do
   # Deja al usuario con los permisos indicados sobre `acme` y abre la sesión con
   # esa compañía activa: require_permission! resuelve contra la de la sesión.
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: acme)
-    UserRole.create!(user: user, role: role, company: acme)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: acme)
     sign_in(user, company: acme)
   end
 
@@ -101,7 +97,7 @@ RSpec.describe 'GET /api/companies', type: :request do
     # para reactivarlas (CLAUDE.md §28).
     it 'incluye las compañías inactivas' do
       inactiva = Company.create!(name: 'Cerrada S.A.')
-      UsersByCompany.create!(user: user, company: inactiva)
+      UsersByCompany.create!(user: user, company: inactiva, role: role)
       inactiva.soft_delete!
       sign_in_with('Configurations_Companies_ListAccess')
 
@@ -115,7 +111,7 @@ RSpec.describe 'GET /api/companies', type: :request do
   describe 'paginación' do
     before do
       %w[Alfa Beta Gamma].each do |n|
-        UsersByCompany.create!(user: user, company: Company.create!(name: n))
+        UsersByCompany.create!(user: user, company: Company.create!(name: n), role: role)
       end
       sign_in_with('Configurations_Companies_ListAccess')
     end
@@ -176,6 +172,19 @@ RSpec.describe 'GET /api/companies', type: :request do
       get "/api/companies/#{acme.id}"
 
       expect(response).to have_http_status(:forbidden)
+    end
+
+    # Alcanza con el permiso de INSTALACIÓN (docs/PLAN-ROLES-POR-ALCANCE.md), sin
+    # rol de compañía — necesita además `ViewAllApplicationCompanies` para que
+    # `find_visible_company` encuentre una compañía a la que no está asignado.
+    it 'también alcanza con Configurations_Companies_UpdateInAllCompanies (de instalación)' do
+      grant_permissions(user, 'Configurations_Companies_UpdateInAllCompanies',
+                       'Configurations_Companies_ViewAllApplicationCompanies')
+      sign_in(user, company: acme)
+
+      get "/api/companies/#{acme.id}"
+
+      expect(response).to have_http_status(:ok)
     end
 
     it 'responde 401 sin sesión' do
@@ -274,7 +283,7 @@ RSpec.describe 'GET /api/companies', type: :request do
 
   describe 'filtro por nombre' do
     before do
-      UsersByCompany.create!(user: user, company: Company.create!(name: 'Beta Industrial'))
+      UsersByCompany.create!(user: user, company: Company.create!(name: 'Beta Industrial'), role: role)
       sign_in_with('Configurations_Companies_ListAccess')
     end
 
@@ -296,7 +305,7 @@ RSpec.describe 'GET /api/companies', type: :request do
     before do
       acme.update!(issuer_id_number: '3101822733')
       UsersByCompany.create!(
-        user: user, company: Company.create!(name: 'Beta Industrial', issuer_id_number: '3105551234')
+        user: user, company: Company.create!(name: 'Beta Industrial', issuer_id_number: '3105551234'), role: role
       )
       sign_in_with('Configurations_Companies_ListAccess')
     end
@@ -328,6 +337,13 @@ RSpec.describe 'GET /api/companies', type: :request do
   # certificado y los adjuntos pueden venir en la misma petición.
   describe 'POST /api/companies' do
     let!(:files_root) { use_temporary_files_root }
+
+    # El alta le asigna a quien crea la compañía el rol de compañía
+    # "Administrador" (docs/PLAN-ROLES-POR-ALCANCE.md, Fase 0 decisión 2) — sin
+    # este rol ya sembrado, `Api::CompaniesController#company_admin_role`
+    # (`Role.find_by!`) revienta en TODA alta exitosa, no solo en el ejemplo que
+    # lo verifica.
+    let!(:company_admin_role) { Role.create!(name: 'Administrador', scope: 'company') }
 
     # Obligatoria desde que el alta exige la bandeja de correo (contexto
     # `:new_company_form` en `Company`): sin ella `general_params` por sí solo
@@ -451,13 +467,15 @@ RSpec.describe 'GET /api/companies', type: :request do
     # Sin esto, quien la crea no tiene `Configurations_Companies_ViewAllApplicationCompanies`
     # y la compañía desaparece de su alcance apenas se guarda (`VisibleCompanies`,
     # CLAUDE.md §28 — "el catálogo y la escritura resuelven el mismo alcance").
-    it 'asigna al usuario que la crea' do
+    it 'asigna al usuario que la crea, con el rol de compañía Administrador' do
       sign_in_with('Configurations_Companies_Create')
 
       post '/api/companies', params: general_params
 
       created = Company.find(body_data['Id'])
-      expect(UsersByCompany.exists?(user_id: user.id, company_id: created.id)).to be true
+      assignment = UsersByCompany.find_by(user_id: user.id, company_id: created.id)
+      expect(assignment).to be_present
+      expect(assignment.role_id).to eq(company_admin_role.id)
     end
 
     it 'la deja visible en el listado del usuario que la creó' do

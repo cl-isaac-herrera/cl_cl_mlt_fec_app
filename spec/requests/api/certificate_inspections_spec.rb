@@ -16,11 +16,7 @@ RSpec.describe 'POST /api/certificate_inspections', type: :request do
   let(:p12_bytes) { build_p12(pin: pin, expires_at: expires_at) }
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: acme)
-    UserRole.create!(user: user, role: role, company: acme)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: acme)
     sign_in(user, company: acme)
   end
 

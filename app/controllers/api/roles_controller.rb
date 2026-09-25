@@ -8,27 +8,41 @@ module Api
   # HTTP y el id en el path (`CLAUDE.md` §28).
   #
   # ⚠️ El listado ya NO se filtra por compañía: en el esquema propio `roles` no
-  # tiene `company_id` — la compañía vive en `user_roles`, como manda
+  # tiene `company_id` — la compañía vive en `users_by_companies`, como manda
   # CLAVISCO-PLATFORM-STANDARDS §4.1. Ver `TODOS.md`.
+  #
+  # `?scope=installation|company` (docs/PLAN-ROLES-POR-ALCANCE.md): un rol solo
+  # contiene permisos de su propio alcance, así que la pantalla de seguridad
+  # separa "Roles de instalación" de "Roles de compañía".
   class RolesController < AuthorizedController
     before_action :authorize_action
     before_action :load_role, only: [:update]
 
     PERMISSION = 'Configurations_Security_Access'
 
-    # GET /api/roles
+    # GET /api/roles?scope=installation|company
     def index
-      roles = Role.order(:name)
+      roles = scope_filter ? Role.where(scope: scope_filter).order(:name) : Role.order(:name)
 
       render json: ApiResponse.success(roles.map { |r| serialize(r) }).to_h
     end
 
     # POST /api/roles
     #
+    # `Scope` es obligatorio: sin él no hay forma de saber qué catálogo de
+    # permisos le corresponde ni con qué rol de compañía comparte nombre
+    # (`Role` permite el mismo nombre una vez por alcance).
+    #
     # El `GroupId` que mandaba el .NET no se acepta: no existe la columna ni la
     # tabla `groups` en la base propia.
     def create
-      role = Role.new(name: role_name, is_active: true)
+      unless Role::SCOPES.include?(params[:Scope].to_s)
+        return render json: ApiResponse.error(
+          "Scope inválido: debe ser #{Role::SCOPES.join(' o ')}"
+        ).to_h, status: :unprocessable_content
+      end
+
+      role = Role.new(name: role_name, scope: params[:Scope], is_active: true)
       return render_invalid(role) unless role.save
 
       render json: ApiResponse.success(serialize(role), code: 201,
@@ -62,6 +76,11 @@ module Api
       render json: ApiResponse.not_found('El rol no existe.').to_h, status: :not_found
     end
 
+    def scope_filter
+      value = params[:scope].to_s
+      value if Role::SCOPES.include?(value)
+    end
+
     # El .NET anidaba el rol dentro de `{ role: {...}, companyId: N }`. Acá el
     # recurso es el rol y lo único editable es su nombre: `Active` no se toca
     # desde esta pantalla y `companyId` no aplica (ver la nota de la clase).
@@ -77,7 +96,7 @@ module Api
     # `Active` en PascalCase mapea `is_active`: es el contrato que ya consume la
     # tabla de la pantalla.
     def serialize(role)
-      { Id: role.id, Name: role.name, Active: role.is_active }
+      { Id: role.id, Name: role.name, Active: role.is_active, Scope: role.scope }
     end
   end
 end

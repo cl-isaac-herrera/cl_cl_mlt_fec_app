@@ -30,92 +30,103 @@
 # por diseño, no solo de palabra.
 
 # ---------------------------------------------------------------------------
-# 1. Permisos NORMALES — export de la tabla `Permission` del .NET (54 filas).
-#    Se conceden por compañía: `user_roles` lleva `company_id`, así que el mismo
-#    usuario puede tener el permiso en una compañía y no en otra.
+# 1. Permisos que antes eran NORMALES — export de la tabla `Permission` del
+#    .NET (54 filas). Hoy se reparten entre los dos alcances nuevos
+#    (docs/PLAN-ROLES-POR-ALCANCE.md): la mayoría siguen siendo de `company`
+#    (se conceden con el rol de compañía de la asignación), pero los que
+#    administran la instalación entera (usuarios, seguridad, compañías,
+#    conexiones, bandejas, UDFs) pasan a `installation`.
 #
-#    Id, nombre y descripción tal como vienen del origen, huecos de Id incluidos.
-#    No editar a mano: reemplazar por un export nuevo cuando cambie el origen.
+#    Id, nombre y descripción tal como vienen del origen, huecos de Id
+#    incluidos — el `scope` (4ta columna) es la única que este producto agrega
+#    y no viene del export. No editar a mano lo demás: reemplazar por un
+#    export nuevo cuando cambie el origen.
 # ---------------------------------------------------------------------------
 CATALOG = [
-  [1,  'M_Documents',                       'Acceso a Menu Documentos'],
-  [2,  'M_Config',                          'Acceso a Menu Configuraciones'],
-  [3,  'Documents_Issued_ViewDocuments',    'Permite visualizar documentos emitidos'],
-  [4,  'Documents_Reception_ViewDocuments',  'Permite visualizar documentos recepcionados'],
-  [5,  'S_ReceptDocs',                      'Acceso a SubMenu Recepción de Documentos'],
+  [1,  'M_Documents',                       'Acceso a Menu Documentos', 'company'],
+  # De instalación: gatea el nodo de menú "Configuración" entero, y ahí viven
+  # pantallas que tienen que verse SIN compañía activa (Usuarios, Seguridad,
+  # Conexiones) — de `company` dejaría a cualquiera sin ese menú sin importar
+  # su rol de instalación.
+  [2,  'M_Config',                          'Acceso a Menu Configuraciones', 'installation'],
+  [3,  'Documents_Issued_ViewDocuments',    'Permite visualizar documentos emitidos', 'company'],
+  [4,  'Documents_Reception_ViewDocuments',  'Permite visualizar documentos recepcionados', 'company'],
+  [5,  'S_ReceptDocs',                      'Acceso a SubMenu Recepción de Documentos', 'company'],
   # Renombrado desde `S_Company` (§4.4), al migrar los endpoints de la pantalla.
   # La equivalencia vive en `db/permission_name_map.yml`.
   [6,  'Configurations_Companies_ListAccess',
-       'Permite acceder a la vista de lista de compañías'],
-  [7,  'S_RegUser',                         'Acceso a SubMenu Registro de Usuarios'],
+       'Permite acceder a la vista de lista de compañías', 'installation'],
+  [7,  'S_RegUser',                         'Acceso a SubMenu Registro de Usuarios', 'installation'],
   # Huérfano: su pantalla ("Completar registro") se eliminó y nadie lo evalúa. Se
   # sigue sembrando porque el catálogo replica el del origen tal cual. Ver
   # `db/permission_name_map.yml` → orphaned.
-  [8,  'S_CompUser',                        'Acceso a SubMenu Completar Registro de Usuarios'],
+  [8,  'S_CompUser',                        'Acceso a SubMenu Completar Registro de Usuarios', 'installation'],
   # Renombrado desde `S_AsigUser` (§4.4). La equivalencia con el nombre de origen
   # vive en `db/permission_name_map.yml` y la importación tiene que traducirla.
   [9,  'Configurations_Users_CompanyAssignment',
-       'Permite asignarle compañías a un usuario'],
-  [10, 'S_Groups',                          'Acceso a SubMenu de  Grupos'],
-  [11, 'S_Numbering',                       'Acceso a SubMenu de Numeración'],
-  [12, 'S_PermsByRol',                      'Acceso a SubMenu de Roles por Usuarios'],
-  [13, 'S_Rols',                            'Acceso a SubMenu de Roles'],
-  [14, 'S_RolByUser',                       'Acceso a SubMenu de Rol por Usuario'],
-  [15, 'S_CreateDocs',                      'Acceso a SubMenu Creación de documentos'],
+       'Permite asignarle compañías a un usuario', 'installation'],
+  [10, 'S_Groups',                          'Acceso a SubMenu de  Grupos', 'installation'],
+  [11, 'S_Numbering',                       'Acceso a SubMenu de Numeración', 'company'],
+  [12, 'S_PermsByRol',                      'Acceso a SubMenu de Roles por Usuarios', 'installation'],
+  [13, 'S_Rols',                            'Acceso a SubMenu de Roles', 'installation'],
+  [14, 'S_RolByUser',                       'Acceso a SubMenu de Rol por Usuario', 'installation'],
+  [15, 'S_CreateDocs',                      'Acceso a SubMenu Creación de documentos', 'company'],
   # Renombrados desde `F_CreateCompany` / `F_ModifyCompany` (§4.4). Ver el map.
-  [16, 'Configurations_Companies_Create',   'Permite crear compañías'],
-  [17, 'Configurations_Companies_Update',   'Permite actualizar una compañía'],
-  [18, 'Configurations_Groups_Update',      'Permiso para la Actualización de Grupos'],
-  [19, 'F_AddOwner',                        'Permiso para Agregar un Owner'],
-  [20, 'F_RemoveOwner',                     'Permiso para Eliminar un Owner'],
-  [21, 'S_ReceptNumbering',                 'Acceso a SubMenu de Numeración de Recepción'],
-  [23, 'S_CreateDocsND',                    'Acceso a SubMenu Creación de Documentos ND'],
-  [25, 'S_CreateDocsNC',                    'Acceso a SubMenu Creación de Documentos NC'],
-  [27, 'S_CreateDocsTE',                    'Acceso a SubMenu Creación de Documentos TE'],
-  [28, 'S_CreateDocsFEC',                   'Acceso a SubMenu Creación de Documentos FEC'],
-  [29, 'S_CreateDocsFEE',                   'Acceso a SubMenu Creación de Documentos FEE'],
-  [30, 'S_CreateDocsFE',                    'Acceso a SubMenu Creación de Documentos FE'],
-  [31, 'M_Reports',                         'Acceso a Menu Reportes'],
-  [32, 'S_DocumentReport',                  'Acceso a SubMenu de Reporte de Documentos'],
-  [33, 'S_DocumentReceptionReport',         'Acceso a SubMenu de Reporte de Recepcion de Documentos'],
-  [35, 'F_CreateAPInvoice',                 'Permiso para la Creación de Facturas a Proveedor'],
-  [36, 'F_ResetCompanyFormat',              'Permiso para restablecer el formato de impresión de la compañía'],
-  [38, 'S_UpdateUserInfo',                  'Acceso a SubMenu Actualizacion de Usuarios'],
-  [39, 'S_MailParserLogs',                  'Acceso a SubMenu de Logs de Recepcion'],
-  [40, 'F_CreateBulkDownloadOfDocuments',   'Permiso para la Creación de Solicitud de Descarga Masiva de Documentos'],
-  [41, 'S_Sucursal',                        'Acceso a SubMenu de Sucursales'],
-  [42, 'S_Udfs',                            'Acceso a seleccion de udfs'],
+  [16, 'Configurations_Companies_Create',   'Permite crear compañías', 'installation'],
+  [17, 'Configurations_Companies_Update',   'Permite actualizar una compañía', 'company'],
+  [18, 'Configurations_Groups_Update',      'Permiso para la Actualización de Grupos', 'installation'],
+  [19, 'F_AddOwner',                        'Permiso para Agregar un Owner', 'company'],
+  [20, 'F_RemoveOwner',                     'Permiso para Eliminar un Owner', 'company'],
+  [21, 'S_ReceptNumbering',                 'Acceso a SubMenu de Numeración de Recepción', 'company'],
+  [23, 'S_CreateDocsND',                    'Acceso a SubMenu Creación de Documentos ND', 'company'],
+  [25, 'S_CreateDocsNC',                    'Acceso a SubMenu Creación de Documentos NC', 'company'],
+  [27, 'S_CreateDocsTE',                    'Acceso a SubMenu Creación de Documentos TE', 'company'],
+  [28, 'S_CreateDocsFEC',                   'Acceso a SubMenu Creación de Documentos FEC', 'company'],
+  [29, 'S_CreateDocsFEE',                   'Acceso a SubMenu Creación de Documentos FEE', 'company'],
+  [30, 'S_CreateDocsFE',                    'Acceso a SubMenu Creación de Documentos FE', 'company'],
+  [31, 'M_Reports',                         'Acceso a Menu Reportes', 'company'],
+  [32, 'S_DocumentReport',                  'Acceso a SubMenu de Reporte de Documentos', 'company'],
+  [33, 'S_DocumentReceptionReport',         'Acceso a SubMenu de Reporte de Recepcion de Documentos', 'company'],
+  [35, 'F_CreateAPInvoice',                 'Permiso para la Creación de Facturas a Proveedor', 'company'],
+  [36, 'F_ResetCompanyFormat',              'Permiso para restablecer el formato de impresión de la compañía', 'company'],
+  [38, 'S_UpdateUserInfo',                  'Acceso a SubMenu Actualizacion de Usuarios', 'installation'],
+  [39, 'S_MailParserLogs',                  'Acceso a SubMenu de Logs de Recepcion', 'company'],
+  [40, 'F_CreateBulkDownloadOfDocuments',   'Permiso para la Creación de Solicitud de Descarga Masiva de Documentos', 'company'],
+  [41, 'S_Sucursal',                        'Acceso a SubMenu de Sucursales', 'company'],
+  [42, 'S_Udfs',                            'Acceso a seleccion de udfs', 'installation'],
   [43, 'Configurations_MailParser_ViewConfigurations',
-       'Permiso para acceder a la configuración de bandejas de correos'],
+       'Permiso para acceder a la configuración de bandejas de correos', 'installation'],
   # Huérfano: gateaba "Aceptación documentos GT", una personalización para un
   # cliente puntual que se eliminó (no es la vista de recepciones original). Ver
   # `db/permission_name_map.yml` → orphaned.
-  [47, 'S_AcceptDocsGT',                    'Acceso a SubMenu Aceptación de Documentos GT'],
-  [49, 'S_EmailReport',                     'Acceso a SubMenu de Reporte de correos'],
-  [50, 'S_CreateDocsREP',                   'Acceso a SubMenu Creación de Documentos REP'],
-  [51, 'Documents_Acceptance_Reprocess',    'Permitir reprocesar documentos de recepción'],
-  [54, 'Maintenance_EmailInbox_Access',     'Acceso a vista de asignación de bandejas'],
-  [56, 'Documents_Emission_Reprocess',      'Permitir reprocesar documentos de emisión'],
-  [63, 'Configurations_Users_Access',       'Permite acceder a al modulo de administración de usuarios'],
-  [64, 'Configurations_Users_Create',       'Permite crear usuarios'],
-  [65, 'Configurations_Users_ListAccess',   'Permite acceder a la vista de lista de usuarios'],
-  [68, 'Configurations_Users_Update',       'Permite actualizar un usuario'],
-  [70, 'Configurations_Permissions_Access', 'Permite acceder a la vista de asignacion de permisos por rol'],
+  [47, 'S_AcceptDocsGT',                    'Acceso a SubMenu Aceptación de Documentos GT', 'company'],
+  [49, 'S_EmailReport',                     'Acceso a SubMenu de Reporte de correos', 'company'],
+  [50, 'S_CreateDocsREP',                   'Acceso a SubMenu Creación de Documentos REP', 'company'],
+  [51, 'Documents_Acceptance_Reprocess',    'Permitir reprocesar documentos de recepción', 'company'],
+  [54, 'Maintenance_EmailInbox_Access',     'Acceso a vista de asignación de bandejas', 'installation'],
+  [56, 'Documents_Emission_Reprocess',      'Permitir reprocesar documentos de emisión', 'company'],
+  [63, 'Configurations_Users_Access',       'Permite acceder a al modulo de administración de usuarios', 'installation'],
+  [64, 'Configurations_Users_Create',       'Permite crear usuarios', 'installation'],
+  [65, 'Configurations_Users_ListAccess',   'Permite acceder a la vista de lista de usuarios', 'installation'],
+  [68, 'Configurations_Users_Update',       'Permite actualizar un usuario', 'installation'],
+  [70, 'Configurations_Permissions_Access', 'Permite acceder a la vista de asignacion de permisos por rol', 'installation'],
   [73, 'Configurations_Companies_DownloadFEPrintFormat',
-       'Permiso para descargar el formato de impresión FE de la compañía'],
+       'Permiso para descargar el formato de impresión FE de la compañía', 'company'],
   [78, 'Configurations_Groups_DownloadFEPrintFormat',
-       'Permiso para descargar el formato de impresión del grupo'],
+       'Permiso para descargar el formato de impresión del grupo', 'installation'],
   [82, 'Configurations_Companies_DownloadCertificate',
-       'Permiso para descargar el certificado de la compañía'],
+       'Permiso para descargar el certificado de la compañía', 'company'],
   [84, 'Configurations_Companies_DownloadLogo',
-       'Permiso para descargar el logo de la compañía'],
+       'Permiso para descargar el logo de la compañía', 'company'],
   [89, 'Configurations_MailParser_UpdateProcessingTenantStatus',
-       'Permiso para actualizar el estado de las compañías emisoras de las bandejas mail parser de la compañía actual']
+       'Permiso para actualizar el estado de las compañías emisoras de las bandejas mail parser de la compañía actual',
+       'installation']
 ].freeze
 
 # ---------------------------------------------------------------------------
-# 2. Permisos GLOBALES — export de las filas de tipo global (25 filas).
-#    Aplican a nivel de aplicación: no dependen de la compañía activa, y por eso
+# 2. Permisos que antes eran GLOBALES — export de las filas de tipo global (25
+#    filas). Todos pasan a `installation`: ya no dependían de la compañía
+#    activa, y eso es exactamente lo que significa el alcance nuevo. Por eso
 #    los nombres suelen decir "…InAllCompanies" / "…AllApplication…".
 #
 #    Sus Id llenan los huecos que dejaba el export normal (52, 53, 57-62, 66, 67,
@@ -124,48 +135,51 @@ CATALOG = [
 #    "pertenese"): son datos, no texto a corregir acá.
 # ---------------------------------------------------------------------------
 GLOBAL_CATALOG = [
-  [52, 'Configurations_General_Access',      'Acceso a las configuraciones generales'],
-  [53, 'Logs_Access',                        'Acceso a vista de visualizacion de logs de texto'],
-  [57, 'Configurations_WizardSetup_Access',  'Acceso a la vista de asistente de configuración'],
+  [52, 'Configurations_General_Access',      'Acceso a las configuraciones generales', 'installation'],
+  [53, 'Logs_Access',                        'Acceso a vista de visualizacion de logs de texto', 'installation'],
+  [57, 'Configurations_WizardSetup_Access',  'Acceso a la vista de asistente de configuración', 'installation'],
   [58, 'Configurations_WizardSetup_CompleteSteps',
-       'Permitr completar pasos de configuración en asistente de configuración'],
-  [59, 'Configurations_UserHelp_Access',     'Acceso a la vista de configuración de ayuda de usuario'],
-  [60, 'Configurations_Connections_Access',  'Acceso a la vista de configuración de conexiónes'],
-  [61, 'Configurations_Connections_Create',  'Permite crear una conexión de SAP'],
-  [62, 'Configurations_Connections_Update',  'Permite actualizar una conexion de SAP'],
+       'Permitr completar pasos de configuración en asistente de configuración', 'installation'],
+  [59, 'Configurations_UserHelp_Access',     'Acceso a la vista de configuración de ayuda de usuario', 'installation'],
+  [60, 'Configurations_Connections_Access',  'Acceso a la vista de configuración de conexiónes', 'installation'],
+  [61, 'Configurations_Connections_Create',  'Permite crear una conexión de SAP', 'installation'],
+  [62, 'Configurations_Connections_Update',  'Permite actualizar una conexion de SAP', 'installation'],
   [66, 'Configurations_Users_ViewGroupUsers',
-       'Permite ver la lista de usuarios de todo el grupo de compañías al que pertenese el usuario'],
+       'Permite ver la lista de usuarios de todo el grupo de compañías al que pertenese el usuario', 'installation'],
   [67, 'Configurations_Users_ViewAllApplicationUsers',
-       'Permite ver la lista de todos los usuarios de la aplicación'],
+       'Permite ver la lista de todos los usuarios de la aplicación', 'installation'],
   [71, 'Configurations_Permissions_GlobalAccess',
-       'Permiso para acceder a la vista de asignacion de permisos globales'],
+       'Permiso para acceder a la vista de asignacion de permisos globales', 'installation'],
   [72, 'Configurations_Groups_ViewAllApplicationGroups',
-       'Permiso para visualizar todos los grupos de la aplicacion'],
+       'Permiso para visualizar todos los grupos de la aplicacion', 'installation'],
   [74, 'Configurations_General_DownloadDefaultPrintFormat',
-       'Permiso para descargar el formato de impresion predeterminado'],
+       'Permiso para descargar el formato de impresion predeterminado', 'installation'],
   [75, 'Configurations_General_UploadDefaultPrintFormat',
-       'Permiso para cargar el formato de impresión predeterminado'],
+       'Permiso para cargar el formato de impresión predeterminado', 'installation'],
   [76, 'Configurations_Companies_DownloadFEPrintFormatInAllCompanies',
-       'Permiso para descargar los formatos de impresión de todas las compañías'],
+       'Permiso para descargar los formatos de impresión de todas las compañías', 'installation'],
   [77, 'Configurations_Groups_DownloadFEPrintFormatInAllGroups',
-       'Permiso para descargar el formato de impresión de cualquier grupo'],
-  [79, 'Configurations_Groups_Create',       'Permiso para crear grupos'],
+       'Permiso para descargar el formato de impresión de cualquier grupo', 'installation'],
+  [79, 'Configurations_Groups_Create',       'Permiso para crear grupos', 'installation'],
   [80, 'Configurations_Groups_UpdateAllInApplication',
-       'Permiso para actualización de los grupos de la aplicación'],
+       'Permiso para actualización de los grupos de la aplicación', 'installation'],
   [81, 'Configurations_Companies_DownloadCertificateInAllCompanies',
-       'Permiso para descargar certificado de todas las compañías'],
+       'Permiso para descargar certificado de todas las compañías', 'installation'],
   [83, 'Configurations_Companies_DownloadLogoInAllCompanies',
-       'Permiso para descargar el logo de todas las compañías'],
+       'Permiso para descargar el logo de todas las compañías', 'installation'],
   [85, 'Configurations_MailParser_ViewAllConfigurationsInApplication',
-       'Permiso para visualizar todas las configuraciones de mail parser existentes en la aplicación'],
+       'Permiso para visualizar todas las configuraciones de mail parser existentes en la aplicación', 'installation'],
+  # Huérfano desde la Fase 3 del plan: `AssignableCompanies` lo reemplazó por
+  # `ViewAllApplicationCompanies`. Se sigue sembrando con su Id de origen (ver
+  # cabecera de este archivo), pero nace dado de baja (`DEACTIVATED`).
   [86, 'Configurations_Companies_ViewGroupCompanies',
-       'Permiso para ver todas las compañías del grupo'],
+       'Permiso para ver todas las compañías del grupo', 'installation'],
   [87, 'Configurations_Companies_ViewAllApplicationCompanies',
-       'Permiso para ver todas las compañías de la aplicación'],
+       'Permiso para ver todas las compañías de la aplicación', 'installation'],
   [88, 'Configurations_MailParser_UpdateAllProcessingTenantStatus',
-       'Permiso para actualizar el estado de las compañías emisoras de todas las bandejas de mail parser'],
+       'Permiso para actualizar el estado de las compañías emisoras de todas las bandejas de mail parser', 'installation'],
   [90, 'Configurations_Companies_ChangeGroup',
-       'Permiso para cambiar el grupo de las compañías']
+       'Permiso para cambiar el grupo de las compañías', 'installation']
 ].freeze
 
 # ---------------------------------------------------------------------------
@@ -175,28 +189,28 @@ GLOBAL_CATALOG = [
 #    quedan invisibles/deshabilitados para siempre: `AuthorizationService` solo
 #    concede lo que existe en `permissions`.
 #
-#    Se marcan `normal` porque son accesos y acciones por compañía. Sus Id
-#    arrancan en 1000 para no chocar con los Id reales que todavía faltan del
-#    origen (22, 24, 26, 34, 37, 44-46, 48, 55, 69): si alguno de estos nombres
-#    resulta ser uno de esos, su fila se puede insertar en su Id real sin tocar
-#    las de acá.
+#    Eran `normal` porque son accesos y acciones por compañía o de instalación
+#    (ver `scope`, 4ta columna). Sus Id arrancan en 1000 para no chocar con los
+#    Id reales que todavía faltan del origen (22, 24, 26, 34, 37, 44-46, 48, 55,
+#    69): si alguno de estos nombres resulta ser uno de esos, su fila se puede
+#    insertar en su Id real sin tocar las de acá.
 #
 #    Ver TODOS.md → "El catálogo de permisos está incompleto".
 # ---------------------------------------------------------------------------
 CODE_ONLY = [
-  [1000, 'Configurations_Security_Access',   'Acceso a Seguridad'],
-  [1001, 'Configurations_Users_ManageAccess', 'Administrar accesos de usuarios'],
-  [1002, 'Configurations_Numbering_Create',  'Crear numeraciones de emisión'],
-  [1003, 'Configurations_Numbering_Update',  'Modificar numeraciones de emisión'],
-  [1004, 'Configurations_Numbering_CreateReception', 'Crear numeraciones de recepción'],
-  [1005, 'Configurations_Numbering_UpdateReception', 'Modificar numeraciones de recepción'],
-  [1006, 'Configurations_Branches_Create',   'Crear sucursales'],
-  [1007, 'Configurations_Branches_Update',   'Modificar sucursales'],
-  [1008, 'Configurations_EmailInbox_Access', 'Acceso a Bandejas de emisión'],
-  [1009, 'Configurations_EmailInbox_Create', 'Crear bandejas de emisión'],
-  [1010, 'Configurations_EmailInbox_Update', 'Modificar bandejas de emisión'],
-  [1011, 'Configurations_MailParser_Create', 'Crear bandejas de recepción'],
-  [1012, 'Configurations_MailParser_Update', 'Modificar bandejas de recepción']
+  [1000, 'Configurations_Security_Access',   'Acceso a Seguridad', 'installation'],
+  [1001, 'Configurations_Users_ManageAccess', 'Administrar accesos de usuarios', 'installation'],
+  [1002, 'Configurations_Numbering_Create',  'Crear numeraciones de emisión', 'company'],
+  [1003, 'Configurations_Numbering_Update',  'Modificar numeraciones de emisión', 'company'],
+  [1004, 'Configurations_Numbering_CreateReception', 'Crear numeraciones de recepción', 'company'],
+  [1005, 'Configurations_Numbering_UpdateReception', 'Modificar numeraciones de recepción', 'company'],
+  [1006, 'Configurations_Branches_Create',   'Crear sucursales', 'company'],
+  [1007, 'Configurations_Branches_Update',   'Modificar sucursales', 'company'],
+  [1008, 'Configurations_EmailInbox_Access', 'Acceso a Bandejas de emisión', 'installation'],
+  [1009, 'Configurations_EmailInbox_Create', 'Crear bandejas de emisión', 'installation'],
+  [1010, 'Configurations_EmailInbox_Update', 'Modificar bandejas de emisión', 'installation'],
+  [1011, 'Configurations_MailParser_Create', 'Crear bandejas de recepción', 'installation'],
+  [1012, 'Configurations_MailParser_Update', 'Modificar bandejas de recepción', 'installation']
 ].freeze
 
 # ---------------------------------------------------------------------------
@@ -214,8 +228,29 @@ CODE_ONLY = [
 #     dos deben dejar el mismo estado final.
 # ---------------------------------------------------------------------------
 CODE_ONLY_GLOBAL = [
-  [1013, 'Configurations_SlResources_Access', 'Acceso a la vista de recursos de Service Layer'],
-  [1014, 'Configurations_SlResources_Update', 'Permite modificar consultas de Service Layer']
+  [1013, 'Configurations_SlResources_Access', 'Acceso a la vista de recursos de Service Layer', 'installation'],
+  [1014, 'Configurations_SlResources_Update', 'Permite modificar consultas de Service Layer', 'installation']
+].freeze
+
+# ---------------------------------------------------------------------------
+# 3c. Variante de INSTALACIÓN de un permiso que ya era de compañía.
+#
+#     `Configurations_Companies_Update` (Id 17, `company`) sigue existiendo para
+#     quien administra una compañía puntual. Esta fila es la misma acción pero
+#     de alcance `installation` — para quien administra la instalación entera
+#     (ya tiene `Configurations_Companies_ListAccess`/`_Create`, ambos de
+#     instalación) y necesita poder editar cualquier compañía sin que alguien
+#     le arme además un rol de compañía. `Api::Companies::GeneralController` y
+#     el resto de los controllers de secciones aceptan CUALQUIERA de los dos
+#     (`require_any_permission!`) — mismo patrón que
+#     `Configurations_Companies_ViewAllApplicationCompanies` amplía el alcance
+#     de lectura sin reemplazar el permiso de compañía.
+#
+#     Sigue la serie de `CODE_ONLY` (1000+): no tiene Id de origen.
+# ---------------------------------------------------------------------------
+CODE_ONLY_INSTALLATION_UPDATE = [
+  [1015, 'Configurations_Companies_UpdateInAllCompanies',
+         'Permite actualizar cualquier compañía de la instalación', 'installation']
 ].freeze
 
 # ---------------------------------------------------------------------------
@@ -227,10 +262,11 @@ CODE_ONLY_GLOBAL = [
 #    porque su pantalla ya no existe y nadie los evalúa.
 #
 #    Tiene que coincidir con el `DEACTIVATE` de las migraciones que dan de baja
-#    permisos (`20260812130000_apply_permission_catalog_changes.rb` y
-#    `20260913150000_deactivate_group_permissions.rb`): esta lista es para la base
-#    que se crea de cero, las migraciones para la que ya existe, y las dos vías
-#    deben dejar el mismo estado final.
+#    permisos (`20260812130000_apply_permission_catalog_changes.rb`,
+#    `20260913150000_deactivate_group_permissions.rb` y
+#    `20260924170000_deactivate_scope_superseded_permissions.rb`): esta lista es
+#    para la base que se crea de cero, las migraciones para la que ya existe, y
+#    las dos vías deben dejar el mismo estado final.
 #
 #    Ver `db/permission_name_map.yml` → orphaned.
 # ---------------------------------------------------------------------------
@@ -246,6 +282,9 @@ DEACTIVATED = %w[
   Configurations_Groups_UpdateAllInApplication
   Configurations_Groups_DownloadFEPrintFormat
   Configurations_Groups_DownloadFEPrintFormatInAllGroups
+  Configurations_Users_ViewAllApplicationUsers
+  Configurations_Companies_ViewGroupCompanies
+  Configurations_Users_Access
 ].to_set.freeze
 
 ADMIN_ROLE_NAME = 'Administrador'
@@ -253,62 +292,71 @@ ADMIN_ROLE_NAME = 'Administrador'
 ActiveRecord::Base.transaction do
   # 1. Catálogo — upsert por Id, la llave natural del origen. `unscoped` para
   #    encontrar también las filas dadas de baja (`DEACTIVATED`) y reactivarlas
-  #    en vez de duplicarlas.
-  rows = CATALOG.map          { |id, name, desc| [id, name, desc, 'normal'] } +
-         GLOBAL_CATALOG.map   { |id, name, desc| [id, name, desc, 'global'] } +
-         CODE_ONLY.map        { |id, name, desc| [id, name, desc, 'normal'] } +
-         CODE_ONLY_GLOBAL.map { |id, name, desc| [id, name, desc, 'global'] }
+  #    en vez de duplicarlas. Cada fila ya trae su propio `scope`
+  #    (docs/PLAN-ROLES-POR-ALCANCE.md) — a diferencia del extinto `type`, no
+  #    se puede inferir en bloque por el array de origen.
+  rows = CATALOG + GLOBAL_CATALOG + CODE_ONLY + CODE_ONLY_GLOBAL + CODE_ONLY_INSTALLATION_UPDATE
 
   created = 0
-  rows.each do |id, name, description, type|
+  rows.each do |id, name, description, scope|
     permission = Permission.unscoped.find_or_initialize_by(id: id)
     created += 1 unless permission.persisted?
 
     permission.name        = name
     permission.description = description
-    permission.type        = type
+    permission.scope       = scope
     permission.is_active   = !DEACTIVATED.include?(name)
     permission.save!
   end
   puts "Permisos: #{Permission.count} activos " \
-       "(#{Permission.normal.count} normal / #{Permission.global.count} global; " \
-       "#{CODE_ONLY.size + CODE_ONLY_GLOBAL.size} sin Id de origen) " \
+       "(#{Permission.company.count} de compañía / #{Permission.installation.count} de instalación; " \
+       "#{CODE_ONLY.size + CODE_ONLY_GLOBAL.size + CODE_ONLY_INSTALLATION_UPDATE.size} sin Id de origen) " \
        "+ #{DEACTIVATED.size} dados de baja (#{created} nuevos)"
 
-  # 2. Rol Administrador con el catálogo completo — pero SOLO los permisos
-  #    `normal`. El diseño es "normal se concede por rol, global se concede
-  #    DIRECTO al usuario" (`UserPermission#permission_must_be_global`); un
-  #    `global` metido en `role_permissions` no lo rechaza esa tabla (la
-  #    validación vive del lado de `UserPermission`), así que este loop es la
-  #    única barrera y hay que ponerla acá, filtrando el `find_each`.
-  admin = Role.find_or_initialize_by(name: ADMIN_ROLE_NAME)
+  # 2. Rol de compañía Administrador con el catálogo completo — pero SOLO los
+  #    permisos de alcance `company`. El diseño es "de compañía se concede con
+  #    el rol de compañía, de instalación con el rol de instalación"
+  #    (`RolePermission#scope_matches_role`); este loop filtra el `find_each`
+  #    para no depender solo de esa validación (que `insert_all` no dispara).
+  admin = Role.find_or_initialize_by(name: ADMIN_ROLE_NAME, scope: 'company')
   admin.is_active = true
   admin.save!
 
   # Upsert por (role_id, permission_id) — agrega lo que falte y reactiva lo que
   # estuviera de baja, sin pasar por un `delete_all` que arrastraría también a
-  # los demás roles. Sin `unscoped` en `Permission.normal.find_each` a
+  # los demás roles. Sin `unscoped` en `Permission.company.find_each` a
   # propósito: el default_scope de SoftDeletable deja fuera a los de
   # `DEACTIVATED`, que es justo lo que se quiere — no tiene sentido concederle
   # a nadie un permiso dado de baja.
-  Permission.normal.find_each do |permission|
+  Permission.company.find_each do |permission|
     rp = RolePermission.unscoped.find_or_initialize_by(role_id: admin.id, permission_id: permission.id)
     rp.is_active = true
     rp.save!
   end
-  puts "Permisos del rol #{ADMIN_ROLE_NAME}: #{RolePermission.where(role_id: admin.id, is_active: true).count}"
+  puts "Permisos del rol de compañía #{ADMIN_ROLE_NAME}: #{RolePermission.where(role_id: admin.id, is_active: true).count}"
 
-  # 3. El rol se asigna en cada compañía que el usuario ya tenga asignada. Sin esta
-  #    fila (user_roles) AuthorizationService devuelve [] aunque el rol exista: los
-  #    permisos son por compañía, no globales.
-  UsersByCompany.active.find_each do |assignment|
-    user_role = UserRole.find_or_initialize_by(
-      user_id: assignment.user_id, company_id: assignment.company_id, role_id: admin.id
-    )
-    user_role.is_active = true
-    user_role.save!
+  # 3. Rol de INSTALACIÓN Administrador — mismo nombre que el de compañía de
+  #    arriba, pero es un rol DISTINTO (alcance distinto, fila distinta:
+  #    `Role#name` es único por `(is_active, scope)`, no solo por nombre). Solo
+  #    contiene permisos de alcance `installation`.
+  #
+  #    A diferencia del rol de compañía, este NO se asigna acá a ningún
+  #    usuario: quién lo tiene vive en `users.installation_role_id`, una
+  #    columna del usuario, no una tabla de asignación — y asignarlo de más acá
+  #    sería justo el error que la Fase 2 del plan corrige (dejar de re-otorgar
+  #    el rol Administrador en cada `db:seed`). Al usuario de sistema se le
+  #    asigna explícitamente más abajo, junto con su alta.
+  installation_admin = Role.find_or_initialize_by(name: ADMIN_ROLE_NAME, scope: 'installation')
+  installation_admin.is_active = true
+  installation_admin.save!
+
+  Permission.installation.find_each do |permission|
+    rp = RolePermission.unscoped.find_or_initialize_by(role_id: installation_admin.id, permission_id: permission.id)
+    rp.is_active = true
+    rp.save!
   end
-  puts "Asignaciones usuario-rol-compañía: #{UserRole.count}"
+  puts "Permisos del rol de instalación #{ADMIN_ROLE_NAME}: " \
+       "#{RolePermission.where(role_id: installation_admin.id, is_active: true).count}"
 end
 
 # ---------------------------------------------------------------------------
@@ -1435,83 +1483,23 @@ end
 # que sin esto un usuario dado de baja no se encontraría y el seed intentaría
 # insertar otro igual (mismo criterio que `Setting`, más arriba).
 record = User.unscoped.find_or_initialize_by(email: 'sys@clavisco.com')
-record.name      = 'System'
-record.is_active = true
+record.name              = 'System'
+record.is_active         = true
+record.installation_role = Role.find_by!(name: ADMIN_ROLE_NAME, scope: 'installation')
 record.save!
 
-puts "Usuario de sistema: #{record.email}"
+puts "Usuario de sistema: #{record.email} (rol de instalación #{record.installation_role.name})"
 
 # ---------------------------------------------------------------------------
-# Compañía de plantilla — "Template Company".
+# ⚠️ Ya NO hay "Template Company".
 #
-# Una instalación recién creada no tiene ninguna compañía: el selector del
-# toolbar queda vacío y, con él, cualquier pantalla que dependa de una compañía
-# activa (`CLAUDE.md` §23). Esta fila da un punto de partida real para poder
-# entrar y terminar de configurar el resto a mano, en vez de un catálogo mudo.
-#
-# Solo se llenan los campos de "Datos Generales" que siguen siendo columna de
-# `companies` (`Api::Companies::GeneralController#general_params`). El resto
-# del bloque del emisor (razón social, tipo de identificación, actividad
-# económica, registro fiscal 8707) vive en la UDT `@CL_FEC_ISSUERCONFIG`
-# (`Sap::CompanyConfig`) y no se siembra: este seed no habla con SAP, igual
-# criterio que Conexión SAP, ATV y Adjuntos, que quedan vacíos a propósito —
-# dependen de una conexión, un certificado o una bandeja de correo que la
-# instalación todavía no tiene, y no hay un valor ficticio razonable que poner
-# ahí sin que se confunda con configuración real (`connection_id`/
-# `email_config_id`/`reception_mailbox_id` son `optional: true` —
-# Company#sap_connection_must_exist y las otras dos validaciones solo corren
-# cuando el id SÍ viene).
-#
-# `find_or_initialize_by(name:)`: no hay índice único sobre `name`, así que sin
-# esto correr el seed dos veces duplicaría la compañía.
-#
-# `Company.exists?` (con el `default_scope` de `SoftDeletable`, solo cuenta las
-# ACTIVAS): si la instalación ya tiene al menos una compañía activa —importada
-# del cliente, o esta misma plantilla de una corrida anterior— no hay "punto de
-# partida vacío" que resolver, y crear la plantilla al lado de compañías reales
-# sería ruido en el selector, no ayuda.
-if Company.exists?
-  puts 'Compañía de plantilla: se omite (ya hay al menos una compañía activa).'
-else
-  company = Company.find_or_initialize_by(name: 'Template Company')
-  company.issuer_id_number       = '3101999999'
-  company.sap_db                 = 'SBO_TEMPLATE'
-  company.email_sender_type      = 2
-  company.freight_type           = 1
-  company.is_active              = true
-  company.save!
-
-  puts "Compañía de plantilla: #{company.name} (##{company.id})"
-
-  # El usuario de sistema necesita la compañía ASIGNADA (`users_by_companies`)
-  # para poder seleccionarla: el selector nunca lista todas las compañías de la
-  # instalación, solo las que el usuario tiene asignadas (`Company.assigned_to`).
-  company_assignment = UsersByCompany.find_or_initialize_by(user_id: record.id, company_id: company.id)
-  company_assignment.is_active = true
-  company_assignment.save!
-
-  # Rol Administrador en esa compañía. No se reutiliza el loop de la sección de
-  # permisos (más arriba en el archivo): corre antes de que este usuario y esta
-  # compañía existan, así que acá se hace explícito con el mismo upsert.
-  admin_role = Role.find_by!(name: ADMIN_ROLE_NAME)
-  sys_admin_role = UserRole.find_or_initialize_by(user_id: record.id, company_id: company.id, role_id: admin_role.id)
-  sys_admin_role.is_active = true
-  sys_admin_role.save!
-
-  puts "Rol #{ADMIN_ROLE_NAME} asignado a #{record.email} en #{company.name}"
-end
-
-# Los permisos GLOBALES no se conceden por rol (más arriba, `RolePermission`
-# solo toma `Permission.normal`): se conceden DIRECTO al usuario
-# (`UserPermission#permission_must_be_global`). Sin esto, el usuario de sistema
-# queda con el rol Administrador pero sin nada de lo que es `global`
-# (Configuraciones generales, Logs, Conexiones, asistente de configuración,
-# recursos de Service Layer…).
-Permission.global.find_each do |permission|
-  up = UserPermission.unscoped.find_or_initialize_by(user_id: record.id, permission_id: permission.id)
-  up.is_active = true
-  up.save!
-end
-
-puts "Permisos globales de #{record.email}: " \
-     "#{UserPermission.where(user_id: record.id, is_active: true).count}"
+# Con roles por alcance (docs/PLAN-ROLES-POR-ALCANCE.md) el usuario de sistema
+# administra la instalación entera con su rol de instalación de arriba, sin
+# depender de ninguna compañía activa (`CLAUDE.md` §23 ya no exige una para
+# entrar). Antes existía una compañía de plantilla ("Template Company") solo
+# para que hubiera ALGO seleccionable en el toolbar y así poder llegar a
+# Usuarios/Seguridad/Conexiones — necesidad que desapareció junto con el
+# problema que la causaba. Una instalación nueva simplemente no tiene
+# compañías hasta que alguien importe o cree la primera, y eso ya no bloquea
+# nada.
+# ---------------------------------------------------------------------------

@@ -45,11 +45,7 @@ RSpec.describe 'PATCH /api/companies/:company_id/tax_authority', type: :request 
   let!(:files_root) { use_temporary_files_root }
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: acme)
-    UserRole.create!(user: user, role: role, company: acme)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: acme)
     sign_in(user, company: acme)
   end
 
@@ -95,6 +91,19 @@ RSpec.describe 'PATCH /api/companies/:company_id/tax_authority', type: :request 
       patch '/api/companies/999999/tax_authority', params: { TokenUsr: 'x' }
 
       expect(response).to have_http_status(:not_found)
+    end
+
+    # Alcanza con el permiso de INSTALACIÓN (docs/PLAN-ROLES-POR-ALCANCE.md), sin
+    # rol de compañía — necesita además `ViewAllApplicationCompanies` para que
+    # `find_visible_company` encuentre una compañía a la que no está asignado.
+    it 'también alcanza con Configurations_Companies_UpdateInAllCompanies (de instalación)' do
+      grant_permissions(user, 'Configurations_Companies_UpdateInAllCompanies',
+                       'Configurations_Companies_ViewAllApplicationCompanies')
+      sign_in(user, company: acme)
+
+      patch_section(TokenUsr: 'nuevo@stag.comprobanteselectronicos.go.cr')
+
+      expect(response).to have_http_status(:ok)
     end
 
     # El alcance es el mismo de la lectura: sin "ver todas", una compañía ajena no

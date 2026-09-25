@@ -1687,17 +1687,17 @@ proxy (`match '/api/*path', to: 'proxy#forward'`).
 | `GET /api/User/information?userId=N` | `GET /api/users/:id` |
 | `POST /api/User` | `POST /api/users` |
 | `PATCH /api/User` (id en el cuerpo) | `PATCH /api/users/:id` |
-| `GET /api/User/companies?userId=N` | `GET /api/users/:id/companies` |
+| `GET /api/User/companies?userId=N` | `GET /api/users/:id/companies` ⚠️ ahora devuelve también el `RoleId`/`RoleName` de cada compañía (`docs/PLAN-ROLES-POR-ALCANCE.md`) |
 | `GET /api/User/assigned-companies?userId=N` | `GET /api/users/:id/companies` (el mismo) |
-| `POST` + `POST /api/User/bulk-{assign,unassign}-companies` | `PUT /api/users/:id/companies` |
+| `POST` + `POST /api/User/bulk-{assign,unassign}-companies` | `PUT /api/users/:id/companies` ⚠️ el cuerpo es `{ Assignments: [{ CompanyId, RoleId }] }`, no `{ CompanyIds: [...] }` — cada compañía lleva su rol de compañía |
 | `GET /api/Companies/for-assignment?groupId=N` | `GET /api/companies/assignable` ⚠️ sin groupId (§31) |
 | `GET /api/User/for-assignments` | (no se migra — el usuario sale de la tabla) |
 | `GET /api/Group/for-assignments` | (no se migra — no hay grupos, §31) |
-| `GET /api/Rol/GetRolUserCompAssign?rolId=0&companyId=N` | `GET /api/users/:id/role` |
-| `POST /api/Rol/AssignRolByUserComp` | `PUT /api/users/:id/role` |
-| `GET /api/User/global-permissions?userId=N` | `GET /api/users/:id/permissions` |
-| `POST` + `DELETE /api/Permission/bulk-global-permissions` | `PUT /api/users/:id/permissions` |
-| `GET /api/Permission/global-permissions` | `GET /api/permissions/catalog?type=global` |
+| `GET /api/Rol/GetRolUserCompAssign?rolId=0&companyId=N` | `GET /api/users/:id/companies` (el `RoleId` de cada fila — ya no hay un endpoint aparte por compañía activa) |
+| `POST /api/Rol/AssignRolByUserComp` | `PUT /api/users/:id/companies` (idem) |
+| `GET /api/User/global-permissions?userId=N` | `GET /api/users/:id/installation_role` — ya no son permisos sueltos, es EL rol de instalación del usuario |
+| `POST` + `DELETE /api/Permission/bulk-global-permissions` | `PUT /api/users/:id/installation_role` con `{ RoleId }` (`null` lo quita) |
+| `GET /api/Permission/global-permissions` | `GET /api/permissions/catalog?scope=installation` |
 | (nuevo — la compañía activa era `sessionStorage`) | `PUT /api/session/company` |
 | `GET /api/settings` (todos los ajustes) | `GET /api/settings?group=` — `Value` sale de `visible_value` y `HasValue` dice si hay uno guardado |
 | `PATCH /api/settings` (`{ Code, Json, IsActive }`) | `PATCH /api/settings/:code` ⚠️ el `code` pasa del cuerpo al path y el cuerpo queda en `{ Value }` |
@@ -1733,10 +1733,14 @@ end
   revocada en vez de insertar una nueva al lado. Sin eso, conceder y revocar el mismo
   permiso varias veces deja basura acumulada en `role_permissions`.
 
-El mismo patrón aplica cuando el hijo es **uno solo**, no un conjunto: el rol de un
-usuario en la compañía activa es `resource :role` (singular, sin id) bajo `resources
-:users`, y se reemplaza con PUT. Ahí la compañía **no** viaja en el cuerpo: sale de la
-sesión, para que nadie pueda asignar roles en una compañía que no tiene activa.
+El mismo patrón aplica cuando el hijo es **uno solo**, no un conjunto: el rol de
+INSTALACIÓN de un usuario es `resource :installation_role` (singular, sin id) bajo
+`resources :users`, y se reemplaza con PUT — un usuario tiene uno solo (o ninguno), y no
+depende de ninguna compañía activa (`docs/PLAN-ROLES-POR-ALCANCE.md`). El rol de
+COMPAÑÍA, en cambio, no tiene un endpoint propio: viaja como un campo más (`RoleId`) de
+cada fila en `PUT /api/users/:id/companies` (`{ Assignments: [{ CompanyId, RoleId }] }`),
+porque una asignación de compañía y su rol son la MISMA fila (`users_by_companies`), no
+dos conceptos separados.
 
 ### Registros dados de baja — `unscoped` en las pantallas de administración
 
@@ -1746,7 +1750,7 @@ baja— consulta con `unscoped`; el resto de la app usa el scope normal.
 
 ```ruby
 # Lista de usuarios: incluye a los inactivos (el .NET lo pedía con activeOnly=false).
-User.unscoped.in_company(Current.company_id)
+User.unscoped
 ```
 
 Dos consecuencias que cuestan caro si se olvidan:
@@ -1771,10 +1775,10 @@ puede entrar sino **hasta dónde llega** lo que se devuelve, se usa el predicado
 
 ```ruby
 # La acción ya exigió su permiso; este otro solo amplía el alcance.
-def visible_users
-  return User.unscoped if permission?('Configurations_Users_ViewAllApplicationUsers')
+def assignable_companies
+  return Company.all if permission?(SEE_ALL_COMPANIES)
 
-  User.unscoped.in_company(Current.company_id)
+  Company.assigned_to(Current.user.id)
 end
 ```
 
@@ -1851,10 +1855,11 @@ controller, el `#hasPerm` del JS que gatea la UI, y los specs.
 
 `db/seeds.rb` sigue el mismo criterio que `Setting`/`SlResource` más abajo en el mismo
 archivo: **upsert por la llave natural** (`id` para `Permission`, que es el `Id` del origen
-del .NET — ver el encabezado de la sección 1), **nunca** `delete_all`. Las dos tablas que
-antes se vaciaban a mano (`role_permissions`, `user_permissions`) las escribe la aplicación
-en vivo (`PUT /api/roles/:id/permissions`, `PUT /api/users/:id/permissions`): un `delete_all`
-en un seed que corre en cada deploy se las lleva puestas.
+del .NET — ver el encabezado de la sección 1), **nunca** `delete_all`. `role_permissions`
+la escribe la aplicación en vivo (`PUT /api/roles/:id/permissions`) y `users.
+installation_role_id` / `users_by_companies.role_id` también (`PUT /api/users/:id/
+installation_role`, `PUT /api/users/:id/companies`): un `delete_all` en un seed que corre
+en cada deploy se las lleva puestas.
 
 > **Regla:** renombrar o dar de baja un permiso **ya se puede hacer directamente en
 > `seeds.rb`**, porque el upsert es por `id` — el nombre es solo un atributo más de la fila
@@ -1878,30 +1883,37 @@ en un seed que corre en cada deploy se las lleva puestas.
 - **Idempotente y reversible:** no renombrar si el destino ya existe (una base sembrada de
   cero ya tiene el nombre nuevo, y renombrar dejaría dos filas iguales).
 
-### Las DOS vías de concesión de permisos — y solo dos
+### Roles por ALCANCE — instalación y compañía (`docs/PLAN-ROLES-POR-ALCANCE.md`)
 
-| Vía | Tabla | Alcance | Para qué |
+Todo permiso y todo rol tiene un `scope`: `installation` o `company`. Un rol solo puede
+contener permisos de su propio alcance (`RolePermission#scope_matches_role`) — un permiso
+de instalación puesto en un rol de compañía, o viceversa, no pasa la validación.
+
+| Alcance | Rol del usuario | Tabla de la asignación | Para qué |
 |---|---|---|---|
-| Por rol | `user_roles` → `role_permissions` | **La compañía** de la asignación | Todo permiso `normal`. Es el camino por defecto. |
-| Directa al usuario | `user_permissions` | **Toda la aplicación** (sin compañía) | Solo permisos `global`. |
+| `installation` | `users.installation_role_id` (uno solo, o ninguno) | — es una columna del usuario, no una tabla de unión | Administrar la instalación entera: Usuarios, Seguridad, Conexiones, Bandejas, Ajustes generales… No depende de ninguna compañía activa. |
+| `company` | `users_by_companies.role_id` (uno por compañía asignada) | `users_by_companies` — la MISMA fila da el acceso a la compañía y el rol dentro de ella | Documentos, numeración, sucursales… todo lo que aplica *dentro* de una compañía. |
 
-`permissions.type` (`normal` / `global`) es lo que separa las dos. La vía directa está
-acotada a propósito y la restricción vive **en el modelo**, no en el controller
-(`UserPermission#permission_must_be_global`): conceder un permiso por compañía sin
-compañía sería un portillo, no una comodidad.
+No hay una tercera vía "directa al usuario, sin rol": `UserRole`/`UserPermission`
+existieron con ese propósito y se eliminaron (Fase 6 del plan) una vez que
+`installation_role_id` cubrió el mismo caso con un rol de por medio — auditable (¿qué rol
+tiene?, no "algún check quedó marcado") y reutilizable entre usuarios.
 
 Consecuencias que hay que respetar al tocar autorización:
 
-- **`permission?` evalúa las dos** — primero el rol (cubre la enorme mayoría, y ahí
-  termina), y solo si no concedió nada consulta la directa. Nunca asumir que
-  `user_roles` es la única fuente.
+- **`permission?` evalúa las dos vías** — primero el rol de instalación, después el rol
+  de compañía en `Current.company_id` (si hay una activa). Nunca asumir que una sola
+  alcanza: un permiso de instalación tiene que verse **sin** compañía seleccionada.
 - **Los permisos efectivos también son la unión** (`Api::PermissionsController#index`).
-  `Clavisco::Auth::AuthorizationService` solo conoce la vía por rol: vive en un
-  submódulo y **no se toca** (§27), así que la unión se arma del lado de la app.
-- **Un permiso global aplica sin compañía activa.** Es exactamente lo que lo hace
-  global: si se filtrara por `Current.company_id` no se distinguiría de uno normal.
-- **`user_permissions` no lleva `company_id`.** Agregárselo obligaría a repetir la misma
-  fila por cada compañía y a mantenerlas sincronizadas a mano.
+  `Clavisco::Auth::AuthorizationService` (submódulo, **no se toca**, §27) solo sabe leer
+  "roles de un usuario en una compañía" — por eso se lo llama dos veces con clases
+  distintas según haga falta, nunca una tercera vía escrita a mano para instalación.
+- **Un permiso de instalación aplica sin compañía activa.** Es exactamente lo que lo hace
+  de instalación: si se filtrara por `Current.company_id` no se distinguiría de uno de
+  compañía.
+- **`GET /api/permissions` se pide SIEMPRE**, haya o no compañía activa (menú y
+  auth-guard) — antes solo se pedía con compañía seleccionada, y eso dejaba sin permisos
+  de instalación a quien todavía no había elegido ninguna.
 
 ### Paginación — query string, no headers
 

@@ -37,11 +37,7 @@ RSpec.describe 'Api::Documents::XmlFiles', type: :request do
   end
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: company)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 
@@ -191,10 +187,9 @@ RSpec.describe 'Api::Documents::XmlFiles', type: :request do
   end
 
   it 'responde 403 cuando la compañía activa no es del usuario' do
-    UserRole.create!(user: user, role: role, company: company)
-    RolePermission.create!(role: role,
-                           permission: Permission.find_or_create_by!(name: 'Documents_Issued_ViewDocuments'))
-    sign_in(user, company: company)
+    grant_permissions(user, 'Documents_Issued_ViewDocuments', company: company)
+    otra = Company.create!(name: 'Otra S.A.')
+    sign_in(user, company: otra) # el permiso lo tiene en `company`, no acá
 
     get_xml('sent')
 

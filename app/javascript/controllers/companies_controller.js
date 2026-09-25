@@ -17,7 +17,10 @@ import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'contr
  * Permisos (CLAUDE.md §26 — se deshabilita con tooltip, no se oculta):
  *   - Configurations_Companies_ListAccess → gatea la pantalla (menú + endpoint)
  *   - Configurations_Companies_Create     → botón "Nueva Compañía"
- *   - Configurations_Companies_Update     → botón "Editar" de la fila
+ *   - Configurations_Companies_Update (de compañía) o
+ *     Configurations_Companies_UpdateInAllCompanies (de instalación) → botón
+ *     "Editar" de la fila — cualquiera de los dos alcanza
+ *     (docs/PLAN-ROLES-POR-ALCANCE.md)
  */
 export default class extends TabulatorController {
   static targets = [
@@ -181,7 +184,7 @@ export default class extends TabulatorController {
   // ── Event handlers de fila ─────────────────────────────────────────────────
 
   #onEditClick(company) {
-    if (!this.#hasPerm('Configurations_Companies_Update')) {
+    if (!this.#hasPerm(['Configurations_Companies_Update', 'Configurations_Companies_UpdateInAllCompanies'])) {
       Swal.fire({
         toast: true,
         position: 'top-end',
@@ -211,7 +214,7 @@ export default class extends TabulatorController {
   // El data-tooltip va en el <span> envolvente porque un <button disabled> no
   // emite eventos de mouse; el setupTooltip base (tabla) lo detecta ahí.
   #actionButtons() {
-    return this.#hasPerm('Configurations_Companies_Update')
+    return this.#hasPerm(['Configurations_Companies_Update', 'Configurations_Companies_UpdateInAllCompanies'])
       ? `<div class="flex items-center justify-center gap-1">
            <button type="button" data-action-type="edit" data-tooltip="Editar"
                    class="p-1.5 text-blue-600 rounded hover:bg-blue-50 transition-colors cursor-pointer">
@@ -230,9 +233,14 @@ export default class extends TabulatorController {
 
   // ── Helpers de UI ──────────────────────────────────────────────────────────
 
-  /** Permissions es string[] — e.g. ["Configurations_Companies_Create"] */
+  /**
+   * Permissions es string[] — e.g. ["Configurations_Companies_Create"].
+   * `name` acepta un string o un array (basta con tener AL MENOS uno).
+   */
   #hasPerm(name) {
-    return this.#permissions.includes(name);
+    return Array.isArray(name)
+      ? name.some(n => this.#permissions.includes(n))
+      : this.#permissions.includes(name);
   }
 
   // Habilita el botón "Nueva Compañía" (nace deshabilitado/gris con tooltip de

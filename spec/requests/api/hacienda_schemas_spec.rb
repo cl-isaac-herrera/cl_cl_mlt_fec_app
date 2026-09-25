@@ -52,10 +52,7 @@ RSpec.describe 'Api::HaciendaSchemas', type: :request do
   end
 
   def sign_in_with(*permission_names)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 

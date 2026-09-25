@@ -7,16 +7,23 @@ import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'contr
  * RolesController — Gestión de roles y de sus permisos (Tabulator + paneles).
  *
  * Endpoints nativos de Rails (ver CLAUDE.md §28):
- *   - GET   /api/roles                        (listado)
- *   - POST  /api/roles                        (crear)
- *   - PATCH /api/roles/:id                    (renombrar)
- *   - GET   /api/roles/:id/permissions        (permisos vigentes del rol)
- *   - PUT   /api/roles/:id/permissions        (reasignación completa)
- *   - GET   /api/permissions/catalog          (catálogo para pintar los checkboxes)
+ *   - GET   /api/roles?scope=installation|company     (listado, filtrado por alcance)
+ *   - POST  /api/roles                                (crear; exige Scope en el body)
+ *   - PATCH /api/roles/:id                             (renombrar)
+ *   - GET   /api/roles/:id/permissions                (permisos vigentes del rol)
+ *   - PUT   /api/roles/:id/permissions                (reasignación completa)
+ *   - GET   /api/permissions/catalog?scope=…          (catálogo, filtrado por el alcance del rol)
+ *
+ * Un rol solo puede contener permisos de su propio alcance
+ * (docs/PLAN-ROLES-POR-ALCANCE.md), así que la pantalla separa dos tabs: "Roles
+ * de instalación" y "Roles de compañía". El tab activo decide con qué `Scope`
+ * se filtra el listado, con qué `Scope` se crea un rol nuevo, y — al abrir el
+ * panel de permisos de un rol — con qué `Scope` se pide el catálogo (el del rol
+ * que se está editando, no necesariamente el del tab activo en ese momento).
  *
  * ⚠️ El listado ya NO se filtra por compañía. En el esquema propio `roles` no
- * tiene `company_id`: el rol existe para todo el producto y la compañía vive en
- * `user_roles`. El .NET pedía `GetRoles?companyId=N`; ver TODOS.md → Seguridad.
+ * tiene `company_id`: el rol de compañía se asigna vía `users_by_companies`.
+ * El .NET pedía `GetRoles?companyId=N`; ver TODOS.md → Seguridad.
  *
  * Layout full-height: la tabla ocupa toda la altura del contenedor con scroll interno
  * de filas y paginador al pie (height: "100%").
@@ -24,6 +31,7 @@ import { TABULATOR_LOCALE, TABULATOR_LANGS, TABULATOR_LOADING_HTML } from 'contr
 export default class extends TabulatorController {
   static targets = [
     ...TabulatorController.targets,
+    'scopeTabBtn',
     'panel',
     'panelBackdrop',
     'nameInput',
@@ -54,12 +62,27 @@ export default class extends TabulatorController {
   /** Rol en edición (null si es creación) */
   #editingRole = null;
 
+  /**
+   * Alcance del tab activo ('installation' | 'company'): decide qué lista
+   * trae el índice y con qué Scope se crea un rol nuevo — el usuario no elige
+   * el alcance a mano, lo determina el tab que tenía abierto (CLAUDE.md §20/§21).
+   */
+  #activeScope = 'installation';
+
   // ── Estado del panel de permisos ────────────────────────────────────────────
 
   /** Rol cuyos permisos se gestionan en el panel */
   #permsRole = null;
 
-  /** Catálogo completo de permisos (cargado una vez y reutilizado) */
+  /**
+   * Catálogo de permisos, cacheado POR ALCANCE: un rol de instalación y uno de
+   * compañía nunca comparten catálogo (`RolePermission` rechaza un permiso de
+   * otro alcance), así que un solo array global mostraría el catálogo
+   * equivocado al alternar entre roles de distinto alcance.
+   */
+  #permsCatalogByScope = { installation: [], company: [] };
+
+  /** Catálogo del rol actualmente abierto en el panel (apunta al de su alcance) */
   #allPerms = [];
 
   /** Ids asignados al rol al abrir el panel (estado inicial) */
@@ -71,8 +94,29 @@ export default class extends TabulatorController {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   connect() {
+    this.#activateScopeTab(this.#activeScope);
     // Sin companyId: los roles no se filtran por compañía (ver la nota de arriba).
     super.connect();   // construye la tabla y dispara ajaxRequestFunc automáticamente
+  }
+
+  // ── Tabs de alcance ───────────────────────────────────────────────────────
+
+  switchScopeTab(event) {
+    const scope = event.currentTarget.dataset.scope;
+    if (scope === this.#activeScope) return;
+    this.#activeScope = scope;
+    this.#activateScopeTab(scope);
+    this.table?.setData();   // recarga vía ajaxRequestFunc con el nuevo scope
+  }
+
+  #activateScopeTab(scope) {
+    this.scopeTabBtnTargets.forEach(btn => {
+      const isActive = btn.dataset.scope === scope;
+      btn.classList.toggle('border-blue-600', isActive);
+      btn.classList.toggle('text-blue-600',   isActive);
+      btn.classList.toggle('border-transparent', !isActive);
+      btn.classList.toggle('text-gray-500',   !isActive);
+    });
   }
 
   // ── Configuración Tabulator ─────────────────────────────────────────────────
@@ -132,8 +176,9 @@ export default class extends TabulatorController {
   // ── API ───────────────────────────────────────────────────────────────────
 
   // Invocado por ajaxRequestFunc — Tabulator muestra dataLoaderLoading automáticamente.
+  // Filtra siempre por el alcance del tab activo: no hay un listado "sin filtrar".
   async #loadRoles() {
-    const json = await this.#apiFetch('/api/roles');
+    const json = await this.#apiFetch(`/api/roles?scope=${encodeURIComponent(this.#activeScope)}`);
 
     if (!json.Data) {
       Swal.fire({
@@ -151,11 +196,12 @@ export default class extends TabulatorController {
 
   // El payload pierde `GroupId` (no existe la tabla `groups` en la base propia),
   // `Active` (no se edita desde esta pantalla) y `companyId` (los roles no son
-  // por compañía). Queda solo el nombre, que es lo único que el formulario pide.
+  // por compañía). Queda el nombre y el `Scope` del tab activo — el usuario no
+  // lo elige a mano, el servidor lo exige y lo rechaza con 422 si falta.
   async #createRole(name) {
     return this.#apiFetch('/api/roles', {
       method: 'POST',
-      body: JSON.stringify({ Name: name }),
+      body: JSON.stringify({ Name: name, Scope: this.#activeScope }),
     });
   }
 
@@ -358,20 +404,27 @@ export default class extends TabulatorController {
   async #loadRolePerms() {
     this.permsLoaderTarget.classList.remove('hidden');
 
+    // El catálogo se filtra por el ALCANCE DEL ROL que se está editando, no por
+    // el tab activo en la tabla: un rol solo puede contener permisos de su
+    // propio alcance (`RolePermission`), así que mostrar el catálogo completo
+    // dejaría marcar un permiso que el PUT rechazaría con 422.
+    const scope = this.#permsRole.Scope;
+
     try {
-      // El catálogo de permisos se carga una sola vez y se reutiliza entre roles.
+      // El catálogo de cada alcance se carga una sola vez y se reutiliza entre
+      // roles del mismo alcance.
       const requests = [
         this.#apiFetch(`/api/roles/${this.#permsRole.Id}/permissions`),
       ];
-      if (this.#allPerms.length === 0) {
-        requests.push(this.#apiFetch('/api/permissions/catalog'));
+      if (!this.#permsCatalogByScope[scope]?.length) {
+        requests.push(this.#apiFetch(`/api/permissions/catalog?scope=${encodeURIComponent(scope)}`));
       }
 
       const [byRolRes, allPermsRes] = await Promise.all(requests);
 
       if (allPermsRes) {
         if (allPermsRes.Data && allPermsRes.Data.length) {
-          this.#allPerms = allPermsRes.Data;
+          this.#permsCatalogByScope[scope] = allPermsRes.Data;
         } else {
           Swal.fire({
             toast: true,
@@ -384,6 +437,8 @@ export default class extends TabulatorController {
           });
         }
       }
+
+      this.#allPerms = this.#permsCatalogByScope[scope] || [];
 
       // El endpoint devuelve los registros de permiso, no una lista de ids como
       // el .NET: acá interesan solo los ids para marcar los checkboxes.

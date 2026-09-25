@@ -12,21 +12,19 @@ RSpec.describe 'Api::Users', type: :request do
   def sign_in_with(*permission_names, as: nil, company: nil)
     actor = as || admin
     scope = company || self.company
-    UserRole.create!(user: actor, role: role, company: scope)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(actor, *permission_names, company: scope)
     sign_in(actor, company: scope)
   end
 
   def body      = JSON.parse(response.body)
   def body_data = body['Data']
 
-  # Usuario visible desde `company`: la lista se limita a quienes están asignados
-  # a la compañía activa.
+  # Da de alta un usuario con acceso a una compañía. Administrar usuarios es un
+  # permiso de INSTALACIÓN (docs/PLAN-ROLES-POR-ALCANCE.md): la lista siempre
+  # muestra a todos, sin importar a qué compañía esté asignado cada uno.
   def create_member(email:, name: nil, company: nil, **attrs)
     user = User.create!(email: email, name: name, **attrs)
-    UsersByCompany.create!(user: user, company: company || self.company)
+    UsersByCompany.create!(user: user, company: company || self.company, role: role)
     user
   end
 
@@ -40,8 +38,9 @@ RSpec.describe 'Api::Users', type: :request do
       expect(response).to have_http_status(:ok)
       expect(body_data['Items'].size).to eq(2)
       # El total es de la consulta completa: es lo que el contador de Tabulator
-      # necesita para no sobreestimar (CLAUDE.md §17).
-      expect(body_data['Total']).to eq(3)
+      # necesita para no sobreestimar (CLAUDE.md §17). Incluye también a `admin`
+      # (la lista es de TODA la instalación, sin importar la compañía activa).
+      expect(body_data['Total']).to eq(4)
     end
 
     it 'devuelve la segunda página, no la primera otra vez' do
@@ -52,30 +51,24 @@ RSpec.describe 'Api::Users', type: :request do
       sign_in_with('Configurations_Users_ListAccess')
       get '/api/users', params: { page: 2, per_page: 2 }
 
-      expect(body_data['Items'].map { |u| u['FullName'] }).to eq(['Carla'])
+      # Orden alfabético por nombre: Administradora, Ana, Bruno, Carla — la
+      # página 2 (de a 2) trae Bruno y Carla.
+      expect(body_data['Items'].map { |u| u['FullName'] }).to eq(%w[Bruno Carla])
     end
 
-    it 'no deja ver a los usuarios de otra compañía' do
-      otra = Company.create!(name: 'Otra S.A.')
-      create_member(email: 'propio@example.com',  name: 'Propio')
-      create_member(email: 'ajeno@example.com',   name: 'Ajeno', company: otra)
-
-      sign_in_with('Configurations_Users_ListAccess')
-      get '/api/users'
-
-      expect(body_data['Items'].map { |u| u['Email'] }).to eq(['propio@example.com'])
-    end
-
-    it 'abarca todo el producto con Configurations_Users_ViewAllApplicationUsers' do
+    # Administrar usuarios es un permiso de INSTALACIÓN, no de compañía
+    # (docs/PLAN-ROLES-POR-ALCANCE.md): quien entra a esta pantalla ve a TODOS
+    # los usuarios del producto, sin importar cuál sea la compañía activa ni a
+    # qué compañía esté asignado cada uno.
+    it 'muestra usuarios de cualquier compañía, no solo la activa' do
       otra = Company.create!(name: 'Otra S.A.')
       create_member(email: 'propio@example.com', name: 'Propio')
       create_member(email: 'ajeno@example.com',  name: 'Ajeno', company: otra)
 
-      sign_in_with('Configurations_Users_ListAccess',
-                   'Configurations_Users_ViewAllApplicationUsers')
+      sign_in_with('Configurations_Users_ListAccess')
       get '/api/users'
 
-      expect(body_data['Items'].map { |u| u['Email'] }).to include('ajeno@example.com')
+      expect(body_data['Items'].map { |u| u['Email'] }).to include('propio@example.com', 'ajeno@example.com')
     end
 
     # El .NET lo pedía con `activeOnly=false`. Sin `unscoped`, el default_scope de
@@ -155,13 +148,13 @@ RSpec.describe 'Api::Users', type: :request do
   end
 
   describe 'POST /api/users' do
-    before { UsersByCompany.create!(user: admin, company: company) }
-
-    it 'crea el usuario activo y asignado a la compañía indicada' do
+    # Ya no exige `CompanyId` (docs/PLAN-ROLES-POR-ALCANCE.md): el usuario nace
+    # sin ninguna compañía asignada, y el acceso se reparte después desde el
+    # panel "Gestionar accesos" (`PUT /api/users/:id/companies`).
+    it 'crea el usuario activo y sin ninguna compañía asignada todavía' do
       sign_in_with('Configurations_Users_Create')
 
-      post '/api/users', params: { FullName: 'Nueva Persona', Email: 'nueva@example.com',
-                                   CompanyId: company.id }.to_json,
+      post '/api/users', params: { FullName: 'Nueva Persona', Email: 'nueva@example.com' }.to_json,
                          headers: { 'CONTENT_TYPE' => 'application/json' }
 
       expect(response).to have_http_status(:created)
@@ -169,27 +162,14 @@ RSpec.describe 'Api::Users', type: :request do
       # Activo a propósito: inactivo quedaría escondido por el default_scope y
       # desaparecería del listado apenas se guarda.
       expect(created.is_active).to be(true)
-      expect(created.companies).to include(company)
-    end
-
-    it 'rechaza una compañía que no está asignada al administrador' do
-      ajena = Company.create!(name: 'Ajena S.A.')
-      sign_in_with('Configurations_Users_Create')
-
-      post '/api/users', params: { FullName: 'X', Email: 'x@example.com',
-                                   CompanyId: ajena.id }.to_json,
-                         headers: { 'CONTENT_TYPE' => 'application/json' }
-
-      expect(response).to have_http_status(:unprocessable_content)
-      expect(User.unscoped.find_by(email: 'x@example.com')).to be_nil
+      expect(created.companies).to be_empty
     end
 
     it 'rechaza un correo repetido con el mensaje traducido' do
       create_member(email: 'repetido@example.com')
       sign_in_with('Configurations_Users_Create')
 
-      post '/api/users', params: { FullName: 'Otra', Email: 'repetido@example.com',
-                                   CompanyId: company.id }.to_json,
+      post '/api/users', params: { FullName: 'Otra', Email: 'repetido@example.com' }.to_json,
                          headers: { 'CONTENT_TYPE' => 'application/json' }
 
       expect(response).to have_http_status(:unprocessable_content)
@@ -199,8 +179,7 @@ RSpec.describe 'Api::Users', type: :request do
     it 'rechaza un correo con formato inválido' do
       sign_in_with('Configurations_Users_Create')
 
-      post '/api/users', params: { FullName: 'Otra', Email: 'no-es-correo',
-                                   CompanyId: company.id }.to_json,
+      post '/api/users', params: { FullName: 'Otra', Email: 'no-es-correo' }.to_json,
                          headers: { 'CONTENT_TYPE' => 'application/json' }
 
       expect(response).to have_http_status(:unprocessable_content)
@@ -210,8 +189,7 @@ RSpec.describe 'Api::Users', type: :request do
     it 'rechaza con 403 a quien solo puede listar' do
       sign_in_with('Configurations_Users_ListAccess')
 
-      post '/api/users', params: { FullName: 'X', Email: 'x@example.com',
-                                   CompanyId: company.id }.to_json,
+      post '/api/users', params: { FullName: 'X', Email: 'x@example.com' }.to_json,
                          headers: { 'CONTENT_TYPE' => 'application/json' }
 
       expect(response).to have_http_status(:forbidden)
@@ -294,7 +272,7 @@ RSpec.describe 'Api::Users', type: :request do
     it 'devuelve las compañías del usuario editado, no las del administrador' do
       otra   = Company.create!(name: 'Sucursal S.A.')
       target = create_member(email: 'multi@example.com')
-      UsersByCompany.create!(user: target, company: otra)
+      UsersByCompany.create!(user: target, company: otra, role: role)
 
       sign_in_with('Configurations_Users_Update')
       get "/api/users/#{target.id}/companies"
@@ -313,116 +291,7 @@ RSpec.describe 'Api::Users', type: :request do
     end
   end
 
-  describe 'GET /api/users/:user_id/role' do
-    it 'devuelve el rol del usuario en la compañía activa' do
-      target = create_member(email: 'conrol@example.com')
-      otro   = Role.create!(name: 'Operador')
-      UserRole.create!(user: target, role: otro, company: company)
-
-      sign_in_with('Configurations_Users_ManageAccess')
-      get "/api/users/#{target.id}/role"
-
-      expect(response).to have_http_status(:ok)
-      expect(body_data).to eq('RoleId' => otro.id, 'RoleName' => 'Operador')
-    end
-
-    it 'devuelve null cuando el usuario no tiene rol en esa compañía' do
-      target = create_member(email: 'sinrol@example.com')
-
-      sign_in_with('Configurations_Users_ManageAccess')
-      get "/api/users/#{target.id}/role"
-
-      expect(body_data).to be_nil
-    end
-
-    # La compañía sale de la sesión: el rol que tenga en otra no se ve ni se pisa.
-    it 'no devuelve el rol que el usuario tiene en otra compañía' do
-      otra   = Company.create!(name: 'Otra S.A.')
-      target = create_member(email: 'otracia@example.com')
-      UserRole.create!(user: target, role: Role.create!(name: 'Ajeno'), company: otra)
-
-      sign_in_with('Configurations_Users_ManageAccess')
-      get "/api/users/#{target.id}/role"
-
-      expect(body_data).to be_nil
-    end
-  end
-
-  describe 'PUT /api/users/:user_id/role' do
-    let(:operador) { Role.create!(name: 'Operador') }
-
-    it 'asigna el rol en la compañía activa' do
-      target = create_member(email: 'asignar@example.com')
-      sign_in_with('Configurations_Users_ManageAccess')
-
-      put "/api/users/#{target.id}/role", params: { RoleId: operador.id }.to_json,
-                                          headers: { 'CONTENT_TYPE' => 'application/json' }
-
-      expect(response).to have_http_status(:ok)
-      expect(UserRole.find_by(user_id: target.id, company_id: company.id).role_id).to eq(operador.id)
-    end
-
-    it 'reemplaza el rol anterior en vez de acumular asignaciones' do
-      target  = create_member(email: 'reemplazo@example.com')
-      anterior = Role.create!(name: 'Anterior')
-      UserRole.create!(user: target, role: anterior, company: company)
-
-      sign_in_with('Configurations_Users_ManageAccess')
-      put "/api/users/#{target.id}/role", params: { RoleId: operador.id }.to_json,
-                                          headers: { 'CONTENT_TYPE' => 'application/json' }
-
-      vigentes = UserRole.where(user_id: target.id, company_id: company.id)
-      expect(vigentes.pluck(:role_id)).to eq([operador.id])
-    end
-
-    # Sin `unscoped` al reasignar, volver a un rol ya revocado insertaría una fila
-    # nueva al lado de la vieja y `user_roles` acumularía basura.
-    it 'reactiva la asignación revocada en vez de insertar otra' do
-      target = create_member(email: 'idayvuelta@example.com')
-      sign_in_with('Configurations_Users_ManageAccess')
-
-      headers = { 'CONTENT_TYPE' => 'application/json' }
-      put "/api/users/#{target.id}/role", params: { RoleId: operador.id }.to_json, headers: headers
-      put "/api/users/#{target.id}/role", params: { RoleId: role.id }.to_json,     headers: headers
-      put "/api/users/#{target.id}/role", params: { RoleId: operador.id }.to_json, headers: headers
-
-      filas = UserRole.unscoped.where(user_id: target.id, company_id: company.id)
-      expect(filas.count).to eq(2)
-      expect(filas.where(is_active: true).pluck(:role_id)).to eq([operador.id])
-    end
-
-    it 'no toca el rol que el usuario tiene en otra compañía' do
-      otra   = Company.create!(name: 'Otra S.A.')
-      target = create_member(email: 'aislada@example.com')
-      ajeno  = Role.create!(name: 'Ajeno')
-      UserRole.create!(user: target, role: ajeno, company: otra)
-
-      sign_in_with('Configurations_Users_ManageAccess')
-      put "/api/users/#{target.id}/role", params: { RoleId: operador.id }.to_json,
-                                          headers: { 'CONTENT_TYPE' => 'application/json' }
-
-      expect(UserRole.find_by(user_id: target.id, company_id: otra.id).role_id).to eq(ajeno.id)
-    end
-
-    it 'rechaza un rol inexistente' do
-      target = create_member(email: 'rolfantasma@example.com')
-      sign_in_with('Configurations_Users_ManageAccess')
-
-      put "/api/users/#{target.id}/role", params: { RoleId: 999_999 }.to_json,
-                                          headers: { 'CONTENT_TYPE' => 'application/json' }
-
-      expect(response).to have_http_status(:unprocessable_content)
-      expect(body['Message']).to eq('El rol no existe.')
-    end
-
-    it 'rechaza con 403 a quien no puede gestionar accesos' do
-      target = create_member(email: 'sinpermiso@example.com')
-      sign_in_with('Configurations_Users_ListAccess')
-
-      put "/api/users/#{target.id}/role", params: { RoleId: operador.id }.to_json,
-                                          headers: { 'CONTENT_TYPE' => 'application/json' }
-
-      expect(response).to have_http_status(:forbidden)
-    end
-  end
+  # El rol de COMPAÑÍA por usuario se prueba en user_companies_spec.rb (vive en
+  # `users_by_companies.role_id`). El de INSTALACIÓN tiene su propio spec,
+  # spec/requests/api/user_installation_role_spec.rb.
 end

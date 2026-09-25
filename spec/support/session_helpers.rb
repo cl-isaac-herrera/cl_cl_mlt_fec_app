@@ -33,6 +33,55 @@ module SessionHelpers
     post '/__test/session', params: { user_id: nil }
   end
 
+  # Concede permisos a un usuario para los request specs, sin que cada archivo
+  # tenga que repetir el boilerplate de armar rol + role_permission +
+  # users_by_companies (o el rol de instalación del usuario, para los permisos
+  # de alcance `installation`). Centralizar esto acá es lo que permitió que la
+  # migración a "roles por alcance" (docs/PLAN-ROLES-POR-ALCANCE.md) tocara un
+  # solo archivo en vez de los ~25 que declaraban su propio `sign_in_with`.
+  #
+  # @param user [User] a quien se le conceden los permisos.
+  # @param names [Array<String>] nombres de permiso (`Permission#name`).
+  # @param company [Company, nil] requerida para permisos `company`; ignorada
+  #   (no hace falta) para permisos `installation`, que no dependen de compañía.
+  #
+  # ⚠️ Un usuario tiene UN SOLO rol de instalación y UN SOLO rol por compañía
+  # (`UsersByCompany`/`User#installation_role_id` — no son tablas de unión como
+  # el viejo `user_roles`), así que varios permisos del mismo alcance para el
+  # mismo usuario (y, si aplica, la misma compañía) se acumulan en EL MISMO
+  # rol de prueba en vez de crear uno nuevo por permiso — dos llamadas
+  # separadas no se pisan, se suman.
+  #
+  # ⚠️ El alcance de un permiso NUEVO (que el spec no haya creado ya con un
+  # `scope` explícito) lo decide si esta llamada trae `company:` o no — pasarlo
+  # es la señal de que el nombre es un permiso de compañía; omitirlo, de que es
+  # de instalación. Un permiso que el spec ya creó antes (con su propio `scope`)
+  # conserva el que tenga: `find_or_create_by!` con bloque solo corre en el alta.
+  def grant_permissions(user, *names, company: nil)
+    names.flatten.each do |name|
+      permission = Permission.find_or_create_by!(name: name) { |p| p.scope = company ? 'company' : 'installation' }
+
+      if permission.scope == 'installation'
+        role = Role.find_or_create_by!(name: "Rol de prueba (instalación) — usuario #{user.id}",
+                                       scope: 'installation')
+        RolePermission.find_or_create_by!(role: role, permission: permission)
+        user.update!(installation_role: role) unless user.installation_role_id == role.id
+      else
+        raise ArgumentError, "grant_permissions: falta `company:` para el permiso de compañía #{name.inspect}" if company.nil?
+
+        role = Role.find_or_create_by!(
+          name: "Rol de prueba (compañía) — usuario #{user.id} en compañía #{company.id}", scope: 'company'
+        )
+        RolePermission.find_or_create_by!(role: role, permission: permission)
+
+        assignment = UsersByCompany.find_or_initialize_by(user: user, company: company)
+        assignment.role      = role unless assignment.role_id == role.id
+        assignment.is_active = true
+        assignment.save!
+      end
+    end
+  end
+
   # Config OIDC falsa — los specs no deben depender de un tenant real.
   def stub_oidc_config(provider: 'auth0', domain: 'test.auth0.com')
     config = OidcConfig.new(

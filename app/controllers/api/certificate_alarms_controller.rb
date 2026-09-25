@@ -18,20 +18,16 @@ module Api
   #     sobre un arreglo y siempre obtenía `undefined`. La alarma es una sola:
   #     recurso singular, respuesta singular.
   class CertificateAlarmsController < AuthorizedController
+    # No lleva permiso propio: es el certificado de la compañía que el usuario
+    # ya tiene activa, y el aviso lo necesita cualquiera que emita. El filtro de
+    # acceso es la asignación misma, que valida `RequiresActiveCompany` — el
+    # skip va ANTES para que el safety net no reviente si `require_company!`
+    # corta la respuesta antes de llegar a `show`.
+    before_action :skip_permission_check!
+    include RequiresActiveCompany
+
     # GET /api/certificate_alarm
     def show
-      # No lleva permiso: es el certificado de la compañía que el usuario ya tiene
-      # activa, y el aviso lo necesita cualquiera que emita. El filtro de acceso
-      # es la asignación misma, que se valida abajo.
-      skip_permission_check!
-
-      company = Company.assigned_to(Current.user.id).find_by(id: Current.company_id)
-
-      unless company
-        return render json: ApiResponse.not_found('La compañía activa no está asignada a este usuario.').to_h,
-                      status: :not_found
-      end
-
       render json: ApiResponse.success(company.certificate_alarm).to_h
     end
   end

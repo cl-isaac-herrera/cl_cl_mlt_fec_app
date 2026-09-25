@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_22_130000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_24_180000) do
   create_table "companies", force: :cascade do |t|
     t.boolean "auto_send_ap_inv", default: false, null: false
     t.datetime "cert_expires_at"
@@ -84,7 +84,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_22_130000) do
     t.string "description"
     t.boolean "is_active", default: true, null: false
     t.string "name", null: false
-    t.string "type", default: "normal", null: false
+    t.string "scope", default: "company", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
   end
@@ -125,6 +125,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_22_130000) do
     t.string "created_by"
     t.boolean "is_active", default: true, null: false
     t.string "name", null: false
+    t.string "scope", default: "company", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
   end
@@ -159,37 +160,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_22_130000) do
     t.index ["code"], name: "index_sl_resources_on_code", unique: true
   end
 
-  create_table "user_permissions", force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.string "created_by"
-    t.boolean "is_active", default: true, null: false
-    t.integer "permission_id", null: false
-    t.datetime "updated_at", null: false
-    t.string "updated_by"
-    t.integer "user_id", null: false
-    t.index ["permission_id"], name: "index_user_permissions_on_permission_id"
-    t.index ["user_id", "permission_id"], name: "index_user_permissions_on_user_id_and_permission_id", unique: true
-    t.index ["user_id"], name: "index_user_permissions_on_user_id"
-  end
-
-  create_table "user_roles", force: :cascade do |t|
-    t.integer "company_id", null: false
-    t.datetime "created_at", null: false
-    t.string "created_by"
-    t.boolean "is_active", default: true, null: false
-    t.integer "role_id", null: false
-    t.datetime "updated_at", null: false
-    t.string "updated_by"
-    t.integer "user_id", null: false
-    t.index ["company_id"], name: "index_user_roles_on_company_id"
-    t.index ["role_id"], name: "index_user_roles_on_role_id"
-    t.index ["user_id"], name: "index_user_roles_on_user_id"
-  end
-
   create_table "users", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "created_by"
     t.string "email", null: false
+    t.integer "installation_role_id"
     t.boolean "is_active", default: true, null: false
     t.string "name"
     t.string "oidc_sub"
@@ -199,6 +174,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_22_130000) do
     t.datetime "updated_at", null: false
     t.string "updated_by"
     t.index ["email"], name: "index_users_on_email", unique: true
+    t.index ["installation_role_id"], name: "index_users_on_installation_role_id"
     t.index ["oidc_sub"], name: "index_users_on_oidc_sub", unique: true
   end
 
@@ -207,10 +183,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_22_130000) do
     t.datetime "created_at", null: false
     t.string "created_by"
     t.boolean "is_active", default: true, null: false
+    t.integer "role_id", null: false
     t.datetime "updated_at", null: false
     t.string "updated_by"
     t.integer "user_id", null: false
     t.index ["company_id"], name: "index_users_by_companies_on_company_id"
+    t.index ["role_id"], name: "index_users_by_companies_on_role_id"
     t.index ["user_id", "company_id"], name: "index_users_by_companies_on_user_id_and_company_id", unique: true
     t.index ["user_id"], name: "index_users_by_companies_on_user_id"
   end
@@ -220,11 +198,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_22_130000) do
   add_foreign_key "companies", "reception_mailboxes"
   add_foreign_key "role_permissions", "permissions"
   add_foreign_key "role_permissions", "roles"
-  add_foreign_key "user_permissions", "permissions"
-  add_foreign_key "user_permissions", "users"
-  add_foreign_key "user_roles", "companies"
-  add_foreign_key "user_roles", "roles"
-  add_foreign_key "user_roles", "users"
+  add_foreign_key "users", "roles", column: "installation_role_id"
   add_foreign_key "users_by_companies", "companies"
+  add_foreign_key "users_by_companies", "roles"
   add_foreign_key "users_by_companies", "users"
 end

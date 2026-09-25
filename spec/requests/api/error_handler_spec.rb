@@ -17,9 +17,7 @@ RSpec.describe 'Api ErrorHandler', type: :request do
   def body = JSON.parse(response.body)
 
   before do
-    UserRole.create!(user: user, role: role, company: company)
-    RolePermission.create!(role: role,
-                           permission: Permission.create!(name: 'Configurations_Security_Access'))
+    grant_permissions(user, 'Configurations_Security_Access', company: company)
     sign_in(user, company: company)
   end
 

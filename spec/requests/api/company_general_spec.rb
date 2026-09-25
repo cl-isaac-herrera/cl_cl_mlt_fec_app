@@ -37,11 +37,7 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
   ].freeze
 
   def sign_in_with(*permission_names)
-    UsersByCompany.create!(user: user, company: acme)
-    UserRole.create!(user: user, role: role, company: acme)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.find_or_create_by!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: acme)
     sign_in(user, company: acme)
   end
 
@@ -66,6 +62,21 @@ RSpec.describe 'PATCH /api/companies/:company_id/general', type: :request do
 
       expect(response).to have_http_status(:forbidden)
       expect(acme.reload.name).to eq('ACME S.A.')
+    end
+
+    # Alcanza con el permiso de INSTALACIÓN (docs/PLAN-ROLES-POR-ALCANCE.md), sin
+    # que el usuario tenga rol de compañía ni esté asignado a `acme` — de ahí
+    # que también necesite `ViewAllApplicationCompanies` para que
+    # `find_visible_company` la encuentre.
+    it 'también alcanza con Configurations_Companies_UpdateInAllCompanies (de instalación)' do
+      grant_permissions(user, 'Configurations_Companies_UpdateInAllCompanies',
+                       'Configurations_Companies_ViewAllApplicationCompanies')
+      sign_in(user, company: acme)
+
+      patch_section(Name: 'Actualizada por instalación')
+
+      expect(response).to have_http_status(:ok)
+      expect(acme.reload.name).to eq('Actualizada por instalación')
     end
 
     it 'responde 404 con un id que no existe' do

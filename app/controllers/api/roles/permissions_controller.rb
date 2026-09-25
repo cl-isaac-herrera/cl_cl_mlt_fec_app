@@ -34,10 +34,21 @@ module Api
         end
 
         ids     = Array(params[:PermissionIds]).map(&:to_i).uniq
-        unknown = ids - Permission.where(id: ids).pluck(:id)
+        matched = Permission.where(id: ids)
+        unknown = ids - matched.pluck(:id)
         if unknown.any?
           return render json: ApiResponse.error("Permisos inexistentes: #{unknown.join(', ')}").to_h,
                         status: :unprocessable_content
+        end
+
+        # `insert_all` no dispara la validación de `RolePermission` — el alcance
+        # se revisa acá, antes de escribir (ver también CLAUDE.md §28 y
+        # docs/PLAN-ROLES-POR-ALCANCE.md Fase 1).
+        out_of_scope = matched.where.not(scope: @role.scope).pluck(:name)
+        if out_of_scope.any?
+          return render json: ApiResponse.error(
+            "Son de otro alcance y no se pueden asignar a este rol: #{out_of_scope.join(', ')}"
+          ).to_h, status: :unprocessable_content
         end
 
         replace_assignments(ids)
@@ -101,7 +112,7 @@ module Api
           Id:          permission.id,
           Name:        permission.name,
           Description: permission.description,
-          Type:        permission.type
+          Scope:       permission.scope
         }
       end
     end

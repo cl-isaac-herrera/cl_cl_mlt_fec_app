@@ -2,12 +2,13 @@
 
 module Api
   module Users
-    # Compañías asignadas a un usuario (`users_by_companies`). Definen qué puede
-    # elegir en el selector del toolbar y, por lo tanto, sobre qué opera.
+    # Compañías asignadas a un usuario, CON el rol de compañía que tiene en cada
+    # una (`users_by_companies.role_id` — docs/PLAN-ROLES-POR-ALCANCE.md: una
+    # fila da el acceso y el rol a la vez).
     #
     # Sirve a dos pantallas del mismo módulo:
     #   - panel de edición → llena el selector "Compañía para probar credenciales";
-    #   - tab "Asignación de compañías" → es la lista de la derecha (asignadas).
+    #   - tab "Compañías" del panel "Gestionar accesos" → lista con su rol por fila.
     #
     # Reemplaza `GET /api/User/companies?userId=N`, `GET /api/User/assigned-companies?userId=N`
     # y el par `POST /api/User/bulk-assign-companies` + `POST /api/User/bulk-unassign-companies`.
@@ -29,20 +30,29 @@ module Api
 
       # GET /api/users/:user_id/companies
       def show
-        render json: ApiResponse.success(assigned.map { |c| serialize(c) }).to_h
+        render json: ApiResponse.success(assigned.map { |a| serialize(a) }).to_h
       end
 
       # PUT /api/users/:user_id/companies
       #
-      # Reemplazo completo, pero SOLO dentro del alcance de quien guarda: lo que
-      # no venga en `CompanyIds` queda desasignado **si el solicitante podía
-      # asignarlo**. Ver la nota de `replace_assignments`.
+      # Cuerpo: `{ Assignments: [{ CompanyId, RoleId }, ...] }`. Reemplazo
+      # completo, pero SOLO dentro del alcance de quien guarda: lo que no venga
+      # queda desasignado **si el solicitante podía asignarlo**. Ver la nota de
+      # `replace_assignments`.
       def update
-        ids     = Array(params[:CompanyIds]).map(&:to_i).uniq
-        unknown = ids - Company.where(id: ids).pluck(:id)
+        assignments = parse_assignments
+        return if performed?
 
+        ids     = assignments.keys
+        unknown = ids - Company.where(id: ids).pluck(:id)
         if unknown.any?
           return render json: ApiResponse.error("Compañías inexistentes: #{unknown.join(', ')}").to_h,
+                        status: :unprocessable_content
+        end
+
+        invalid_roles = assignments.values.uniq - Role.company.where(id: assignments.values.uniq).pluck(:id)
+        if invalid_roles.any?
+          return render json: ApiResponse.error("Roles de compañía inexistentes: #{invalid_roles.join(', ')}").to_h,
                         status: :unprocessable_content
         end
 
@@ -58,9 +68,9 @@ module Api
           ).to_h, status: :forbidden
         end
 
-        replace_assignments(ids, manageable)
+        replace_assignments(assignments, manageable)
 
-        render json: ApiResponse.success(assigned.map { |c| serialize(c) },
+        render json: ApiResponse.success(assigned.map { |a| serialize(a) },
                                          message: 'Cambios aplicados exitosamente.').to_h
       end
 
@@ -82,13 +92,35 @@ module Api
         render json: ApiResponse.not_found('El usuario no existe.').to_h, status: :not_found
       end
 
-      def assigned
-        Company.assigned_to(@user.id).order(:name)
+      # `{ CompanyId => RoleId }`. Cada compañía necesita su rol: no hay
+      # default implícito, para no adivinar con qué permisos queda un acceso
+      # nuevo.
+      def parse_assignments
+        rows = Array(params[:Assignments])
+        result = {}
+        rows.each do |row|
+          company_id = (row[:CompanyId] || row['CompanyId']).to_i
+          role_id    = row[:RoleId] || row['RoleId']
+          if role_id.nil?
+            render json: ApiResponse.error("Falta el rol de compañía para CompanyId=#{company_id}").to_h,
+                   status: :unprocessable_content
+            return {}
+          end
+          result[company_id] = role_id.to_i
+        end
+        result
       end
 
-      # Reasigna en LOTE: tres sentencias como mucho (un INSERT y dos UPDATE), nunca
-      # una por compañía movida — §1.6 del estándar nombra este caso como el
-      # equivalente del N+1 al escribir.
+      def assigned
+        UsersByCompany.where(user_id: @user.id, is_active: true)
+                      .includes(:company, :role)
+                      .joins(:company)
+                      .order('companies.name')
+      end
+
+      # Reasigna en LOTE: como mucho un INSERT, un UPDATE de bajas y un UPDATE
+      # por cada rol de compañía distinto entre las reactivaciones/cambios de
+      # rol — nunca una escritura por checkbox (§1.6 del estándar).
       #
       # Se consulta con `unscoped` porque `users_by_companies` tiene soft delete y su
       # índice único NO excluye a las inactivas: sin eso, volver a asignar una
@@ -99,39 +131,50 @@ module Api
       #
       # ⚠️ `manageable` acota QUÉ se puede revocar, y no es un detalle: una compañía
       # que el usuario tiene asignada pero que el solicitante no administra nunca
-      # aparece en el panel, así que tampoco viaja en `CompanyIds`. Sin este filtro,
+      # aparece en el panel, así que tampoco viaja en `Assignments`. Sin este filtro,
       # el reemplazo completo se la revocaría en silencio — el administrador de una
       # sociedad le sacaría al usuario el acceso a otra sin enterarse.
-      def replace_assignments(ids, manageable)
+      def replace_assignments(role_by_company_id, manageable)
         now   = Time.current
         actor = Current.user&.email || 'system'
+        ids   = role_by_company_id.keys
 
         UsersByCompany.transaction do
-          existing   = UsersByCompany.unscoped.where(user_id: @user.id)
-                                     .pluck(:company_id, :is_active).to_h
+          existing = UsersByCompany.unscoped.where(user_id: @user.id)
+                                   .pluck(:company_id, :is_active, :role_id)
+                                   .each_with_object({}) { |(cid, active, rid), h| h[cid] = [active, rid] }
+
           to_insert  = ids - existing.keys
-          to_enable  = ids.select { |id| existing[id] == false }
-          to_disable = existing.select do |id, active|
-            active && ids.exclude?(id) && manageable.include?(id)
-          end.keys
+          to_disable = existing.select { |id, (active, _)| active && ids.exclude?(id) && manageable.include?(id) }.keys
 
           if to_insert.any?
             UsersByCompany.insert_all(
               to_insert.map do |company_id|
-                { user_id: @user.id, company_id: company_id, is_active: true,
-                  created_at: now, updated_at: now, created_by: actor, updated_by: actor }
+                { user_id: @user.id, company_id: company_id, role_id: role_by_company_id[company_id],
+                  is_active: true, created_at: now, updated_at: now, created_by: actor, updated_by: actor }
               end
             )
           end
 
           scope = UsersByCompany.unscoped.where(user_id: @user.id)
-          scope.where(company_id: to_enable).update_all(is_active: true, updated_at: now, updated_by: actor)  if to_enable.any?
           scope.where(company_id: to_disable).update_all(is_active: false, updated_at: now, updated_by: actor) if to_disable.any?
+
+          # Lo que ya existía y sigue en la lista: reactivar y/o cambiar de rol,
+          # agrupado por rol destino para que sea un UPDATE por rol distinto y
+          # no uno por compañía.
+          to_touch = ids.select do |id|
+            existing.key?(id) && (existing[id][0] == false || existing[id][1] != role_by_company_id[id])
+          end
+          to_touch.group_by { |id| role_by_company_id[id] }.each do |role_id, company_ids|
+            scope.where(company_id: company_ids)
+                 .update_all(is_active: true, role_id: role_id, updated_at: now, updated_by: actor)
+          end
         end
       end
 
-      def serialize(company)
-        { Id: company.id, Name: company.name }
+      def serialize(assignment)
+        { Id: assignment.company.id, Name: assignment.company.name,
+          RoleId: assignment.role_id, RoleName: assignment.role.name }
       end
     end
   end

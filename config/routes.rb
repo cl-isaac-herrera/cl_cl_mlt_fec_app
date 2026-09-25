@@ -93,6 +93,7 @@ Rails.application.routes.draw do
     # `index` son los permisos EFECTIVOS del usuario de la sesión; `catalog` es
     # el catálogo completo que pinta la pantalla de seguridad. Ver la nota del
     # controller: los nombres deberían ser al revés (`TODOS.md` → Seguridad).
+    # `catalog` acepta `?scope=installation|company` (docs/PLAN-ROLES-POR-ALCANCE.md).
     resources :permissions, only: [:index] do
       get :catalog, on: :collection
     end
@@ -101,21 +102,26 @@ Rails.application.routes.draw do
     # `GET /api/Permission/GetPermissionsByRol` y `POST /api/Permission/AssignPermByRol`.
     # El conjunto de permisos de un rol es uno solo: `resource` singular, sin id,
     # y se reemplaza entero con PUT.
+    #
+    # `index` acepta `?scope=installation|company`
+    # (docs/PLAN-ROLES-POR-ALCANCE.md): un rol solo contiene permisos de su
+    # propio alcance, así que la pantalla de seguridad separa las dos listas.
     resources :roles, only: %i[index create update] do
       resource :permissions, only: %i[show update], module: :roles
     end
 
     # Usuarios (tab "Lista de usuarios"). Reemplaza GET /api/User/accessible,
     # GET /api/User/information, POST /api/User y PATCH /api/User.
-    # `companies` es la subcolección que alimenta el selector de la prueba de
-    # credenciales; `role` es singular porque un usuario tiene UN rol por
-    # compañía, y la compañía la pone la sesión, no el path.
+    #
+    # `companies` es la subcolección de accesos por compañía, CON el rol de
+    # compañía de cada una (`docs/PLAN-ROLES-POR-ALCANCE.md`); `installation_role`
+    # es singular porque un usuario tiene UN rol de instalación (o ninguno), y no
+    # depende de ninguna compañía activa.
     resources :users, only: %i[index show create update] do
-      # Los tres son conjuntos que pertenecen al usuario y se reemplazan enteros:
+      # Los dos son conjuntos que pertenecen al usuario y se reemplazan enteros:
       # `resource` singular (sin id propio) + PUT. Ver CLAUDE.md §28.
-      resource :companies,   only: %i[show update], module: :users
-      resource :role,        only: %i[show update], module: :users
-      resource :permissions, only: %i[show update], module: :users
+      resource :companies,         only: %i[show update], module: :users
+      resource :installation_role, only: %i[show update], module: :users
     end
 
     # Perfil del usuario de la sesión. Singular: no lleva id porque siempre es el

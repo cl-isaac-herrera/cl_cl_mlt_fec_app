@@ -25,7 +25,7 @@ module Api
       # pedido. Un usuario sin permiso no tiene por qué enterarse de si mandó
       # bien los parámetros.
       before_action :authorize_action
-      before_action :require_company!
+      include RequiresActiveCompany
       before_action :require_doc_type!
 
       # ⚠️ `create` envía un correo REAL a un cliente y hoy lo autoriza el mismo
@@ -189,13 +189,6 @@ module Api
         require_permission!(PERMISSIONS.fetch(action_name))
       end
 
-      def require_company!
-        return if company
-
-        render json: ApiResponse.forbidden('La compañía activa no está asignada a este usuario.').to_h,
-               status: :forbidden
-      end
-
       def require_doc_type!
         @doc_type = DocType.normalize(params[:doc_type])
         return if @doc_type && !DocType.receiver_message?(@doc_type)
@@ -208,12 +201,6 @@ module Api
 
       # El `DocEntry` de SAP (ver la nota de la clase).
       def doc_entry = params[:document_id].to_i
-
-      # La compañía activa, validada contra las asignadas al usuario — el id
-      # sale de la sesión, nunca de un parámetro (§28 regla 5).
-      def company
-        @company ||= Company.assigned_to(Current.user.id).find_by(id: Current.company_id)
-      end
     end
   end
 end

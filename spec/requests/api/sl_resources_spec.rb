@@ -3,19 +3,14 @@
 require 'rails_helper'
 
 RSpec.describe 'Api::SlResources', type: :request do
-  let(:user)    { User.create!(email: 'recursos@example.com') }
-  let(:company) { Company.create!(name: 'ACME S.A.') }
-  let(:role)    { Role.create!(name: 'Configurador') }
+  let(:user) { User.create!(email: 'recursos@example.com') }
 
-  # Deja al usuario con los permisos indicados y abre la sesión con `company`
-  # activa. Los permisos de esta pantalla son `global`, pero se conceden por rol
-  # igual que el resto (la vía directa es solo una alternativa, ver §28).
+  # Los permisos de esta pantalla son de alcance `installation`
+  # (docs/PLAN-ROLES-POR-ALCANCE.md): no dependen de ninguna compañía activa, y
+  # se conceden con el rol de instalación del usuario igual que el resto (§28).
   def sign_in_with(*permission_names)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.create!(name: name, type: 'global'))
-    end
-    sign_in(user, company: company)
+    grant_permissions(user, *permission_names)
+    sign_in(user)
   end
 
   def body      = JSON.parse(response.body)

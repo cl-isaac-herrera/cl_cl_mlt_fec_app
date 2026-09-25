@@ -10,10 +10,7 @@ RSpec.describe 'Api::EmailConfigs', type: :request do
   # Deja al usuario con los permisos indicados sobre `company` y abre la sesión
   # con esa compañía activa: require_permission! resuelve contra la de la sesión.
   def sign_in_with(*permission_names)
-    UserRole.create!(user: user, role: role, company: company)
-    permission_names.each do |name|
-      RolePermission.create!(role: role, permission: Permission.create!(name: name))
-    end
+    grant_permissions(user, *permission_names, company: company)
     sign_in(user, company: company)
   end
 

@@ -35,8 +35,9 @@ module Api
       'index'  => 'Configurations_Companies_ListAccess',
       # `show` alimenta el formulario de edición, así que pide el permiso de
       # edición — el mismo con el que `auth_guard_controller.js` gatea la ruta
-      # /configurations/companies/:id/edit.
-      'show'   => 'Configurations_Companies_Update',
+      # /configurations/companies/:id/edit. Acepta también la variante de
+      # instalación (`Configurations_Companies_UpdateInAllCompanies`).
+      'show'   => %w[Configurations_Companies_Update Configurations_Companies_UpdateInAllCompanies],
       'create' => 'Configurations_Companies_Create'
     }.freeze
 
@@ -89,9 +90,9 @@ module Api
     # GET /api/companies/assignable
     #
     # Las compañías que el usuario de la sesión puede ASIGNARLE a otro: las suyas,
-    # o todas si tiene `Configurations_Companies_ViewGroupCompanies` (ver el
-    # concern `AssignableCompanies`). Alimenta el sub-tab "Compañías" del panel
-    # "Gestionar accesos".
+    # o todas si tiene `Configurations_Companies_ViewAllApplicationCompanies`
+    # (ver el concern `AssignableCompanies`). Alimenta el sub-tab "Compañías" del
+    # panel "Gestionar accesos".
     #
     # Reemplaza `GET /api/Companies/for-assignment?groupId=N`. El `groupId` no se
     # migra ni con valor por defecto: no hay grupos (`CLAUDE.md` §31).
@@ -201,7 +202,10 @@ module Api
         return render_service_layer_error(e)
       end
 
-      UsersByCompany.create!(user: Current.user, company: company)
+      # Rol de compañía Administrador para quien la crea: sin esto, el creador
+      # queda con acceso a la compañía pero SIN ningún permiso dentro de ella
+      # (docs/PLAN-ROLES-POR-ALCANCE.md, Fase 0 decisión 2).
+      UsersByCompany.create!(user: Current.user, company: company, role: company_admin_role)
 
       render json: ApiResponse.success(serialize_detail(company, issuer_config_from_request), code: 201,
                                        message: 'Compañía registrada con éxito.').to_h,
@@ -216,11 +220,18 @@ module Api
       # la pantalla de usuarios y no el de esta.
       return if permission.nil?
 
-      require_permission!(permission)
+      require_any_permission!(*Array(permission))
     end
 
     def load_company
       @company = find_visible_company(params[:id])
+    end
+
+    # `db/seeds.rb` siempre lo siembra por upsert (nunca `delete_all`) — ver
+    # CLAUDE.md §28. `find_by!` para que un catálogo sin sembrar todavía falle
+    # con un error claro en vez de un `NoMethodError` sobre `nil`.
+    def company_admin_role
+      Role.find_by!(name: 'Administrador', scope: 'company')
     end
 
     def page
